@@ -18,6 +18,7 @@ public class ActionFitPackagePublishWindow : EditorWindow
 
     private const string PackageCatalogPath = "Packages/com.actionfit.custompackagemanager/Editor/Catalog/actionfit_package_catalog.csv";
     private readonly Dictionary<string, string> _versionByAssetPath = new();
+    private readonly HashSet<string> _expandedPackageIds = new();
     private readonly List<Entry> _entries = new();
     private Mode _mode;
     private Vector2 _scroll;
@@ -80,10 +81,16 @@ public class ActionFitPackagePublishWindow : EditorWindow
         {
             using (new EditorGUILayout.HorizontalScope())
             {
-                EditorGUILayout.LabelField(entry.DisplayName, EditorStyles.boldLabel);
+                bool expanded = _expandedPackageIds.Contains(entry.PackageId);
+                bool nextExpanded = EditorGUILayout.Foldout(expanded, entry.DisplayName, true, EditorStyles.foldoutHeader);
+                if (nextExpanded) _expandedPackageIds.Add(entry.PackageId);
+                else _expandedPackageIds.Remove(entry.PackageId);
+
                 GUILayout.FlexibleSpace();
                 EditorGUILayout.LabelField(entry.PackageId, EditorStyles.miniLabel, GUILayout.Width(260));
             }
+
+            if (!_expandedPackageIds.Contains(entry.PackageId)) return;
 
             EditorGUILayout.LabelField("Package Root", entry.PackageRoot);
             EditorGUILayout.LabelField("Current Version", entry.Version);

@@ -11,12 +11,12 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 7b5ab7e2b67b436db878fd7b023d8616, type: 3}
   m_Name: ActionFitPackageInfo_SO
-  m_EditorClassIdentifier: 
+  m_EditorClassIdentifier:
   _packageId: com.actionfit.custompackagemanager
   _displayName: Custom Package Manager
   _repoName: Custom_Package_Manager
   _owner: ActionFit
   _status: verified
   _description: ActionFit 내부 UPM 패키지 카탈로그를 보고 설치, 버전 적용, 삭제, 배포 등록을 관리하는 에디터 도구
-  _releaseNote: Create Repo로 새 GitHub 레포를 생성할 때 public으로 생성하도록 변경
-  _dependenciesOverride: 
+  _releaseNote: Publish Package 창을 패키지별 foldout으로 정리하고 배포 패키지 PackageInfo SO를 추가
+  _dependenciesOverride:
