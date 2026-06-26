@@ -13,12 +13,14 @@ public class ActionFitPackageManagerWindow : EditorWindow
 {
     private const string PackageName = "com.actionfit.custompackagemanager";
     private const string CatalogRelativePath = "Editor/Catalog/actionfit_package_catalog.csv";
+    private const string ReadmePath = "Packages/com.actionfit.custompackagemanager/README.md";
     private const string ManifestPath = "Packages/manifest.json";
-    private static readonly string CatalogPath = Path.Combine("Packages", PackageName, CatalogRelativePath).Replace("\\", "/");
+    private static readonly string PackageCatalogPath = Path.Combine("Packages", PackageName, CatalogRelativePath).Replace("\\", "/");
 
     private readonly Dictionary<string, int> _selectedVersionByPackage = new();
     private readonly HashSet<string> _expandedPackageIds = new();
     private readonly List<PackageGroup> _packages = new();
+    private ActionFitPackageCatalogSettings_SO _settings;
     private Vector2 _scroll;
     private string _filter = "";
 
@@ -30,6 +32,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
     private void OnEnable()
     {
+        _settings = ActionFitPackageCatalogSettingsProvider.FindOrCreate();
         Reload();
     }
 
@@ -39,8 +42,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
         if (_packages.Count == 0)
         {
-            EditorGUILayout.HelpBox($"Catalog not found or empty.\n{CatalogPath}", MessageType.Warning);
-            return;
+            EditorGUILayout.HelpBox($"Catalog not found or empty.\n{ActiveCatalogPath}", MessageType.Warning);
         }
 
         _filter = EditorGUILayout.TextField("Filter", _filter);
@@ -60,12 +62,24 @@ public class ActionFitPackageManagerWindow : EditorWindow
         using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
         {
             if (GUILayout.Button("Reload", EditorStyles.toolbarButton, GUILayout.Width(70))) Reload();
+            if (GUILayout.Button("Update", EditorStyles.toolbarButton, GUILayout.Width(70))) UpdateCatalog();
+            if (GUILayout.Button("Settings", EditorStyles.toolbarButton, GUILayout.Width(80)))
+                Selection.activeObject = _settings = ActionFitPackageCatalogSettingsProvider.FindOrCreate();
+            if (GUILayout.Button("1. Create Package", EditorStyles.toolbarButton, GUILayout.Width(130))) ActionFitPackageCreateWindow.Open();
+            if (GUILayout.Button("2. Create Repo", EditorStyles.toolbarButton, GUILayout.Width(115))) ActionFitPackagePublishWindow.OpenCreate();
+            if (GUILayout.Button("3. Publish Package", EditorStyles.toolbarButton, GUILayout.Width(135))) ActionFitPackagePublishWindow.OpenUpdate();
+            if (GUILayout.Button("README", EditorStyles.toolbarButton, GUILayout.Width(80))) OpenReadme();
             if (GUILayout.Button("Open Catalog", EditorStyles.toolbarButton, GUILayout.Width(100)))
-                Selection.activeObject = AssetDatabase.LoadAssetAtPath<TextAsset>(CatalogPath);
+                Selection.activeObject = AssetDatabase.LoadAssetAtPath<TextAsset>(ActiveCatalogPath);
             if (GUILayout.Button("Open Manifest", EditorStyles.toolbarButton, GUILayout.Width(100)))
                 AssetDatabase.OpenAsset(AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(ManifestPath));
             GUILayout.FlexibleSpace();
         }
+    }
+
+    private void OpenReadme()
+    {
+        ActionFitPackageReadmeWindow.Open(ReadmePath);
     }
 
     private IEnumerable<PackageGroup> FilteredPackages()
@@ -117,6 +131,11 @@ public class ActionFitPackageManagerWindow : EditorWindow
                 if (GUILayout.Button(buttonText, GUILayout.Width(120)))
                     ApplyPackage(package, selectedVersion);
                 EditorGUI.EndDisabledGroup();
+
+                EditorGUI.BeginDisabledGroup(!installed.IsInstalled || installed.IsEmbedded);
+                if (GUILayout.Button("Remove", GUILayout.Width(90)))
+                    RemovePackage(package);
+                EditorGUI.EndDisabledGroup();
             }
 
             if (installed.IsEmbedded)
@@ -145,14 +164,47 @@ public class ActionFitPackageManagerWindow : EditorWindow
         _packages.Clear();
         _selectedVersionByPackage.Clear();
 
-        string path = Path.GetFullPath(CatalogPath);
-        if (!File.Exists(path)) return;
+        string path = Path.GetFullPath(ActiveCatalogPath);
+        if (File.Exists(path))
+        {
+            var rows = ReadCatalog(path);
+            _packages.AddRange(rows
+                .GroupBy(r => r.Id)
+                .Select(g => new PackageGroup(g.Key, g.OrderByDescending(v => v.Version, PackageVersionComparer.Instance).ToList()))
+                .OrderBy(g => g.DisplayName, StringComparer.OrdinalIgnoreCase));
+        }
+    }
 
-        var rows = ReadCatalog(path);
-        _packages.AddRange(rows
-            .GroupBy(r => r.Id)
-            .Select(g => new PackageGroup(g.Key, g.OrderByDescending(v => v.Version, PackageVersionComparer.Instance).ToList()))
-            .OrderBy(g => g.DisplayName, StringComparer.OrdinalIgnoreCase));
+    private static string ActiveCatalogPath
+    {
+        get
+        {
+            string local = ActionFitPackageCatalogSettingsProvider.LocalCatalogPath;
+            return File.Exists(Path.GetFullPath(local)) ? local : PackageCatalogPath;
+        }
+    }
+
+    private void UpdateCatalog()
+    {
+        _settings = ActionFitPackageCatalogSettingsProvider.FindOrCreate();
+        if (!EditorUtility.DisplayDialog(
+                "ActionFit Package Manager",
+                "Spreadsheet -> local package catalog CSV\n\nUpdate will overwrite the local catalog CSV with spreadsheet data.",
+                "Update",
+                "Cancel"))
+            return;
+
+        bool ok = ActionFitPackageCatalogUpdater.UpdateCatalog(_settings, out string message);
+        if (ok)
+        {
+            UnityEngine.Debug.Log($"[ActionFitPackageManager] {message}");
+            Reload();
+        }
+        else
+        {
+            UnityEngine.Debug.LogError($"[ActionFitPackageManager] Update failed: {message}");
+            EditorUtility.DisplayDialog("ActionFit Package Manager", message, "OK");
+        }
     }
 
     private static List<PackageVersion> ReadCatalog(string path)
@@ -229,6 +281,37 @@ public class ActionFitPackageManagerWindow : EditorWindow
         Client.Resolve();
     }
 
+    private void RemovePackage(PackageGroup package)
+    {
+        if (!EditorUtility.DisplayDialog(
+                "ActionFit Package Manager",
+                $"Remove {package.Id} from Packages/manifest.json?\n\nEmbedded packages under Packages/ are not removed by this action.",
+                "Remove",
+                "Cancel"))
+            return;
+
+        string manifestPath = Path.GetFullPath(ManifestPath);
+        if (!File.Exists(manifestPath))
+        {
+            EditorUtility.DisplayDialog("ActionFit Package Manager", "Packages/manifest.json not found.", "OK");
+            return;
+        }
+
+        string manifest = File.ReadAllText(manifestPath);
+        manifest = RemoveDependency(manifest, package.Id, out bool removed);
+        if (!removed)
+        {
+            UnityEngine.Debug.LogWarning($"[ActionFitPackageManager] Package is not in manifest: {package.Id}");
+            return;
+        }
+
+        File.WriteAllText(manifestPath, manifest, new UTF8Encoding(false));
+        UnityEngine.Debug.Log($"[ActionFitPackageManager] Removed manifest dependency: {package.Id}");
+
+        AssetDatabase.Refresh();
+        Client.Resolve();
+    }
+
     private PackageVersion FindVersion(string packageId, string version)
     {
         var group = _packages.FirstOrDefault(p => p.Id == packageId);
@@ -255,6 +338,33 @@ public class ActionFitPackageManagerWindow : EditorWindow
         string suffix = hasExistingDependencies ? ",\n" : "\n";
         string insert = $"        \"{packageId}\": \"{value}\"{suffix}";
         return manifest.Insert(openBrace + 1, "\n" + insert);
+    }
+
+    private static string RemoveDependency(string manifest, string packageId, out bool removed)
+    {
+        removed = false;
+        string newline = manifest.Contains("\r\n") ? "\r\n" : "\n";
+        var lines = manifest.Replace("\r\n", "\n").Split('\n').ToList();
+        var pattern = new Regex($"^\\s*\"{Regex.Escape(packageId)}\"\\s*:");
+
+        int index = lines.FindIndex(line => pattern.IsMatch(line));
+        if (index < 0) return manifest;
+
+        bool removedLineHadComma = lines[index].TrimEnd().EndsWith(",", StringComparison.Ordinal);
+        lines.RemoveAt(index);
+
+        if (!removedLineHadComma)
+        {
+            for (int i = index - 1; i >= 0; i--)
+            {
+                if (!lines[i].Contains(":")) continue;
+                lines[i] = Regex.Replace(lines[i], @",\s*$", "");
+                break;
+            }
+        }
+
+        removed = true;
+        return string.Join(newline, lines);
     }
 
     private InstalledPackage GetInstalledVersion(string packageId)
