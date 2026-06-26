@@ -11,6 +11,13 @@ using UnityEngine;
 
 public class ActionFitPackageManagerWindow : EditorWindow
 {
+    private enum CatalogViewMode
+    {
+        All,
+        Installed,
+        NotInstalled,
+    }
+
     private const string PackageName = "com.actionfit.custompackagemanager";
     private const string CatalogRelativePath = "Editor/Catalog/actionfit_package_catalog.csv";
     private const string ReadmePath = "Packages/com.actionfit.custompackagemanager/README.md";
@@ -23,6 +30,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
     private ActionFitPackageCatalogSettings_SO _settings;
     private Vector2 _scroll;
     private string _filter = "";
+    private CatalogViewMode _viewMode;
 
     [MenuItem("Tools/ActionFit/Package Manager", false, 0)]
     public static void Open()
@@ -45,6 +53,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
             EditorGUILayout.HelpBox($"Catalog not found or empty.\n{ActiveCatalogPath}", MessageType.Warning);
         }
 
+        DrawCatalogMode();
         _filter = EditorGUILayout.TextField("Filter", _filter);
         _scroll = EditorGUILayout.BeginScrollView(_scroll);
 
@@ -82,14 +91,36 @@ public class ActionFitPackageManagerWindow : EditorWindow
         ActionFitPackageReadmeWindow.Open(ReadmePath);
     }
 
+    private void DrawCatalogMode()
+    {
+        int installed = _packages.Count(p => GetInstalledVersion(p.Id).IsInstalled);
+        int notInstalled = _packages.Count - installed;
+        string[] labels =
+        {
+            $"All ({_packages.Count})",
+            $"Installed ({installed})",
+            $"Not Installed ({notInstalled})",
+        };
+
+        _viewMode = (CatalogViewMode)GUILayout.Toolbar((int)_viewMode, labels);
+    }
+
     private IEnumerable<PackageGroup> FilteredPackages()
     {
-        if (string.IsNullOrWhiteSpace(_filter)) return _packages;
+        IEnumerable<PackageGroup> packages = _packages;
+
+        if (_viewMode == CatalogViewMode.Installed)
+            packages = packages.Where(p => GetInstalledVersion(p.Id).IsInstalled);
+        else if (_viewMode == CatalogViewMode.NotInstalled)
+            packages = packages.Where(p => !GetInstalledVersion(p.Id).IsInstalled);
+
+        if (string.IsNullOrWhiteSpace(_filter)) return packages;
 
         string filter = _filter.Trim();
-        return _packages.Where(p =>
+        return packages.Where(p =>
             p.Id.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0 ||
-            p.DisplayName.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0);
+            p.DisplayName.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0 ||
+            p.Owner.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0);
     }
 
     private void DrawPackage(PackageGroup package)
@@ -111,12 +142,14 @@ public class ActionFitPackageManagerWindow : EditorWindow
                 GUILayout.FlexibleSpace();
                 EditorGUILayout.LabelField($"Installed: {installed.Label}", EditorStyles.miniLabel, GUILayout.Width(150));
                 EditorGUILayout.LabelField($"Latest: {package.LatestVersionLabel}", EditorStyles.miniLabel, GUILayout.Width(150));
+                EditorGUILayout.LabelField($"Owner: {package.Owner}", EditorStyles.miniLabel, GUILayout.Width(120));
                 EditorGUILayout.LabelField(package.Id, EditorStyles.miniLabel, GUILayout.Width(260));
             }
 
             if (!_expandedPackageIds.Contains(package.Id)) return;
 
             EditorGUILayout.LabelField("Installed", installed.Label);
+            EditorGUILayout.LabelField("Owner", package.Owner);
             EditorGUILayout.LabelField("Description", selectedVersion.Description);
             EditorGUILayout.LabelField("Changelog", selectedVersion.Changelog);
 
@@ -227,6 +260,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
             {
                 Id = Get(cols, index, "package_id"),
                 DisplayName = Get(cols, index, "display_name"),
+                Owner = Get(cols, index, "owner"),
                 RepoUrl = Get(cols, index, "repo_url"),
                 Version = Get(cols, index, "version"),
                 Status = Get(cols, index, "status"),
@@ -493,11 +527,13 @@ public class ActionFitPackageManagerWindow : EditorWindow
             Id = id;
             Versions = versions;
             DisplayName = versions.FirstOrDefault()?.DisplayName ?? id;
+            Owner = versions.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v.Owner))?.Owner ?? "ActionFit";
             LatestVersionLabel = versions.FirstOrDefault(v => v.IsLatest)?.Version ?? versions.FirstOrDefault()?.Version ?? "";
         }
 
         public string Id { get; }
         public string DisplayName { get; }
+        public string Owner { get; }
         public string LatestVersionLabel { get; }
         public List<PackageVersion> Versions { get; }
     }
@@ -537,6 +573,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
     {
         public string Id;
         public string DisplayName;
+        public string Owner;
         public string RepoUrl;
         public string Version;
         public string Status;

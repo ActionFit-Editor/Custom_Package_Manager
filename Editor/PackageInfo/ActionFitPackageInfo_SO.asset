@@ -18,5 +18,5 @@ MonoBehaviour:
   _owner: ActionFit
   _status: verified
   _description: ActionFit 내부 UPM 패키지 카탈로그를 보고 설치, 버전 적용, 삭제, 배포 등록을 관리하는 에디터 도구
-  _releaseNote: Publish Package 버전 갱신 시 package.json이 깨지는 정규식 치환 문제 수정
+  _releaseNote: 단일 카탈로그에서 전체/설치됨/미설치 보기 모드와 owner 표시 추가
   _dependenciesOverride:
