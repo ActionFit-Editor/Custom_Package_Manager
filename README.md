@@ -7,7 +7,7 @@ ActionFit 전용 UPM 패키지 카탈로그를 표시하고, 선택한 패키지
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.8"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.9"
   }
 }
 ```
@@ -66,6 +66,16 @@ Packages/com.actionfit.yourpackage/
 2. Package Manager 창에서 `3. Publish Package`를 누릅니다.
 3. `ActionFitPackageInfo_SO`의 릴리즈 노트를 새 버전에 맞게 수정합니다.
 4. Publish Version에 배포할 버전을 직접 입력하고 `3. Publish Package`를 누릅니다.
+
+## Dependencies 설정
+
+Dependencies는 카탈로그의 `dependencies` 열에 저장되고, 해당 패키지를 설치/버전 적용할 때 먼저 `Packages/manifest.json`에 반영됩니다.
+
+- 특정 버전 고정: `com.actionfit.csvimporter@1.2.3`
+- 카탈로그 latest 사용: `com.actionfit.csvimporter`
+- 여러 개 입력: `com.actionfit.csvimporter@1.2.3;com.actionfit.sosingleton@1.0.0`
+
+여러 dependency는 `;`, `,`, `|`로 구분할 수 있습니다. `package.json`의 `"dependencies"` 값은 배포 시 자동으로 `패키지ID@버전` 형태로 추출되며, `ActionFitPackageInfo_SO`의 `Dependencies Override`에 값이 있으면 override 값이 우선 사용됩니다.
 
 Apps Script는 JSON POST의 `action: "upsertPackageVersion"`을 받아 `package_catalog`/`package_versions` 또는 기존 `actionfit_package_catalog` 탭에 append/upsert하도록 구성되어 있어야 합니다.
 

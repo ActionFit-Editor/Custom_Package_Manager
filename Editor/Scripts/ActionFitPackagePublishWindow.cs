@@ -55,13 +55,14 @@ public class ActionFitPackagePublishWindow : EditorWindow
             return;
         }
 
-        _scroll = EditorGUILayout.BeginScrollView(_scroll);
-        foreach (var entry in _entries)
+        var entries = _entries.ToArray();
+        using var scroll = new EditorGUILayout.ScrollViewScope(_scroll);
+        _scroll = scroll.scrollPosition;
+        foreach (var entry in entries)
         {
             DrawEntry(entry);
             EditorGUILayout.Space(6);
         }
-        EditorGUILayout.EndScrollView();
     }
 
     private void DrawToolbar()
@@ -158,7 +159,7 @@ public class ActionFitPackagePublishWindow : EditorWindow
             else
                 Debug.LogWarning($"[ActionFitPackageManager] Catalog refresh failed after publish: {updateMessage}");
 
-            Reload();
+            ScheduleReload();
         }
         else
         {
@@ -174,6 +175,16 @@ public class ActionFitPackagePublishWindow : EditorWindow
 
         _versionByAssetPath[entry.AssetPath] = entry.Version;
         return entry.Version;
+    }
+
+    private void ScheduleReload()
+    {
+        EditorApplication.delayCall += () =>
+        {
+            if (this == null) return;
+            Reload();
+            Repaint();
+        };
     }
 
     private void Reload()
