@@ -80,7 +80,7 @@ public static class ActionFitPackagePublisher
         }
         catch (WebException ex) when ((ex.Response as HttpWebResponse)?.StatusCode == HttpStatusCode.NotFound)
         {
-            string body = $"{{\"name\":\"{EscapeJson(repoName)}\",\"private\":true,\"auto_init\":false}}";
+            string body = $"{{\"name\":\"{EscapeJson(repoName)}\",\"private\":false,\"auto_init\":false}}";
             var create = CreateGitHubRequest($"https://api.github.com/orgs/{settings.GitHubOrg}/repos", settings.GitHubToken, "POST");
             WriteBody(create, body);
             using var response = (HttpWebResponse)create.GetResponse();
