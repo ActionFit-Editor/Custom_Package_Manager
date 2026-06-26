@@ -11,13 +11,6 @@ using UnityEngine;
 
 public class ActionFitPackageManagerWindow : EditorWindow
 {
-    private enum CatalogViewMode
-    {
-        All,
-        Installed,
-        NotInstalled,
-    }
-
     private const string PackageName = "com.actionfit.custompackagemanager";
     private const string CatalogRelativePath = "Editor/Catalog/actionfit_package_catalog.csv";
     private const string ReadmePath = "Packages/com.actionfit.custompackagemanager/README.md";
@@ -30,7 +23,6 @@ public class ActionFitPackageManagerWindow : EditorWindow
     private ActionFitPackageCatalogSettings_SO _settings;
     private Vector2 _scroll;
     private string _filter = "";
-    private CatalogViewMode _viewMode;
 
     [MenuItem("Tools/ActionFit/Package Manager", false, 0)]
     public static void Open()
@@ -53,15 +45,10 @@ public class ActionFitPackageManagerWindow : EditorWindow
             EditorGUILayout.HelpBox($"Catalog not found or empty.\n{ActiveCatalogPath}", MessageType.Warning);
         }
 
-        DrawCatalogMode();
         _filter = EditorGUILayout.TextField("Filter", _filter);
         _scroll = EditorGUILayout.BeginScrollView(_scroll);
 
-        foreach (var package in FilteredPackages())
-        {
-            DrawPackage(package);
-            EditorGUILayout.Space(6);
-        }
+        DrawPackageSections();
 
         EditorGUILayout.EndScrollView();
     }
@@ -91,33 +78,42 @@ public class ActionFitPackageManagerWindow : EditorWindow
         ActionFitPackageReadmeWindow.Open(ReadmePath);
     }
 
-    private void DrawCatalogMode()
+    private void DrawPackageSections()
     {
-        int installed = _packages.Count(p => GetInstalledVersion(p.Id).IsInstalled);
-        int notInstalled = _packages.Count - installed;
-        string[] labels =
-        {
-            $"All ({_packages.Count})",
-            $"Installed ({installed})",
-            $"Not Installed ({notInstalled})",
-        };
+        var filtered = FilteredPackages().ToList();
+        var downloaded = filtered.Where(p => GetInstalledVersion(p.Id).IsInstalled).ToList();
+        var available = filtered.Where(p => !GetInstalledVersion(p.Id).IsInstalled).ToList();
 
-        _viewMode = (CatalogViewMode)GUILayout.Toolbar((int)_viewMode, labels);
+        DrawPackageSection("Downloaded Packages", downloaded);
+        EditorGUILayout.Space(4);
+        EditorGUILayout.LabelField("", GUI.skin.horizontalSlider);
+        EditorGUILayout.Space(4);
+        DrawPackageSection("Available Packages", available);
+    }
+
+    private void DrawPackageSection(string title, List<PackageGroup> packages)
+    {
+        EditorGUILayout.LabelField($"{title} ({packages.Count})", EditorStyles.boldLabel);
+
+        if (packages.Count == 0)
+        {
+            EditorGUILayout.HelpBox("No packages.", MessageType.None);
+            return;
+        }
+
+        foreach (var package in packages)
+        {
+            DrawPackage(package);
+            EditorGUILayout.Space(6);
+        }
     }
 
     private IEnumerable<PackageGroup> FilteredPackages()
     {
-        IEnumerable<PackageGroup> packages = _packages;
-
-        if (_viewMode == CatalogViewMode.Installed)
-            packages = packages.Where(p => GetInstalledVersion(p.Id).IsInstalled);
-        else if (_viewMode == CatalogViewMode.NotInstalled)
-            packages = packages.Where(p => !GetInstalledVersion(p.Id).IsInstalled);
-
-        if (string.IsNullOrWhiteSpace(_filter)) return packages;
+        if (string.IsNullOrWhiteSpace(_filter)) return _packages;
 
         string filter = _filter.Trim();
-        return packages.Where(p =>
+        return _packages.Where(p =>
             p.Id.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0 ||
             p.DisplayName.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0 ||
             p.Owner.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0);
