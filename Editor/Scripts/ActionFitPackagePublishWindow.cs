@@ -286,10 +286,11 @@ public class ActionFitPackagePublishWindow : EditorWindow
             var manifest = ActionFitPackageManifest.Read(relativePackageJsonPath);
             bool isRegistered = registered.ContainsKey(manifest.Name);
             if (_mode == Mode.Create && isRegistered) continue;
-            if ((_mode == Mode.Update || _mode == Mode.Changed) && !isRegistered) continue;
+            if (_mode == Mode.Update && !isRegistered) continue;
 
             registered.TryGetValue(manifest.Name, out string catalogLatestVersion);
             if (_mode == Mode.Changed &&
+                isRegistered &&
                 CompareVersions(manifest.Version, catalogLatestVersion) <= 0)
                 continue;
 
@@ -306,7 +307,7 @@ public class ActionFitPackagePublishWindow : EditorWindow
                 PackageId = manifest.Name,
                 DisplayName = string.IsNullOrWhiteSpace(manifest.DisplayName) ? info.DisplayName : manifest.DisplayName,
                 Version = manifest.Version,
-                CatalogLatestVersion = catalogLatestVersion,
+                CatalogLatestVersion = isRegistered ? catalogLatestVersion : "not registered",
             });
         }
 
