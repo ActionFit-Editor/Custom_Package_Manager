@@ -81,9 +81,15 @@ public class ActionFitPackageManagerWindow : EditorWindow
     private void DrawPackageSections()
     {
         var filtered = FilteredPackages().ToList();
-        var downloaded = filtered.Where(p => GetInstalledVersion(p.Id).IsInstalled).ToList();
-        var available = filtered.Where(p => !GetInstalledVersion(p.Id).IsInstalled).ToList();
+        var manager = filtered.Where(p => p.Id == PackageName).ToList();
+        var catalogPackages = filtered.Where(p => p.Id != PackageName).ToList();
+        var downloaded = catalogPackages.Where(p => GetInstalledVersion(p.Id).IsInstalled).ToList();
+        var available = catalogPackages.Where(p => !GetInstalledVersion(p.Id).IsInstalled).ToList();
 
+        DrawPackageSection("Package Manager", manager);
+        EditorGUILayout.Space(4);
+        EditorGUILayout.LabelField("", GUI.skin.horizontalSlider);
+        EditorGUILayout.Space(4);
         DrawPackageSection("Downloaded Packages", downloaded);
         EditorGUILayout.Space(4);
         EditorGUILayout.LabelField("", GUI.skin.horizontalSlider);

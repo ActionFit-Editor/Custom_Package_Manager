@@ -18,5 +18,5 @@ MonoBehaviour:
   _owner: ActionFit
   _status: verified
   _description: ActionFit 내부 UPM 패키지 카탈로그를 보고 설치, 버전 적용, 삭제, 배포 등록을 관리하는 에디터 도구
-  _releaseNote: 설치된 패키지와 설치 가능한 패키지를 한 화면에서 섹션으로 구분하고 owner 표시 유지
+  _releaseNote: CustomPackageManager를 전용 최상단 섹션으로 분리
   _dependenciesOverride:
