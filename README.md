@@ -7,7 +7,7 @@ ActionFit 전용 UPM 패키지 카탈로그를 표시하고, 선택한 패키지
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.12"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.13"
   }
 }
 ```

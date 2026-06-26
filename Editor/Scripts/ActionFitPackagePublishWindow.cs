@@ -283,7 +283,7 @@ public class ActionFitPackagePublishWindow : EditorWindow
             return false;
         }
 
-        string updated = pattern.Replace(json, $"$1{version}$3", 1);
+        string updated = pattern.Replace(json, match => match.Groups[1].Value + version + match.Groups[3].Value, 1);
         if (updated != json) File.WriteAllText(fullPath, updated, new UTF8Encoding(false));
         return true;
     }
