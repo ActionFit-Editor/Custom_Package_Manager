@@ -7,7 +7,7 @@ using UnityEngine;
 public static class ActionFitPackageCatalogSettingsProvider
 {
     public const string SettingsAssetPath = "Assets/_Data/_CustomPackageManager/ActionFitPackageCatalogSettings_SO.asset";
-    public const string LocalCatalogPath = "Assets/_Data/_CustomPackageManager/actionfit_package_catalog.csv";
+    public const string LocalCatalogPath = "Assets/_Data/_CustomPackageManager/package_catalog.csv";
 
     static ActionFitPackageCatalogSettingsProvider()
     {

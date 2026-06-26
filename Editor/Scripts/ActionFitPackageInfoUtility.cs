@@ -68,6 +68,7 @@ public static class ActionFitPackageInfoUtility
         SetIfEmpty(serialized, "_displayName", manifest.DisplayName);
         SetIfEmpty(serialized, "_repoName", ToRepoName(manifest.DisplayName, manifest.Name));
         SetIfEmpty(serialized, "_description", manifest.Description);
+        SetIfEmpty(serialized, "_releaseNote", "package_catalog/package_versions 카탈로그 마이그레이션을 위한 재배포 버전");
         serialized.ApplyModifiedPropertiesWithoutUndo();
 
         EditorUtility.SetDirty(info);

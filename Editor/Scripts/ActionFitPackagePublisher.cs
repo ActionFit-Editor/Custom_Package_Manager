@@ -177,11 +177,10 @@ public static class ActionFitPackagePublisher
         if (result == null || !result.success ||
             !string.Equals(result.package_id, manifest.Name, StringComparison.Ordinal) ||
             !string.Equals(result.version, manifest.Version, StringComparison.Ordinal) ||
-            !string.Equals(result.catalog_id, expectedCatalogId, StringComparison.Ordinal) ||
-            !result.legacy_catalog_updated)
+            !string.Equals(result.catalog_id, expectedCatalogId, StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
-                "Catalog append did not return actionfit_package_catalog confirmation. " +
+                "Catalog append did not return package catalog confirmation. " +
                 "Update the Apps Script Web App deployment and try again.\n" + text);
         }
     }
@@ -276,7 +275,6 @@ public static class ActionFitPackagePublisher
         public string package_id;
         public string version;
         public string catalog_id;
-        public bool legacy_catalog_updated;
     }
 }
 #endif

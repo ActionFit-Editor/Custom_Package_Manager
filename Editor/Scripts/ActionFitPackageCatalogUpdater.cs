@@ -10,7 +10,8 @@ using UnityEngine;
 
 public static class ActionFitPackageCatalogUpdater
 {
-    private const string CatalogSheetName = "actionfit_package_catalog";
+    private const string PackageSheetName = "package_catalog";
+    private const string VersionSheetName = "package_versions";
 
     public static bool UpdateCatalog(ActionFitPackageCatalogSettings_SO settings, out string message)
     {
@@ -105,17 +106,20 @@ public static class ActionFitPackageCatalogUpdater
                 return false;
             }
 
-            var sheet = response.sheets.FirstOrDefault(s =>
-                string.Equals(s.name, CatalogSheetName, StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(s.name, CatalogSheetName + ".csv", StringComparison.OrdinalIgnoreCase));
+            var packageSheet = response.sheets.FirstOrDefault(s =>
+                string.Equals(s.name, PackageSheetName, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(s.name, PackageSheetName + ".csv", StringComparison.OrdinalIgnoreCase));
+            var versionSheet = response.sheets.FirstOrDefault(s =>
+                string.Equals(s.name, VersionSheetName, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(s.name, VersionSheetName + ".csv", StringComparison.OrdinalIgnoreCase));
 
-            if (sheet == null)
+            if (packageSheet == null || versionSheet == null)
             {
-                message = $"Catalog sheet not found. Expected '{CatalogSheetName}'.";
+                message = $"Catalog sheets not found. Expected '{PackageSheetName}' and '{VersionSheetName}'.";
                 return false;
             }
 
-            csv = StripBom(sheet.csv ?? "");
+            csv = BuildCatalogCsv(packageSheet.csv, versionSheet.csv);
             return true;
         }
         catch (Exception ex)
@@ -123,6 +127,145 @@ public static class ActionFitPackageCatalogUpdater
             message = $"JSON parse failed: {ex.Message}";
             return false;
         }
+    }
+
+    private static string BuildCatalogCsv(string packageCsv, string versionCsv)
+    {
+        var packages = ReadCsv(packageCsv)
+            .Where(r => !string.IsNullOrWhiteSpace(GetAny(r, "package_id", "packageId")))
+            .GroupBy(r => GetAny(r, "package_id", "packageId"), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+        var rows = new StringBuilder();
+        rows.AppendLine("catalog_id,package_id,display_name,owner,repo_url,version,status,is_latest,unity_min,description,changelog,dependencies");
+        rows.AppendLine("catalogId(string)[key],packageId(string),displayName(string),owner(string),repoUrl(string),version(string),status(string),isLatest(bool)[nondata],unityMin(string),description(string),changelog(string),dependencies(string)");
+
+        foreach (var version in ReadCsv(versionCsv))
+        {
+            string packageId = GetAny(version, "package_id", "packageId");
+            string packageVersion = Get(version, "version");
+            if (string.IsNullOrWhiteSpace(packageId) || string.IsNullOrWhiteSpace(packageVersion)) continue;
+
+            packages.TryGetValue(packageId, out var package);
+            string catalogId = FirstNonEmpty(GetAny(version, "catalog_id", "catalogId"), $"{packageId}@{packageVersion}");
+            string displayName = FirstNonEmpty(GetAny(package, "display_name", "displayName"), GetAny(version, "display_name", "displayName"), packageId);
+            string owner = FirstNonEmpty(Get(package, "owner"), Get(version, "owner"), "ActionFit");
+            string repoUrl = FirstNonEmpty(GetAny(package, "repo_url", "repoUrl"), GetAny(version, "repo_url", "repoUrl"));
+            string status = FirstNonEmpty(Get(version, "status"), Get(package, "status"), "verified");
+            string isLatest = FirstNonEmpty(Get(version, "is_latest"), Get(version, "isLatest"), "false");
+            string unityMin = FirstNonEmpty(Get(version, "unity_min"), Get(version, "unityMin"), Get(package, "unity_min"), Get(package, "unityMin"));
+            string description = FirstNonEmpty(Get(package, "description"), Get(version, "description"));
+            string changelog = FirstNonEmpty(Get(version, "changelog"), Get(version, "release_note"), Get(version, "releaseNote"));
+            string dependencies = FirstNonEmpty(Get(version, "dependencies"), Get(package, "dependencies"));
+
+            rows.AppendLine(string.Join(",", new[]
+            {
+                Csv(catalogId),
+                Csv(packageId),
+                Csv(displayName),
+                Csv(owner),
+                Csv(repoUrl),
+                Csv(packageVersion),
+                Csv(status),
+                Csv(isLatest),
+                Csv(unityMin),
+                Csv(description),
+                Csv(changelog),
+                Csv(dependencies)
+            }));
+        }
+
+        return rows.ToString();
+    }
+
+    private static System.Collections.Generic.List<System.Collections.Generic.Dictionary<string, string>> ReadCsv(string csv)
+    {
+        string[] lines = StripBom(csv ?? "").Replace("\r\n", "\n").Replace("\r", "\n").Split('\n');
+        var result = new System.Collections.Generic.List<System.Collections.Generic.Dictionary<string, string>>();
+        if (lines.Length == 0 || string.IsNullOrWhiteSpace(lines[0])) return result;
+
+        string[] headers = SplitCsvLine(lines[0]).Select(h => h.Trim()).ToArray();
+        for (int i = 1; i < lines.Length; i++)
+        {
+            if (string.IsNullOrWhiteSpace(lines[i])) continue;
+            if (lines[i].Contains("(string)", StringComparison.OrdinalIgnoreCase)) continue;
+
+            string[] values = SplitCsvLine(lines[i]);
+            var row = new System.Collections.Generic.Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            for (int j = 0; j < headers.Length && j < values.Length; j++)
+                row[headers[j]] = values[j].Trim();
+            result.Add(row);
+        }
+
+        return result;
+    }
+
+    private static string[] SplitCsvLine(string line)
+    {
+        var result = new System.Collections.Generic.List<string>();
+        var sb = new StringBuilder();
+        bool inQuotes = false;
+
+        for (int i = 0; i < line.Length; i++)
+        {
+            char c = line[i];
+            if (c == '"')
+            {
+                if (inQuotes && i + 1 < line.Length && line[i + 1] == '"')
+                {
+                    sb.Append('"');
+                    i++;
+                    continue;
+                }
+
+                inQuotes = !inQuotes;
+                continue;
+            }
+
+            if (c == ',' && !inQuotes)
+            {
+                result.Add(sb.ToString());
+                sb.Clear();
+                continue;
+            }
+
+            sb.Append(c);
+        }
+
+        result.Add(sb.ToString());
+        return result.ToArray();
+    }
+
+    private static string Get(System.Collections.Generic.Dictionary<string, string> row, string key)
+    {
+        return row != null && row.TryGetValue(key, out string value) ? value : "";
+    }
+
+    private static string GetAny(System.Collections.Generic.Dictionary<string, string> row, params string[] keys)
+    {
+        foreach (string key in keys)
+        {
+            string value = Get(row, key);
+            if (!string.IsNullOrWhiteSpace(value)) return value;
+        }
+
+        return "";
+    }
+
+    private static string FirstNonEmpty(params string[] values)
+    {
+        foreach (string value in values)
+            if (!string.IsNullOrWhiteSpace(value))
+                return value.Trim();
+        return "";
+    }
+
+    private static string Csv(string value)
+    {
+        value ??= "";
+        bool quote = value.Contains(',') || value.Contains('"') || value.Contains('\n') || value.Contains('\r');
+        value = value.Replace("\"", "\"\"");
+        return quote ? $"\"{value}\"" : value;
     }
 
     private static string HttpGet(string url)

@@ -17,7 +17,7 @@ public class ActionFitPackagePublishWindow : EditorWindow
         Changed,
     }
 
-    private const string PackageCatalogPath = "Packages/com.actionfit.custompackagemanager/Editor/Catalog/actionfit_package_catalog.csv";
+    private const string PackageCatalogPath = "Packages/com.actionfit.custompackagemanager/Editor/Catalog/package_catalog.csv";
     private readonly Dictionary<string, string> _versionByAssetPath = new();
     private readonly HashSet<string> _expandedPackageIds = new();
     private readonly List<Entry> _entries = new();
@@ -277,21 +277,13 @@ public class ActionFitPackagePublishWindow : EditorWindow
     {
         _entries.Clear();
         var registered = ReadRegisteredPackageVersions();
-        foreach (string guid in AssetDatabase.FindAssets("t:ActionFitPackageInfo_SO", new[] { "Packages" }))
+        foreach (string packageJsonPath in Directory.GetFiles(Path.GetFullPath("Packages"), "package.json", SearchOption.AllDirectories))
         {
-            string assetPath = AssetDatabase.GUIDToAssetPath(guid);
-            if (!assetPath.StartsWith("Packages/com.actionfit.", StringComparison.OrdinalIgnoreCase)) continue;
+            string packageRoot = ToProjectRelativePath(Path.GetDirectoryName(packageJsonPath));
+            if (!packageRoot.StartsWith("Packages/com.actionfit.", StringComparison.OrdinalIgnoreCase)) continue;
 
-            var info = AssetDatabase.LoadAssetAtPath<ActionFitPackageInfo_SO>(assetPath);
-            if (info == null) continue;
-
-            string packageRoot = ActionFitPackageInfoUtility.FindPackageRoot(info);
-            if (string.IsNullOrWhiteSpace(packageRoot)) continue;
-
-            string packageJsonPath = Path.Combine(packageRoot, "package.json").Replace("\\", "/");
-            if (!File.Exists(Path.GetFullPath(packageJsonPath))) continue;
-
-            var manifest = ActionFitPackageManifest.Read(packageJsonPath);
+            string relativePackageJsonPath = Path.Combine(packageRoot, "package.json").Replace("\\", "/");
+            var manifest = ActionFitPackageManifest.Read(relativePackageJsonPath);
             bool isRegistered = registered.ContainsKey(manifest.Name);
             if (_mode == Mode.Create && isRegistered) continue;
             if ((_mode == Mode.Update || _mode == Mode.Changed) && !isRegistered) continue;
@@ -301,12 +293,16 @@ public class ActionFitPackagePublishWindow : EditorWindow
                 CompareVersions(manifest.Version, catalogLatestVersion) <= 0)
                 continue;
 
+            var info = ActionFitPackageInfoUtility.CreateOrUpdate(packageRoot);
+            if (info == null) continue;
+            string assetPath = AssetDatabase.GetAssetPath(info);
+
             _entries.Add(new Entry
             {
                 Info = info,
                 AssetPath = assetPath,
                 PackageRoot = packageRoot,
-                PackageJsonPath = packageJsonPath,
+                PackageJsonPath = relativePackageJsonPath,
                 PackageId = manifest.Name,
                 DisplayName = string.IsNullOrWhiteSpace(manifest.DisplayName) ? info.DisplayName : manifest.DisplayName,
                 Version = manifest.Version,
@@ -315,6 +311,15 @@ public class ActionFitPackagePublishWindow : EditorWindow
         }
 
         _entries.Sort((a, b) => string.Compare(a.DisplayName, b.DisplayName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string ToProjectRelativePath(string fullPath)
+    {
+        string projectRoot = Path.GetFullPath(".").Replace("\\", "/").TrimEnd('/');
+        string normalized = Path.GetFullPath(fullPath).Replace("\\", "/");
+        return normalized.StartsWith(projectRoot + "/", StringComparison.Ordinal)
+            ? normalized[(projectRoot.Length + 1)..]
+            : normalized;
     }
 
     private static Dictionary<string, string> ReadRegisteredPackageVersions()

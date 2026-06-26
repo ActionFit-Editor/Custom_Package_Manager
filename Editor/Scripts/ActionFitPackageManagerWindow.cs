@@ -12,7 +12,7 @@ using UnityEngine;
 public class ActionFitPackageManagerWindow : EditorWindow
 {
     private const string PackageName = "com.actionfit.custompackagemanager";
-    private const string CatalogRelativePath = "Editor/Catalog/actionfit_package_catalog.csv";
+    private const string CatalogRelativePath = "Editor/Catalog/package_catalog.csv";
     private const string ReadmePath = "Packages/com.actionfit.custompackagemanager/README.md";
     private const string ManifestPath = "Packages/manifest.json";
     private static readonly string PackageCatalogPath = Path.Combine("Packages", PackageName, CatalogRelativePath).Replace("\\", "/");
@@ -33,7 +33,13 @@ public class ActionFitPackageManagerWindow : EditorWindow
     private void OnEnable()
     {
         _settings = ActionFitPackageCatalogSettingsProvider.FindOrCreate();
+        Events.registeredPackages += OnRegisteredPackages;
         Reload();
+    }
+
+    private void OnDisable()
+    {
+        Events.registeredPackages -= OnRegisteredPackages;
     }
 
     private void OnGUI()
@@ -91,16 +97,27 @@ public class ActionFitPackageManagerWindow : EditorWindow
         EditorGUILayout.Space(4);
         EditorGUILayout.LabelField("", GUI.skin.horizontalSlider);
         EditorGUILayout.Space(4);
-        DrawPackageSection("Downloaded Packages", downloaded);
+        DrawPackageSection("Downloaded Packages", downloaded, true);
         EditorGUILayout.Space(4);
         EditorGUILayout.LabelField("", GUI.skin.horizontalSlider);
         EditorGUILayout.Space(4);
         DrawPackageSection("Available Packages", available);
     }
 
-    private void DrawPackageSection(string title, List<PackageGroup> packages)
+    private void DrawPackageSection(string title, List<PackageGroup> packages, bool showUpdateAllLatest = false)
     {
-        EditorGUILayout.LabelField($"{title} ({packages.Count})", EditorStyles.boldLabel);
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            EditorGUILayout.LabelField($"{title} ({packages.Count})", EditorStyles.boldLabel);
+            if (showUpdateAllLatest)
+            {
+                var targets = packages.Where(CanUpdateLatest).ToList();
+                EditorGUI.BeginDisabledGroup(targets.Count == 0);
+                if (GUILayout.Button($"Update All Latest ({targets.Count})", GUILayout.Width(165)))
+                    UpdateAllLatest(targets);
+                EditorGUI.EndDisabledGroup();
+            }
+        }
 
         if (packages.Count == 0)
         {
@@ -153,8 +170,8 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
             EditorGUILayout.LabelField("Installed", installed.Label);
             EditorGUILayout.LabelField("Owner", package.Owner);
-            EditorGUILayout.LabelField("Description", selectedVersion.Description);
-            EditorGUILayout.LabelField("Changelog", selectedVersion.Changelog);
+            DrawReadonlyText("Description", selectedVersion.Description);
+            DrawReadonlyText("Changelog", selectedVersion.Changelog);
 
             using (new EditorGUILayout.HorizontalScope())
             {
@@ -162,9 +179,12 @@ public class ActionFitPackageManagerWindow : EditorWindow
                 selected = EditorGUILayout.Popup(selected, versions.Select(v => v.VersionLabel).ToArray());
                 _selectedVersionByPackage[package.Id] = selected;
 
-                string buttonText = installed.IsInstalled ? "Apply Version" : "Install";
                 EditorGUI.BeginDisabledGroup(installed.IsEmbedded);
-                if (GUILayout.Button(buttonText, GUILayout.Width(120)))
+                EditorGUI.BeginDisabledGroup(!CanUpdateLatest(package));
+                if (installed.IsInstalled && GUILayout.Button("Update Latest Version", GUILayout.Width(150)))
+                    ApplyPackage(package, package.LatestVersion);
+                EditorGUI.EndDisabledGroup();
+                if (GUILayout.Button(installed.IsInstalled ? "Apply Version" : "Install", GUILayout.Width(120)))
                     ApplyPackage(package, selectedVersion);
                 EditorGUI.EndDisabledGroup();
 
@@ -182,6 +202,17 @@ public class ActionFitPackageManagerWindow : EditorWindow
         }
     }
 
+    private void DrawReadonlyText(string label, string value)
+    {
+        EditorGUILayout.LabelField(label);
+        var style = new GUIStyle(EditorStyles.textArea)
+        {
+            wordWrap = true
+        };
+        float height = Mathf.Max(38f, style.CalcHeight(new GUIContent(value ?? ""), EditorGUIUtility.currentViewWidth - 48f));
+        EditorGUILayout.SelectableLabel(value ?? "", style, GUILayout.MinHeight(height));
+    }
+
     private int GetSelectedVersionIndex(PackageGroup package, string installedVersion)
     {
         if (_selectedVersionByPackage.TryGetValue(package.Id, out int selected) &&
@@ -193,6 +224,15 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
         int latest = package.Versions.FindIndex(v => v.IsLatest);
         return latest >= 0 ? latest : 0;
+    }
+
+    private bool CanUpdateLatest(PackageGroup package)
+    {
+        var installed = GetInstalledVersion(package.Id);
+        return installed.IsInstalled &&
+               !installed.IsEmbedded &&
+               package.LatestVersion != null &&
+               !string.Equals(installed.Version, package.LatestVersion.Version, StringComparison.OrdinalIgnoreCase);
     }
 
     private void Reload()
@@ -316,6 +356,55 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
         AssetDatabase.Refresh();
         Client.Resolve();
+        QueueReload();
+    }
+
+    private void UpdateAllLatest(List<PackageGroup> packages)
+    {
+        if (packages == null || packages.Count == 0) return;
+
+        string list = string.Join("\n", packages.Select(p => $"- {p.Id}: {GetInstalledVersion(p.Id).Version} -> {p.LatestVersion.Version}"));
+        if (!EditorUtility.DisplayDialog(
+                "ActionFit Package Manager",
+                $"Update downloaded packages to latest versions?\n\n{list}",
+                "Update All Latest",
+                "Cancel"))
+            return;
+
+        string manifestPath = Path.GetFullPath(ManifestPath);
+        if (!File.Exists(manifestPath))
+        {
+            EditorUtility.DisplayDialog("ActionFit Package Manager", "Packages/manifest.json not found.", "OK");
+            return;
+        }
+
+        string manifest = File.ReadAllText(manifestPath);
+        var changes = new List<string>();
+        foreach (var package in packages)
+        {
+            foreach (var dep in ParseDependencies(package.LatestVersion.Dependencies))
+            {
+                var depVersion = FindVersion(dep.Id, dep.Version);
+                if (depVersion == null)
+                {
+                    UnityEngine.Debug.LogWarning($"[ActionFitPackageManager] Dependency not found in catalog: {dep.Id}@{dep.Version}");
+                    continue;
+                }
+
+                manifest = SetDependency(manifest, depVersion.Id, depVersion.PackageUrl);
+                changes.Add($"{depVersion.Id} -> {depVersion.PackageUrl}");
+            }
+
+            manifest = SetDependency(manifest, package.LatestVersion.Id, package.LatestVersion.PackageUrl);
+            changes.Add($"{package.LatestVersion.Id} -> {package.LatestVersion.PackageUrl}");
+        }
+
+        File.WriteAllText(manifestPath, manifest, new UTF8Encoding(false));
+        UnityEngine.Debug.Log("[ActionFitPackageManager] Updated manifest to latest versions:\n" + string.Join("\n", changes.Distinct()));
+
+        AssetDatabase.Refresh();
+        Client.Resolve();
+        QueueReload();
     }
 
     private void RemovePackage(PackageGroup package)
@@ -347,6 +436,22 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
         AssetDatabase.Refresh();
         Client.Resolve();
+        QueueReload();
+    }
+
+    private void OnRegisteredPackages(PackageRegistrationEventArgs args)
+    {
+        QueueReload();
+    }
+
+    private void QueueReload()
+    {
+        EditorApplication.delayCall += () =>
+        {
+            if (this == null) return;
+            Reload();
+            Repaint();
+        };
     }
 
     private PackageVersion FindVersion(string packageId, string version)
@@ -538,6 +643,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
         public string DisplayName { get; }
         public string Owner { get; }
         public string LatestVersionLabel { get; }
+        public PackageVersion LatestVersion => Versions.FirstOrDefault(v => v.IsLatest) ?? Versions.FirstOrDefault();
         public List<PackageVersion> Versions { get; }
     }
 
