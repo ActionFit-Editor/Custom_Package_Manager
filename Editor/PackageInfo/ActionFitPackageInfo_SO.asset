@@ -18,5 +18,5 @@ MonoBehaviour:
   _owner: ActionFit
   _status: verified
   _description: ActionFit 내부 UPM 패키지 카탈로그를 보고 설치, 버전 적용, 삭제, 배포 등록을 관리하는 에디터 도구
-  _releaseNote: Publish Package 창 새로고침 예외를 수정하고 README에 dependencies 설정 예시 추가
+  _releaseNote: Create Repo 시트 append 응답 검증을 강화해 Web App 미갱신과 legacy catalog 누락을 감지
   _dependenciesOverride: 

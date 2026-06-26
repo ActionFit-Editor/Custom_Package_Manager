@@ -169,9 +169,21 @@ public static class ActionFitPackagePublisher
         using var response = (HttpWebResponse)request.GetResponse();
         using var reader = new StreamReader(response.GetResponseStream(), Encoding.UTF8);
         string text = reader.ReadToEnd();
-        if ((int)response.StatusCode < 200 || (int)response.StatusCode >= 300 ||
-            text.IndexOf("\"success\":true", StringComparison.OrdinalIgnoreCase) < 0)
+        if ((int)response.StatusCode < 200 || (int)response.StatusCode >= 300)
             throw new InvalidOperationException($"Catalog append failed: {text}");
+
+        var result = JsonUtility.FromJson<CatalogAppendResponse>(text);
+        string expectedCatalogId = manifest.Name + "@" + manifest.Version;
+        if (result == null || !result.success ||
+            !string.Equals(result.package_id, manifest.Name, StringComparison.Ordinal) ||
+            !string.Equals(result.version, manifest.Version, StringComparison.Ordinal) ||
+            !string.Equals(result.catalog_id, expectedCatalogId, StringComparison.Ordinal) ||
+            !result.legacy_catalog_updated)
+        {
+            throw new InvalidOperationException(
+                "Catalog append did not return actionfit_package_catalog confirmation. " +
+                "Update the Apps Script Web App deployment and try again.\n" + text);
+        }
     }
 
     private static bool RunGit(string workingDirectory, string arguments, string token, bool throwOnFailure = true)
@@ -256,5 +268,15 @@ public static class ActionFitPackagePublisher
     private static string Quote(string value) => "\"" + (value ?? "").Replace("\"", "\\\"") + "\"";
     private static string EscapeJson(string value) => (value ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r");
     private static string Sanitize(string text, string token) => string.IsNullOrEmpty(token) ? text : text.Replace(token, "***");
+
+    [Serializable]
+    private sealed class CatalogAppendResponse
+    {
+        public bool success;
+        public string package_id;
+        public string version;
+        public string catalog_id;
+        public bool legacy_catalog_updated;
+    }
 }
 #endif
