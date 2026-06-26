@@ -26,7 +26,8 @@ ActionFit 전용 UPM 패키지 카탈로그를 표시하고, 선택한 패키지
 - README: 패키지 생성, 배포, 업데이트 플로우를 확인할 수 있도록 전용 README 창을 엽니다.
 - 설치/버전 적용: 선택한 패키지와 카탈로그에 등록된 dependency를 `Packages/manifest.json`에 반영한 뒤 Package Manager resolve를 실행합니다.
 - 삭제: manifest dependency로 설치된 패키지를 `Packages/manifest.json`에서 제거하고 Package Manager resolve를 실행합니다. `Packages/` 아래 embedded 패키지는 자동 삭제하지 않습니다.
-- 카탈로그 목록: 단일 카탈로그 안에서 Package Manager, 다운로드 받은 패키지, 다운로드 가능한 패키지를 섹션으로 나눠 함께 볼 수 있습니다.
+- 카탈로그 목록: 단일 카탈로그 안에서 Package Manager, embedded 패키지, 다운로드 받은 Git UPM 패키지, 다운로드 가능한 패키지를 섹션으로 나눠 함께 볼 수 있습니다.
+- Embedded 패키지는 `Packages/` 아래 로컬 폴더가 우선 적용되므로 `Update All Latest` 대상에서 제외됩니다. 배포는 `Publish Changed`에서 처리합니다.
 
 ## 새 패키지 생성
 

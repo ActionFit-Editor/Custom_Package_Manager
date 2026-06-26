@@ -90,10 +90,19 @@ public class ActionFitPackageManagerWindow : EditorWindow
         var filtered = FilteredPackages().ToList();
         var manager = filtered.Where(p => p.Id == PackageName).ToList();
         var catalogPackages = filtered.Where(p => p.Id != PackageName).ToList();
-        var downloaded = catalogPackages.Where(p => GetInstalledVersion(p.Id).IsInstalled).ToList();
+        var embedded = catalogPackages.Where(p => GetInstalledVersion(p.Id).IsEmbedded).ToList();
+        var downloaded = catalogPackages.Where(p =>
+        {
+            var installed = GetInstalledVersion(p.Id);
+            return installed.IsInstalled && !installed.IsEmbedded;
+        }).ToList();
         var available = catalogPackages.Where(p => !GetInstalledVersion(p.Id).IsInstalled).ToList();
 
         DrawPackageSection("Package Manager", manager);
+        EditorGUILayout.Space(4);
+        EditorGUILayout.LabelField("", GUI.skin.horizontalSlider);
+        EditorGUILayout.Space(4);
+        DrawPackageSection("Embedded Packages", embedded);
         EditorGUILayout.Space(4);
         EditorGUILayout.LabelField("", GUI.skin.horizontalSlider);
         EditorGUILayout.Space(4);
