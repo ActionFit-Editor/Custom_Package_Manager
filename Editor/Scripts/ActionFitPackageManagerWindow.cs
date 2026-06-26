@@ -64,6 +64,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
             if (GUILayout.Button("1. Create Package", EditorStyles.toolbarButton, GUILayout.Width(130))) ActionFitPackageCreateWindow.Open();
             if (GUILayout.Button("2. Create Repo", EditorStyles.toolbarButton, GUILayout.Width(115))) ActionFitPackagePublishWindow.OpenCreate();
             if (GUILayout.Button("3. Publish Package", EditorStyles.toolbarButton, GUILayout.Width(135))) ActionFitPackagePublishWindow.OpenUpdate();
+            if (GUILayout.Button("Publish Changed", EditorStyles.toolbarButton, GUILayout.Width(125))) ActionFitPackagePublishWindow.OpenChanged();
             if (GUILayout.Button("README", EditorStyles.toolbarButton, GUILayout.Width(80))) OpenReadme();
             if (GUILayout.Button("Open Catalog", EditorStyles.toolbarButton, GUILayout.Width(100)))
                 Selection.activeObject = AssetDatabase.LoadAssetAtPath<TextAsset>(ActiveCatalogPath);

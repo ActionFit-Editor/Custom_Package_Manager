@@ -21,6 +21,7 @@ ActionFit 전용 UPM 패키지 카탈로그를 표시하고, 선택한 패키지
 - 1. Create Package: 새 `Packages/com.actionfit.*` 패키지 폴더와 `package.json`, README, Editor asmdef, `Editor/Scripts`, PackageInfo SO를 생성합니다.
 - 2. Create Repo: 아직 카탈로그에 등록되지 않은 PackageInfo SO를 스캔해 첫 레포 생성/카탈로그 등록 창을 엽니다.
 - 3. Publish Package: 이미 카탈로그에 등록된 PackageInfo SO를 스캔해 버전 입력 후 업데이트 배포 창을 엽니다.
+- Publish Changed: 로컬 `package.json` 버전이 카탈로그 최신 버전보다 높은 등록 패키지만 모아 확인하고 한 번에 배포합니다.
 - README: 패키지 생성, 배포, 업데이트 플로우를 확인할 수 있도록 전용 README 창을 엽니다.
 - 설치/버전 적용: 선택한 패키지와 카탈로그에 등록된 dependency를 `Packages/manifest.json`에 반영한 뒤 Package Manager resolve를 실행합니다.
 - 삭제: manifest dependency로 설치된 패키지를 `Packages/manifest.json`에서 제거하고 Package Manager resolve를 실행합니다. `Packages/` 아래 embedded 패키지는 자동 삭제하지 않습니다.
@@ -55,7 +56,7 @@ Packages/com.actionfit.yourpackage/
 ## 배포
 
 1. 설정 SO에 Spreadsheet URL, Web App URL, Token, GitHub Org, GitHub Token, Publish Root를 입력합니다.
-2. Package Manager 창에서 `2. Create Repo` 또는 `3. Publish Package`를 누릅니다.
+2. Package Manager 창에서 `2. Create Repo`, `3. Publish Package`, 또는 `Publish Changed`를 누릅니다.
 3. 창에서 대상 패키지를 확인하고 실행합니다.
 4. 툴이 GitHub 레포를 생성/확인하고, 패키지 내용을 `Publish Root`에 복사한 뒤 commit, push, tag를 수행합니다.
 5. Apps Script에 카탈로그 append/upsert를 요청합니다.
@@ -64,9 +65,9 @@ Packages/com.actionfit.yourpackage/
 ## 업데이트
 
 1. 기존 패키지의 파일을 수정합니다.
-2. Package Manager 창에서 `3. Publish Package`를 누릅니다.
-3. `ActionFitPackageInfo_SO`의 릴리즈 노트를 새 버전에 맞게 수정합니다.
-4. Publish Version에 배포할 버전을 직접 입력하고 `3. Publish Package`를 누릅니다.
+2. `package.json` 버전과 `ActionFitPackageInfo_SO`의 릴리즈 노트를 새 버전에 맞게 수정합니다.
+3. Package Manager 창에서 `Publish Changed`를 눌러 카탈로그 최신 버전보다 높은 로컬 버전만 확인합니다.
+4. 여러 패키지를 한 번에 배포하려면 `Publish All Changed`를 누릅니다. 개별 배포가 필요하면 항목을 펼쳐 `Publish Changed`를 누릅니다.
 
 ## Dependencies 설정
 

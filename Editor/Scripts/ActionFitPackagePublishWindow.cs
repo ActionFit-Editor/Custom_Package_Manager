@@ -14,6 +14,7 @@ public class ActionFitPackagePublishWindow : EditorWindow
     {
         Create,
         Update,
+        Changed,
     }
 
     private const string PackageCatalogPath = "Packages/com.actionfit.custompackagemanager/Editor/Catalog/actionfit_package_catalog.csv";
@@ -33,9 +34,20 @@ public class ActionFitPackagePublishWindow : EditorWindow
         Open(Mode.Update);
     }
 
+    public static void OpenChanged()
+    {
+        Open(Mode.Changed);
+    }
+
     private static void Open(Mode mode)
     {
-        var window = GetWindow<ActionFitPackagePublishWindow>(mode == Mode.Create ? "2. Create Repo" : "3. Publish Package");
+        string title = mode switch
+        {
+            Mode.Create => "2. Create Repo",
+            Mode.Changed => "Publish Changed",
+            _ => "3. Publish Package"
+        };
+        var window = GetWindow<ActionFitPackagePublishWindow>(title);
         window.minSize = new Vector2(720, 520);
         window._mode = mode;
         window.Reload();
@@ -46,9 +58,12 @@ public class ActionFitPackagePublishWindow : EditorWindow
     {
         DrawToolbar();
 
-        string empty = _mode == Mode.Create
-            ? "No unregistered ActionFit package infos found."
-            : "No registered ActionFit package infos found.";
+        string empty = _mode switch
+        {
+            Mode.Create => "No unregistered ActionFit package infos found.",
+            Mode.Changed => "No changed package versions found. Local package.json versions are not higher than catalog latest versions.",
+            _ => "No registered ActionFit package infos found."
+        };
 
         if (_entries.Count == 0)
         {
@@ -71,6 +86,12 @@ public class ActionFitPackagePublishWindow : EditorWindow
         using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
         {
             if (GUILayout.Button("Reload", EditorStyles.toolbarButton, GUILayout.Width(70))) Reload();
+            if (_mode == Mode.Changed)
+            {
+                EditorGUI.BeginDisabledGroup(_entries.Count == 0);
+                if (GUILayout.Button("Publish All Changed", EditorStyles.toolbarButton, GUILayout.Width(145))) PublishAllChanged();
+                EditorGUI.EndDisabledGroup();
+            }
             GUILayout.FlexibleSpace();
         }
     }
@@ -94,6 +115,8 @@ public class ActionFitPackagePublishWindow : EditorWindow
 
             EditorGUILayout.LabelField("Package Root", entry.PackageRoot);
             EditorGUILayout.LabelField("Current Version", entry.Version);
+            if (_mode == Mode.Changed)
+                EditorGUILayout.LabelField("Catalog Latest", entry.CatalogLatestVersion);
 
             var serialized = new SerializedObject(entry.Info);
             serialized.Update();
@@ -115,7 +138,10 @@ public class ActionFitPackagePublishWindow : EditorWindow
                 }
                 else
                 {
-                    EditorGUILayout.LabelField($"Initial Version: {entry.Version}", EditorStyles.miniLabel);
+                    string label = _mode == Mode.Changed
+                        ? $"Publish Version: {entry.Version} (catalog latest: {entry.CatalogLatestVersion})"
+                        : $"Initial Version: {entry.Version}";
+                    EditorGUILayout.LabelField(label, EditorStyles.miniLabel);
                 }
 
                 GUILayout.FlexibleSpace();
@@ -125,7 +151,12 @@ public class ActionFitPackagePublishWindow : EditorWindow
                     EditorGUIUtility.PingObject(entry.Info);
                 }
 
-                string button = _mode == Mode.Create ? "2. Create Repo" : "3. Publish Package";
+                string button = _mode switch
+                {
+                    Mode.Create => "2. Create Repo",
+                    Mode.Changed => "Publish Changed",
+                    _ => "3. Publish Package"
+                };
                 if (GUILayout.Button(button, GUILayout.Width(140)))
                     Publish(entry);
             }
@@ -145,14 +176,58 @@ public class ActionFitPackagePublishWindow : EditorWindow
         if (!EditorUtility.DisplayDialog(
                 "ActionFit Package Manager",
                 $"{action}: {entry.PackageId}@{version}?\n\nThis will create/check the GitHub repository, push package contents and tag, then append the catalog spreadsheet.",
-                _mode == Mode.Create ? "2. Create Repo" : "3. Publish Package",
+                _mode == Mode.Create ? "2. Create Repo" : "Publish",
                 "Cancel"))
             return;
 
-        if (_mode == Mode.Update && !SetPackageJsonVersion(entry.PackageJsonPath, version, out string error))
-        {
+        if (!PublishInternal(entry, version, true, out string error))
             EditorUtility.DisplayDialog("ActionFit Package Manager", error, "OK");
+    }
+
+    private void PublishAllChanged()
+    {
+        var targets = _entries.ToArray();
+        if (targets.Length == 0) return;
+
+        string list = string.Join("\n", targets.Select(e => $"- {e.PackageId}: {e.CatalogLatestVersion} -> {e.Version}"));
+        if (!EditorUtility.DisplayDialog(
+                "ActionFit Package Manager",
+                $"Publish all changed packages?\n\n{list}\n\nThis will push package contents and tags, then append catalog rows.",
+                "Publish All Changed",
+                "Cancel"))
             return;
+
+        var succeeded = new List<string>();
+        foreach (var entry in targets)
+        {
+            if (!PublishInternal(entry, entry.Version, false, out string error))
+            {
+                string message = $"Bulk publish stopped.\n\nSucceeded:\n{string.Join("\n", succeeded)}\n\nFailed:\n{entry.PackageId}@{entry.Version}\n{error}";
+                Debug.LogError($"[ActionFitPackageManager] {message}");
+                EditorUtility.DisplayDialog("ActionFit Package Manager", message, "OK");
+                ScheduleReload();
+                return;
+            }
+
+            succeeded.Add($"{entry.PackageId}@{entry.Version}");
+        }
+
+        var settings = ActionFitPackageCatalogSettingsProvider.FindOrCreate();
+        if (ActionFitPackageCatalogUpdater.UpdateCatalog(settings, out string updateMessage))
+            Debug.Log($"[ActionFitPackageManager] {updateMessage}");
+        else
+            Debug.LogWarning($"[ActionFitPackageManager] Catalog refresh failed after bulk publish: {updateMessage}");
+
+        Debug.Log($"[ActionFitPackageManager] Bulk publish complete:\n{string.Join("\n", succeeded)}");
+        ScheduleReload();
+    }
+
+    private bool PublishInternal(Entry entry, string version, bool refreshCatalog, out string error)
+    {
+        error = "";
+        if (_mode == Mode.Update && !SetPackageJsonVersion(entry.PackageJsonPath, version, out error))
+        {
+            return false;
         }
 
         AssetDatabase.ImportAsset(entry.PackageJsonPath, ImportAssetOptions.ForceUpdate);
@@ -161,18 +236,22 @@ public class ActionFitPackagePublishWindow : EditorWindow
         if (ok)
         {
             Debug.Log($"[ActionFitPackageManager] {message}");
-            if (ActionFitPackageCatalogUpdater.UpdateCatalog(settings, out string updateMessage))
-                Debug.Log($"[ActionFitPackageManager] {updateMessage}");
-            else
-                Debug.LogWarning($"[ActionFitPackageManager] Catalog refresh failed after publish: {updateMessage}");
+            if (refreshCatalog)
+            {
+                if (ActionFitPackageCatalogUpdater.UpdateCatalog(settings, out string updateMessage))
+                    Debug.Log($"[ActionFitPackageManager] {updateMessage}");
+                else
+                    Debug.LogWarning($"[ActionFitPackageManager] Catalog refresh failed after publish: {updateMessage}");
 
-            ScheduleReload();
+                ScheduleReload();
+            }
+
+            return true;
         }
-        else
-        {
-            Debug.LogError($"[ActionFitPackageManager] Publish failed: {message}");
-            EditorUtility.DisplayDialog("ActionFit Package Manager", message, "OK");
-        }
+
+        error = message;
+        Debug.LogError($"[ActionFitPackageManager] Publish failed: {message}");
+        return false;
     }
 
     private string GetVersion(Entry entry)
@@ -197,7 +276,7 @@ public class ActionFitPackagePublishWindow : EditorWindow
     private void Reload()
     {
         _entries.Clear();
-        var registered = ReadRegisteredPackageIds();
+        var registered = ReadRegisteredPackageVersions();
         foreach (string guid in AssetDatabase.FindAssets("t:ActionFitPackageInfo_SO", new[] { "Packages" }))
         {
             string assetPath = AssetDatabase.GUIDToAssetPath(guid);
@@ -213,9 +292,14 @@ public class ActionFitPackagePublishWindow : EditorWindow
             if (!File.Exists(Path.GetFullPath(packageJsonPath))) continue;
 
             var manifest = ActionFitPackageManifest.Read(packageJsonPath);
-            bool isRegistered = registered.Contains(manifest.Name);
+            bool isRegistered = registered.ContainsKey(manifest.Name);
             if (_mode == Mode.Create && isRegistered) continue;
-            if (_mode == Mode.Update && !isRegistered) continue;
+            if ((_mode == Mode.Update || _mode == Mode.Changed) && !isRegistered) continue;
+
+            registered.TryGetValue(manifest.Name, out string catalogLatestVersion);
+            if (_mode == Mode.Changed &&
+                CompareVersions(manifest.Version, catalogLatestVersion) <= 0)
+                continue;
 
             _entries.Add(new Entry
             {
@@ -226,37 +310,80 @@ public class ActionFitPackagePublishWindow : EditorWindow
                 PackageId = manifest.Name,
                 DisplayName = string.IsNullOrWhiteSpace(manifest.DisplayName) ? info.DisplayName : manifest.DisplayName,
                 Version = manifest.Version,
+                CatalogLatestVersion = catalogLatestVersion,
             });
         }
 
         _entries.Sort((a, b) => string.Compare(a.DisplayName, b.DisplayName, StringComparison.OrdinalIgnoreCase));
     }
 
-    private static HashSet<string> ReadRegisteredPackageIds()
+    private static Dictionary<string, string> ReadRegisteredPackageVersions()
     {
-        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var versions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         string local = ActionFitPackageCatalogSettingsProvider.LocalCatalogPath;
         string catalogPath = File.Exists(Path.GetFullPath(local)) ? local : PackageCatalogPath;
         string path = Path.GetFullPath(catalogPath);
-        if (!File.Exists(path)) return ids;
+        if (!File.Exists(path)) return versions;
 
         string[] lines = File.ReadAllLines(path);
-        if (lines.Length < 2) return ids;
+        if (lines.Length < 2) return versions;
 
         var header = SplitCsvLine(lines[0]).Select(h => h.Trim()).ToArray();
         int packageIdIndex = Array.FindIndex(header, h => string.Equals(h, "package_id", StringComparison.OrdinalIgnoreCase));
-        if (packageIdIndex < 0) return ids;
+        int versionIndex = Array.FindIndex(header, h => string.Equals(h, "version", StringComparison.OrdinalIgnoreCase));
+        int isLatestIndex = Array.FindIndex(header, h => string.Equals(h, "is_latest", StringComparison.OrdinalIgnoreCase));
+        if (packageIdIndex < 0) return versions;
 
         for (int i = 1; i < lines.Length; i++)
         {
             if (string.IsNullOrWhiteSpace(lines[i])) continue;
             if (lines[i].Contains("(string)", StringComparison.OrdinalIgnoreCase)) continue;
             string[] cols = SplitCsvLine(lines[i]);
-            if (packageIdIndex < cols.Length && !string.IsNullOrWhiteSpace(cols[packageIdIndex]))
-                ids.Add(cols[packageIdIndex].Trim());
+            if (packageIdIndex >= cols.Length || string.IsNullOrWhiteSpace(cols[packageIdIndex])) continue;
+
+            string packageId = cols[packageIdIndex].Trim();
+            string version = versionIndex >= 0 && versionIndex < cols.Length ? cols[versionIndex].Trim() : "";
+            bool isLatest = isLatestIndex >= 0 && isLatestIndex < cols.Length && IsTrue(cols[isLatestIndex].Trim());
+            if (!versions.TryGetValue(packageId, out string current) ||
+                isLatest ||
+                CompareVersions(version, current) > 0)
+                versions[packageId] = version;
         }
 
-        return ids;
+        return versions;
+    }
+
+    private static int CompareVersions(string left, string right)
+    {
+        var leftParts = ParseVersion(left);
+        var rightParts = ParseVersion(right);
+        for (int i = 0; i < Math.Max(leftParts.Count, rightParts.Count); i++)
+        {
+            int l = i < leftParts.Count ? leftParts[i] : 0;
+            int r = i < rightParts.Count ? rightParts[i] : 0;
+            int cmp = l.CompareTo(r);
+            if (cmp != 0) return cmp;
+        }
+
+        return string.Compare(left, right, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static List<int> ParseVersion(string version)
+    {
+        var result = new List<int>();
+        foreach (string part in (version ?? "").Split('.'))
+        {
+            string digits = new(part.TakeWhile(char.IsDigit).ToArray());
+            result.Add(int.TryParse(digits, out int value) ? value : 0);
+        }
+        return result;
+    }
+
+    private static bool IsTrue(string value)
+    {
+        return value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("1", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("yes", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool SetPackageJsonVersion(string packageJsonPath, string version, out string error)
@@ -333,6 +460,7 @@ public class ActionFitPackagePublishWindow : EditorWindow
         public string PackageId;
         public string DisplayName;
         public string Version;
+        public string CatalogLatestVersion;
     }
 }
 #endif
