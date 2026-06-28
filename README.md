@@ -7,7 +7,7 @@ ActionFit 내부 UPM 패키지 카탈로그를 조회하고, 선택한 패키지
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.27"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.28"
   }
 }
 ```
@@ -25,14 +25,14 @@ ActionFit 내부 UPM 패키지 카탈로그를 조회하고, 선택한 패키지
 - `Updates`: 설치된 패키지 중 카탈로그 latest와 현재 버전이 다른 항목을 모아서 보여줍니다.
 - `Console`: 운영 기능을 모아둔 Manager Console 창을 엽니다.
 
-패키지 목록은 Package Manager, Embedded Packages, Downloaded Packages, Available Packages로 구분됩니다. Embedded package는 `Packages/` 아래에 직접 존재하는 패키지이며, Git UPM 업데이트는 embedded 폴더를 제거한 뒤 사용할 수 있습니다.
+패키지 목록은 Package Manager, Embedded Packages, Downloaded Packages, Available Packages로 구분됩니다. Embedded package는 `Packages/` 아래에 직접 존재하는 패키지이며, 다른 버전을 적용하면 Git UPM dependency로 전환하고 embedded 폴더를 제거한 뒤 Package Manager resolve를 실행합니다.
 
 ## Updates
 
 `Updates` 패널은 현재 프로젝트에 적용된 패키지를 기준으로 업데이트 가능 여부를 보여줍니다.
 
 - Downloaded package는 개별 업데이트, 선택 업데이트, 전체 업데이트를 사용할 수 있습니다.
-- Embedded package는 목록에 표시되지만 Git UPM 업데이트 버튼은 비활성화됩니다.
+- Embedded package는 목록에 표시되며, 현재 버전과 다른 버전을 선택하면 Git UPM dependency로 전환하는 업데이트를 실행할 수 있습니다.
 - `Changes`는 현재 설치 버전 다음 버전부터 선택한 버전까지의 업데이트 내역을 보여줍니다.
 - `History`는 해당 패키지의 전체 버전 내역을 최신부터 초기 버전까지 보여줍니다.
 

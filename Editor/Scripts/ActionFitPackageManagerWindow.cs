@@ -183,7 +183,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
                 selected = EditorGUILayout.Popup(selected, versions.Select(v => v.VersionLabel).ToArray());
                 _selectedVersionByPackage[package.Id] = selected;
 
-                EditorGUI.BeginDisabledGroup(installed.IsEmbedded);
+                EditorGUI.BeginDisabledGroup(!CanApplySelectedVersion(installed, selectedVersion));
                 if (GUILayout.Button(installed.IsInstalled ? "Apply Version" : "Install", GUILayout.Width(120)))
                     ApplyPackage(package, selectedVersion);
                 EditorGUI.EndDisabledGroup();
@@ -196,7 +196,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
                 if (GUILayout.Button("History", GUILayout.Width(90)))
                     ShowHistory(package, false, installed.Version, selectedVersion.Version);
 
-                if (installed.IsInstalled && !installed.IsEmbedded && !IsSameVersion(selectedVersion.Version, installed.Version))
+                if (installed.IsInstalled && !IsSameVersion(selectedVersion.Version, installed.Version))
                 {
                     if (GUILayout.Button("Changes", GUILayout.Width(90)))
                         ShowHistory(package, true, installed.Version, selectedVersion.Version);
@@ -204,7 +204,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
             }
 
             if (installed.IsEmbedded)
-                EditorGUILayout.HelpBox("Embedded package is already present under Packages/. Remove the embedded folder before installing this package as a Git UPM dependency.", MessageType.Info);
+                EditorGUILayout.HelpBox("Embedded package is present under Packages/. Applying a different version will write the Git UPM dependency, remove the embedded folder, and run Package Manager resolve.", MessageType.Info);
 
             if (!string.IsNullOrWhiteSpace(selectedVersion.Dependencies))
                 EditorGUILayout.LabelField("Dependencies", selectedVersion.Dependencies, EditorStyles.miniLabel);
@@ -287,8 +287,8 @@ public class ActionFitPackageManagerWindow : EditorWindow
                     EditorGUI.EndDisabledGroup();
                 }
 
-                if (!candidate.CanApply && candidate.Installed.IsEmbedded)
-                    EditorGUILayout.HelpBox($"{candidate.Package.Id} is embedded under Packages/. Remove the embedded folder before Git UPM update.", MessageType.Info);
+                if (candidate.Installed.IsEmbedded)
+                    EditorGUILayout.HelpBox($"{candidate.Package.Id} is embedded under Packages/. Updating will convert it to a Git UPM dependency and remove the embedded folder.", MessageType.Info);
             }
 
             DrawHistoryPanel();
@@ -304,7 +304,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
             if (!installed.IsInstalled || package.LatestVersion == null) continue;
             if (IsSameVersion(package.LatestVersion.Version, installed.Version)) continue;
 
-            result.Add(new UpdateCandidate(package, installed, package.LatestVersion, !installed.IsEmbedded));
+            result.Add(new UpdateCandidate(package, installed, package.LatestVersion, CanApplySelectedVersion(installed, package.LatestVersion)));
         }
 
         return result
@@ -399,12 +399,20 @@ public class ActionFitPackageManagerWindow : EditorWindow
     private static string GetUpdateStatus(PackageGroup package, InstalledPackage installed)
     {
         if (!installed.IsInstalled) return "not installed";
-        if (installed.IsEmbedded) return "embedded package - remove the embedded folder before Git UPM update";
         if (package.LatestVersion == null) return "latest version not found in catalog";
         if (IsSameVersion(package.LatestVersion.Version, installed.Version)) return "already latest";
 
         string direction = IsVersionNewer(package.LatestVersion.Version, installed.Version) ? "newer" : "different";
-        return $"{installed.Version} -> {package.LatestVersion.Version} ({direction})";
+        string source = installed.IsEmbedded ? "embedded, " : "";
+        return $"{installed.Version} -> {package.LatestVersion.Version} ({source}{direction})";
+    }
+
+    private static bool CanApplySelectedVersion(InstalledPackage installed, PackageVersion version)
+    {
+        if (version == null) return false;
+        if (!installed.IsInstalled) return true;
+        if (!installed.IsEmbedded) return true;
+        return !IsSameVersion(version.Version, installed.Version);
     }
 
     private void Reload()
@@ -497,6 +505,22 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
     private void ApplyPackage(PackageGroup package, PackageVersion version)
     {
+        var installed = GetInstalledVersion(package.Id);
+        bool replaceEmbedded = installed.IsEmbedded;
+        if (replaceEmbedded && IsSameVersion(installed.Version, version.Version))
+        {
+            EditorUtility.DisplayDialog("ActionFit Package Manager", "Embedded package is already on the selected version.", "OK");
+            return;
+        }
+
+        if (replaceEmbedded &&
+            !EditorUtility.DisplayDialog(
+                "ActionFit Package Manager",
+                $"Replace embedded package with Git UPM dependency?\n\n{package.Id}: {installed.Version} -> {version.Version}\n\nThis will remove Packages/{package.Id} after writing Packages/manifest.json.",
+                "Replace",
+                "Cancel"))
+            return;
+
         string manifestPath = ManifestFullPath;
         if (!File.Exists(manifestPath))
         {
@@ -526,9 +550,25 @@ public class ActionFitPackageManagerWindow : EditorWindow
         File.WriteAllText(manifestPath, manifest, new UTF8Encoding(false));
         UnityEngine.Debug.Log("[ActionFitPackageManager] Updated manifest:\n" + string.Join("\n", changes));
 
+        if (replaceEmbedded)
+            RemoveEmbeddedFolderWithoutManifestChange(package);
+
         AssetDatabase.Refresh();
         Client.Resolve();
         QueueReload();
+    }
+
+    private static void RemoveEmbeddedFolderWithoutManifestChange(PackageGroup package)
+    {
+        string packageRoot = $"Packages/{package.Id}";
+        string fullPackageRoot = Path.Combine(ProjectRootPath, "Packages", package.Id);
+        if (!Directory.Exists(fullPackageRoot)) return;
+
+        bool removedFolder = AssetDatabase.MoveAssetToTrash(packageRoot);
+        if (removedFolder)
+            UnityEngine.Debug.Log($"[ActionFitPackageManager] Removed embedded package folder for Git UPM replacement: {packageRoot}");
+        else
+            UnityEngine.Debug.LogError($"[ActionFitPackageManager] Failed to remove embedded package folder after manifest update: {packageRoot}");
     }
 
     private void UpdateAllLatest(List<PackageGroup> packages)
@@ -538,7 +578,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
         string list = string.Join("\n", packages.Select(p => $"- {p.Id}: {GetInstalledVersion(p.Id).Version} -> {p.LatestVersion.Version}"));
         if (!EditorUtility.DisplayDialog(
                 "ActionFit Package Manager",
-                $"Update downloaded packages to latest versions?\n\n{list}",
+                $"Update selected packages to latest versions?\n\nEmbedded packages will be converted to Git UPM dependencies.\n\n{list}",
                 "Update All Latest",
                 "Cancel"))
             return;
@@ -552,8 +592,12 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
         string manifest = File.ReadAllText(manifestPath);
         var changes = new List<string>();
+        var embeddedReplacements = new List<PackageGroup>();
         foreach (var package in packages)
         {
+            if (GetInstalledVersion(package.Id).IsEmbedded)
+                embeddedReplacements.Add(package);
+
             foreach (var dep in ParseDependencies(package.LatestVersion.Dependencies))
             {
                 var depVersion = FindVersion(dep.Id, dep.Version);
@@ -573,6 +617,9 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
         File.WriteAllText(manifestPath, manifest, new UTF8Encoding(false));
         UnityEngine.Debug.Log("[ActionFitPackageManager] Updated manifest to latest versions:\n" + string.Join("\n", changes.Distinct()));
+
+        foreach (var package in embeddedReplacements)
+            RemoveEmbeddedFolderWithoutManifestChange(package);
 
         AssetDatabase.Refresh();
         Client.Resolve();

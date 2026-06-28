@@ -20,31 +20,60 @@ MonoBehaviour:
   _description: "ActionFit UPM \uD328\uD0A4\uC9C0 \uCE74\uD0C8\uB85C\uADF8\uB97C
     \uBCF4\uACE0 Git URL \uAE30\uBC18 \uC124\uCE58\uC640 \uBC84\uC804 \uC801\uC6A9\uC744
     \uB3C4\uC640\uC8FC\uB294 Unity \uC5D0\uB514\uD130 \uD234."
-  _releaseNote: '## 1.1.27
+  _releaseNote: '## 1.1.28
 
-    - Package Manager menu was reorganized to `Tools
-    > ActionFit > Package Manager > Package Manager`, and operational tools moved
-    to `Manager Console`. The main install/update window now keeps only the buttons
-    needed for package management.
+    - Fixed the remaining embedded package update block.
+    If `Custom Package Manager` is installed as `Packages/com.actionfit.custompackagemanager`
+    at `1.1.26` or `1.1.27`, selecting a different catalog version now enables `Apply
+    Version` instead of staying disabled.
 
-    - `Manager Console` now groups create, repo,
-    publish, README, catalog, manifest, and settings actions in a separate window,
-    reducing toolbar clutter in daily package install flows.
+    - Applying a different version to
+    an embedded package now writes the Git UPM dependency to `Packages/manifest.json`,
+    removes the embedded package folder, and runs Package Manager resolve. The selected
+    version can actually replace the embedded folder instead of being shadowed by
+    it.
 
-    - The new `Updates`
-    panel collects installed packages whose catalog latest version differs from the
-    current version. Downloaded packages can be updated individually, by selection,
-    or all at once.
+    - The `Updates` panel now treats embedded packages with a different
+    latest version as actionable update candidates. `Update`, `Update Selected`,
+    and `Update All` use the same embedded-to-Git-UPM replacement path.
 
-    - Update history viewing was added. `History` shows all
-    catalog changelogs newest to oldest, while `Changes` shows only the changelogs
-    between the installed version and the selected target version.
+    - Update
+    status text now marks embedded update candidates as `embedded, newer` or `embedded,
+    different`, making the reason and target clearer before applying.
 
-    - Embedded
-    packages still appear in update checks, but Git UPM update actions remain disabled
-    until the embedded package folder is removed.
+    - README
+    was updated so embedded package updates are documented as supported conversion
+    updates, not as permanently disabled actions.
 
-    - README and package metadata
-    Korean text were restored from mojibake and updated for the new menu paths and
-    update management flow.'
+    - Caution: `1.1.27` is already
+    tagged, so this fix must be published as `1.1.28`.
+
+
+    ## 1.1.27
+
+    - Package
+    Manager menu was reorganized to `Tools > ActionFit > Package Manager > Package
+    Manager`, and operational tools moved to `Manager Console`. The main install/update
+    window now keeps only the buttons needed for package management.
+
+    - `Manager
+    Console` now groups create, repo, publish, README, catalog, manifest, and settings
+    actions in a separate window, reducing toolbar clutter in daily package install
+    flows.
+
+    - The new `Updates` panel collects installed packages whose catalog
+    latest version differs from the current version. Downloaded packages can be updated
+    individually, by selection, or all at once.
+
+    - Update history viewing was
+    added. `History` shows all catalog changelogs newest to oldest, while `Changes`
+    shows only the changelogs between the installed version and the selected target
+    version.
+
+    - Embedded packages still appear in update checks, but Git UPM
+    update actions remain disabled until the embedded package folder is removed.
+
+    -
+    README and package metadata Korean text were restored from mojibake and updated
+    for the new menu paths and update management flow.'
   _dependenciesOverride: 
