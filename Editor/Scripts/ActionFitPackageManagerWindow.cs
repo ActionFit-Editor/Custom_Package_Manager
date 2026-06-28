@@ -18,6 +18,10 @@ public class ActionFitPackageManagerWindow : EditorWindow
     private static readonly string PackageCatalogPath = Path.Combine("Packages", PackageName, CatalogRelativePath).Replace("\\", "/");
     private static string ProjectRootPath => Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
     private static string ManifestFullPath => Path.Combine(ProjectRootPath, "Packages", "manifest.json");
+    private static string ProjectRelativeFullPath(string relativePath)
+    {
+        return Path.Combine(ProjectRootPath, relativePath.Replace("/", Path.DirectorySeparatorChar.ToString()));
+    }
 
     private readonly Dictionary<string, int> _selectedVersionByPackage = new();
     private readonly HashSet<string> _expandedPackageIds = new();
@@ -243,7 +247,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
         return installed.IsInstalled &&
                !installed.IsEmbedded &&
                package.LatestVersion != null &&
-               !string.Equals(installed.Version, package.LatestVersion.Version, StringComparison.OrdinalIgnoreCase);
+               IsVersionNewer(package.LatestVersion.Version, installed.Version);
     }
 
     private void Reload()
@@ -251,7 +255,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
         _packages.Clear();
         _selectedVersionByPackage.Clear();
 
-        string path = Path.GetFullPath(ActiveCatalogPath);
+        string path = ProjectRelativeFullPath(ActiveCatalogPath);
         if (File.Exists(path))
         {
             var rows = ReadCatalog(path);
@@ -267,7 +271,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
         get
         {
             string local = ActionFitPackageCatalogSettingsProvider.LocalCatalogPath;
-            return File.Exists(Path.GetFullPath(local)) ? local : PackageCatalogPath;
+            return File.Exists(ProjectRelativeFullPath(local)) ? local : PackageCatalogPath;
         }
     }
 
@@ -573,6 +577,15 @@ public class ActionFitPackageManagerWindow : EditorWindow
     {
         int hash = packageUrl.LastIndexOf('#');
         return hash >= 0 && hash < packageUrl.Length - 1 ? packageUrl[(hash + 1)..] : "";
+    }
+
+    private static bool IsVersionNewer(string candidateVersion, string installedVersion)
+    {
+        if (string.IsNullOrWhiteSpace(candidateVersion)) return false;
+        if (string.IsNullOrWhiteSpace(installedVersion)) return true;
+
+        int compare = PackageVersionComparer.Instance.Compare(candidateVersion, installedVersion);
+        return compare > 0;
     }
 
     private static int FindMatchingBrace(string text, int openBrace)

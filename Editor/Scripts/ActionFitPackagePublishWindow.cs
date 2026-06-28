@@ -18,6 +18,14 @@ public class ActionFitPackagePublishWindow : EditorWindow
     }
 
     private const string PackageCatalogPath = "Packages/com.actionfit.custompackagemanager/Editor/Catalog/package_catalog.csv";
+    private static string ProjectRootPath => Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+    private static string ProjectRootNormalized => ProjectRootPath.Replace("\\", "/").TrimEnd('/');
+
+    private static string ProjectRelativeFullPath(string relativePath)
+    {
+        return Path.Combine(ProjectRootPath, relativePath.Replace("/", Path.DirectorySeparatorChar.ToString()));
+    }
+
     private readonly Dictionary<string, string> _versionByAssetPath = new();
     private readonly HashSet<string> _expandedPackageIds = new();
     private readonly List<Entry> _entries = new();
@@ -277,7 +285,7 @@ public class ActionFitPackagePublishWindow : EditorWindow
     {
         _entries.Clear();
         var registered = ReadRegisteredPackageVersions();
-        foreach (string packageJsonPath in Directory.GetFiles(Path.GetFullPath("Packages"), "package.json", SearchOption.AllDirectories))
+        foreach (string packageJsonPath in Directory.GetFiles(ProjectRelativeFullPath("Packages"), "package.json", SearchOption.AllDirectories))
         {
             string packageRoot = ToProjectRelativePath(Path.GetDirectoryName(packageJsonPath));
             if (!packageRoot.StartsWith("Packages/com.actionfit.", StringComparison.OrdinalIgnoreCase)) continue;
@@ -316,10 +324,9 @@ public class ActionFitPackagePublishWindow : EditorWindow
 
     private static string ToProjectRelativePath(string fullPath)
     {
-        string projectRoot = Path.GetFullPath(".").Replace("\\", "/").TrimEnd('/');
         string normalized = Path.GetFullPath(fullPath).Replace("\\", "/");
-        return normalized.StartsWith(projectRoot + "/", StringComparison.Ordinal)
-            ? normalized[(projectRoot.Length + 1)..]
+        return normalized.StartsWith(ProjectRootNormalized + "/", StringComparison.Ordinal)
+            ? normalized[(ProjectRootNormalized.Length + 1)..]
             : normalized;
     }
 
@@ -327,8 +334,8 @@ public class ActionFitPackagePublishWindow : EditorWindow
     {
         var versions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         string local = ActionFitPackageCatalogSettingsProvider.LocalCatalogPath;
-        string catalogPath = File.Exists(Path.GetFullPath(local)) ? local : PackageCatalogPath;
-        string path = Path.GetFullPath(catalogPath);
+        string catalogPath = File.Exists(ProjectRelativeFullPath(local)) ? local : PackageCatalogPath;
+        string path = ProjectRelativeFullPath(catalogPath);
         if (!File.Exists(path)) return versions;
 
         string[] lines = File.ReadAllLines(path);

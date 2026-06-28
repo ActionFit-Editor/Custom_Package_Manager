@@ -13,6 +13,13 @@ public static class ActionFitPackageCatalogUpdater
     private const string PackageSheetName = "package_catalog";
     private const string VersionSheetName = "package_versions";
 
+    private static string ProjectRootPath => Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+
+    private static string ProjectRelativeFullPath(string relativePath)
+    {
+        return Path.Combine(ProjectRootPath, relativePath.Replace("/", Path.DirectorySeparatorChar.ToString()));
+    }
+
     public static bool UpdateCatalog(ActionFitPackageCatalogSettings_SO settings, out string message)
     {
         message = "";
@@ -57,7 +64,7 @@ public static class ActionFitPackageCatalogUpdater
 
         ActionFitPackageCatalogSettingsProvider.EnsureLocalCatalogFolder();
         string path = ActionFitPackageCatalogSettingsProvider.LocalCatalogPath;
-        string fullPath = Path.GetFullPath(path);
+        string fullPath = ProjectRelativeFullPath(path);
         string previous = File.Exists(fullPath) ? File.ReadAllText(fullPath) : "";
 
         if (Normalize(previous) == Normalize(csv))
