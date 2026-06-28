@@ -214,6 +214,10 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
             if (!string.IsNullOrWhiteSpace(selectedVersion.Dependencies))
                 EditorGUILayout.LabelField("Dependencies", selectedVersion.Dependencies, EditorStyles.miniLabel);
+
+            string updateStatus = GetUpdateStatus(package, installed);
+            if (!string.IsNullOrWhiteSpace(updateStatus))
+                EditorGUILayout.LabelField("Update", updateStatus, EditorStyles.miniLabel);
         }
     }
 
@@ -247,7 +251,18 @@ public class ActionFitPackageManagerWindow : EditorWindow
         return installed.IsInstalled &&
                !installed.IsEmbedded &&
                package.LatestVersion != null &&
-               IsVersionNewer(package.LatestVersion.Version, installed.Version);
+               !IsSameVersion(package.LatestVersion.Version, installed.Version);
+    }
+
+    private static string GetUpdateStatus(PackageGroup package, InstalledPackage installed)
+    {
+        if (!installed.IsInstalled) return "not installed";
+        if (installed.IsEmbedded) return "embedded package - remove the embedded folder before Git UPM update";
+        if (package.LatestVersion == null) return "latest version not found in catalog";
+        if (IsSameVersion(package.LatestVersion.Version, installed.Version)) return "already latest";
+
+        string direction = IsVersionNewer(package.LatestVersion.Version, installed.Version) ? "newer" : "different";
+        return $"{installed.Version} -> {package.LatestVersion.Version} ({direction})";
     }
 
     private void Reload()
@@ -647,6 +662,11 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
         int compare = PackageVersionComparer.Instance.Compare(candidateVersion, installedVersion);
         return compare > 0;
+    }
+
+    private static bool IsSameVersion(string left, string right)
+    {
+        return string.Equals(left?.Trim(), right?.Trim(), StringComparison.OrdinalIgnoreCase);
     }
 
     private static int FindMatchingBrace(string text, int openBrace)
