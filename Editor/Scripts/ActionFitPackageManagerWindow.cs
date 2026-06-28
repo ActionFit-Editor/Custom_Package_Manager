@@ -203,7 +203,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
                     ApplyPackage(package, selectedVersion);
                 EditorGUI.EndDisabledGroup();
 
-                EditorGUI.BeginDisabledGroup(!installed.IsInstalled || installed.IsEmbedded);
+                EditorGUI.BeginDisabledGroup(!installed.IsInstalled);
                 if (GUILayout.Button("Remove", GUILayout.Width(90)))
                     RemovePackage(package);
                 EditorGUI.EndDisabledGroup();
@@ -424,9 +424,27 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
     private void RemovePackage(PackageGroup package)
     {
+        var installed = GetInstalledVersion(package.Id);
+        if (!installed.IsInstalled)
+        {
+            UnityEngine.Debug.LogWarning($"[ActionFitPackageManager] Package is not installed: {package.Id}");
+            return;
+        }
+
+        if (installed.IsEmbedded)
+        {
+            RemoveEmbeddedPackage(package);
+            return;
+        }
+
+        RemoveManifestPackage(package);
+    }
+
+    private void RemoveManifestPackage(PackageGroup package)
+    {
         if (!EditorUtility.DisplayDialog(
                 "ActionFit Package Manager",
-                $"Remove {package.Id} from Packages/manifest.json?\n\nEmbedded packages under Packages/ are not removed by this action.",
+                $"Remove {package.Id} from Packages/manifest.json?",
                 "Remove",
                 "Cancel"))
             return;
@@ -449,6 +467,49 @@ public class ActionFitPackageManagerWindow : EditorWindow
         File.WriteAllText(manifestPath, manifest, new UTF8Encoding(false));
         UnityEngine.Debug.Log($"[ActionFitPackageManager] Removed manifest dependency: {package.Id}");
 
+        AssetDatabase.Refresh();
+        Client.Resolve();
+        QueueReload();
+    }
+
+    private void RemoveEmbeddedPackage(PackageGroup package)
+    {
+        string packageRoot = $"Packages/{package.Id}";
+        string fullPackageRoot = Path.Combine(ProjectRootPath, "Packages", package.Id);
+        if (!Directory.Exists(fullPackageRoot))
+        {
+            UnityEngine.Debug.LogWarning($"[ActionFitPackageManager] Embedded package folder not found: {packageRoot}");
+            QueueReload();
+            return;
+        }
+
+        if (!EditorUtility.DisplayDialog(
+                "ActionFit Package Manager",
+                $"Move embedded package folder to trash?\n\n{packageRoot}\n\nIf the same package also exists in Packages/manifest.json, that dependency will be removed too.",
+                "Remove",
+                "Cancel"))
+            return;
+
+        bool removedFolder = AssetDatabase.MoveAssetToTrash(packageRoot);
+        if (!removedFolder)
+        {
+            EditorUtility.DisplayDialog("ActionFit Package Manager", $"Failed to remove embedded package folder:\n{packageRoot}", "OK");
+            return;
+        }
+
+        string manifestPath = ManifestFullPath;
+        if (File.Exists(manifestPath))
+        {
+            string manifest = File.ReadAllText(manifestPath);
+            string updated = RemoveDependency(manifest, package.Id, out bool removedDependency);
+            if (removedDependency)
+            {
+                File.WriteAllText(manifestPath, updated, new UTF8Encoding(false));
+                UnityEngine.Debug.Log($"[ActionFitPackageManager] Removed manifest dependency: {package.Id}");
+            }
+        }
+
+        UnityEngine.Debug.Log($"[ActionFitPackageManager] Removed embedded package folder: {packageRoot}");
         AssetDatabase.Refresh();
         Client.Resolve();
         QueueReload();
