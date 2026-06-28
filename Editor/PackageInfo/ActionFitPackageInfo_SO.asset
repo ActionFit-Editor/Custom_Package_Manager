@@ -15,30 +15,36 @@ MonoBehaviour:
   _packageId: com.actionfit.custompackagemanager
   _displayName: Custom Package Manager
   _repoName: Custom_Package_Manager
-  _owner: 
+  _owner: "\uC1A1\uC81C\uC6B0"
   _status: verified
   _description: "ActionFit UPM \uD328\uD0A4\uC9C0 \uCE74\uD0C8\uB85C\uADF8\uB97C
     \uBCF4\uACE0 Git URL \uAE30\uBC18 \uC124\uCE58\uC640 \uBC84\uC804 \uC801\uC6A9\uC744
     \uB3C4\uC640\uC8FC\uB294 Unity \uC5D0\uB514\uD130 \uD234."
-  _releaseNote: "- `Packages/manifest.json`\uC758 dependencies \uBE14\uB85D\uC744
-    \uAC31\uC2E0/\uC0AD\uC81C\uD560 \uB54C \uC804\uCCB4 dependency \uBAA9\uB85D\uC744
-    \uB2E4\uC2DC \uC368\uC11C 4\uCE78 \uB4E4\uC5EC\uC4F0\uAE30, \uC27C\uD45C, \uBE48
-    \uC904 \uD3EC\uB9F7\uC744 \uC77C\uAD00\uB418\uAC8C \uC720\uC9C0\uD569\uB2C8\uB2E4.
-    \uC0C8 \uD328\uD0A4\uC9C0\uB97C \uC801\uC6A9\uD574\uB3C4 dependency \uC904\uC774
-    \uB4E4\uC5EC\uC4F0\uAE30 \uC5C6\uC774 \uBD99\uAC70\uB098 \uBD88\uD544\uC694\uD55C
-    \uBE48 \uC904\uC774 \uC0DD\uAE30\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.\n- `Update Latest
-    Version` \uD65C\uC131\uD654 \uC870\uAC74\uC740 \uCD5C\uC2E0 catalog \uBC84\uC804\uACFC
-    \uC124\uCE58 \uBC84\uC804\uC758 \uBB38\uC790\uC5F4 \uCC28\uC774 \uD655\uC778\uC744
-    \uC720\uC9C0\uD569\uB2C8\uB2E4. catalog latest\uAC00 \uB2E4\uB974\uBA74 \uBC84\uD2BC\uC774
-    \uD65C\uC131\uD654\uB429\uB2C8\uB2E4.\n- \uD328\uD0A4\uC9C0 \uC0C1\uC138 \uC601\uC5ED\uC758
-    `Update` \uC0C1\uD0DC \uB77C\uBCA8\uC740 \uC720\uC9C0\uB418\uC5B4, `not installed`,
-    `embedded package`, `already latest`, `1.1.25 -> 1.1.26 (newer)`\uCC98\uB7FC
-    \uBC84\uD2BC \uC0C1\uD0DC\uC640 \uC801\uC6A9 \uB300\uC0C1 \uBC84\uC804\uC744
-    \uD655\uC778\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4.\n- Embedded package\uB294
-    Git UPM \uC5C5\uB370\uC774\uD2B8 \uB300\uC0C1\uC774 \uC544\uB2C8\uBBC0\uB85C
-    \uC0C1\uD0DC \uB77C\uBCA8\uC5D0\uC11C embedded \uD3F4\uB354\uB97C \uBA3C\uC800
-    \uC81C\uAC70\uD574\uC57C \uD55C\uB2E4\uACE0 \uC548\uB0B4\uD569\uB2C8\uB2E4.\n-
-    Caution: `1.1.25`\uB294 \uC774\uBBF8 \uBC30\uD3EC\uB41C \uD0DC\uADF8\uC774\uBBC0\uB85C,
-    manifest \uD3EC\uB9F7 \uC815\uADDC\uD654 \uC218\uC815\uC740 `1.1.26`\uC73C\uB85C
-    \uBC30\uD3EC\uD574\uC57C \uD569\uB2C8\uB2E4."
+  _releaseNote: '## 1.1.27
+
+    - Package Manager menu was reorganized to `Tools
+    > ActionFit > Package Manager > Package Manager`, and operational tools moved
+    to `Manager Console`. The main install/update window now keeps only the buttons
+    needed for package management.
+
+    - `Manager Console` now groups create, repo,
+    publish, README, catalog, manifest, and settings actions in a separate window,
+    reducing toolbar clutter in daily package install flows.
+
+    - The new `Updates`
+    panel collects installed packages whose catalog latest version differs from the
+    current version. Downloaded packages can be updated individually, by selection,
+    or all at once.
+
+    - Update history viewing was added. `History` shows all
+    catalog changelogs newest to oldest, while `Changes` shows only the changelogs
+    between the installed version and the selected target version.
+
+    - Embedded
+    packages still appear in update checks, but Git UPM update actions remain disabled
+    until the embedded package folder is removed.
+
+    - README and package metadata
+    Korean text were restored from mojibake and updated for the new menu paths and
+    update management flow.'
   _dependenciesOverride: 

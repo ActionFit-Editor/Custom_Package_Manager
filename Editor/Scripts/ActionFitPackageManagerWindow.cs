@@ -13,8 +13,6 @@ public class ActionFitPackageManagerWindow : EditorWindow
 {
     private const string PackageName = "com.actionfit.custompackagemanager";
     private const string CatalogRelativePath = "Editor/Catalog/package_catalog.csv";
-    private const string ReadmePath = "Packages/com.actionfit.custompackagemanager/README.md";
-    private const string ManifestPath = "Packages/manifest.json";
     private static readonly string PackageCatalogPath = Path.Combine("Packages", PackageName, CatalogRelativePath).Replace("\\", "/");
     private static string ProjectRootPath => Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
     private static string ManifestFullPath => Path.Combine(ProjectRootPath, "Packages", "manifest.json");
@@ -25,12 +23,18 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
     private readonly Dictionary<string, int> _selectedVersionByPackage = new();
     private readonly HashSet<string> _expandedPackageIds = new();
+    private readonly HashSet<string> _selectedUpdatePackageIds = new();
     private readonly List<PackageGroup> _packages = new();
     private ActionFitPackageCatalogSettings_SO _settings;
     private Vector2 _scroll;
     private string _filter = "";
+    private bool _showUpdateManager;
+    private string _historyPackageId = "";
+    private bool _historyRangeOnly;
+    private string _historyFromVersion = "";
+    private string _historyToVersion = "";
 
-    [MenuItem("Tools/ActionFit/Package Manager", false, 0)]
+    [MenuItem("Tools/ActionFit/Package Manager/Package Manager", false, 0)]
     public static void Open()
     {
         GetWindow<ActionFitPackageManagerWindow>("ActionFit Packages");
@@ -70,25 +74,14 @@ public class ActionFitPackageManagerWindow : EditorWindow
         using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
         {
             if (GUILayout.Button("Reload", EditorStyles.toolbarButton, GUILayout.Width(70))) Reload();
-            if (GUILayout.Button("Update", EditorStyles.toolbarButton, GUILayout.Width(70))) UpdateCatalog();
+            if (GUILayout.Button("Update Catalog", EditorStyles.toolbarButton, GUILayout.Width(105))) UpdateCatalog();
             if (GUILayout.Button("Settings", EditorStyles.toolbarButton, GUILayout.Width(80)))
                 Selection.activeObject = _settings = ActionFitPackageCatalogSettingsProvider.FindOrCreate();
-            if (GUILayout.Button("1. Create Package", EditorStyles.toolbarButton, GUILayout.Width(130))) ActionFitPackageCreateWindow.Open();
-            if (GUILayout.Button("2. Create Repo", EditorStyles.toolbarButton, GUILayout.Width(115))) ActionFitPackagePublishWindow.OpenCreate();
-            if (GUILayout.Button("3. Publish Package", EditorStyles.toolbarButton, GUILayout.Width(135))) ActionFitPackagePublishWindow.OpenUpdate();
-            if (GUILayout.Button("Publish Changed", EditorStyles.toolbarButton, GUILayout.Width(125))) ActionFitPackagePublishWindow.OpenChanged();
-            if (GUILayout.Button("README", EditorStyles.toolbarButton, GUILayout.Width(80))) OpenReadme();
-            if (GUILayout.Button("Open Catalog", EditorStyles.toolbarButton, GUILayout.Width(100)))
-                Selection.activeObject = AssetDatabase.LoadAssetAtPath<TextAsset>(ActiveCatalogPath);
-            if (GUILayout.Button("Open Manifest", EditorStyles.toolbarButton, GUILayout.Width(100)))
-                AssetDatabase.OpenAsset(AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(ManifestPath));
+            if (GUILayout.Button(_showUpdateManager ? "Hide Updates" : "Updates", EditorStyles.toolbarButton, GUILayout.Width(95)))
+                _showUpdateManager = !_showUpdateManager;
+            if (GUILayout.Button("Console", EditorStyles.toolbarButton, GUILayout.Width(80))) ActionFitPackageManagerConsoleWindow.Open();
             GUILayout.FlexibleSpace();
         }
-    }
-
-    private void OpenReadme()
-    {
-        ActionFitPackageReadmeWindow.Open(ReadmePath);
     }
 
     private void DrawPackageSections()
@@ -108,31 +101,27 @@ public class ActionFitPackageManagerWindow : EditorWindow
         EditorGUILayout.Space(4);
         EditorGUILayout.LabelField("", GUI.skin.horizontalSlider);
         EditorGUILayout.Space(4);
+        if (_showUpdateManager)
+        {
+            DrawUpdateManager(filtered);
+            EditorGUILayout.Space(4);
+            EditorGUILayout.LabelField("", GUI.skin.horizontalSlider);
+            EditorGUILayout.Space(4);
+        }
         DrawPackageSection("Embedded Packages", embedded);
         EditorGUILayout.Space(4);
         EditorGUILayout.LabelField("", GUI.skin.horizontalSlider);
         EditorGUILayout.Space(4);
-        DrawPackageSection("Downloaded Packages", downloaded, true);
+        DrawPackageSection("Downloaded Packages", downloaded);
         EditorGUILayout.Space(4);
         EditorGUILayout.LabelField("", GUI.skin.horizontalSlider);
         EditorGUILayout.Space(4);
         DrawPackageSection("Available Packages", available);
     }
 
-    private void DrawPackageSection(string title, List<PackageGroup> packages, bool showUpdateAllLatest = false)
+    private void DrawPackageSection(string title, List<PackageGroup> packages)
     {
-        using (new EditorGUILayout.HorizontalScope())
-        {
-            EditorGUILayout.LabelField($"{title} ({packages.Count})", EditorStyles.boldLabel);
-            if (showUpdateAllLatest)
-            {
-                var targets = packages.Where(CanUpdateLatest).ToList();
-                EditorGUI.BeginDisabledGroup(targets.Count == 0);
-                if (GUILayout.Button($"Update All Latest ({targets.Count})", GUILayout.Width(165)))
-                    UpdateAllLatest(targets);
-                EditorGUI.EndDisabledGroup();
-            }
-        }
+        EditorGUILayout.LabelField($"{title} ({packages.Count})", EditorStyles.boldLabel);
 
         if (packages.Count == 0)
         {
@@ -186,7 +175,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
             EditorGUILayout.LabelField("Installed", installed.Label);
             EditorGUILayout.LabelField("Owner", package.Owner);
             DrawReadonlyText("Description", selectedVersion.Description);
-            DrawReadonlyText("Changelog", selectedVersion.Changelog);
+            DrawReadonlyText("Selected Version Changelog", selectedVersion.Changelog);
 
             using (new EditorGUILayout.HorizontalScope())
             {
@@ -195,10 +184,6 @@ public class ActionFitPackageManagerWindow : EditorWindow
                 _selectedVersionByPackage[package.Id] = selected;
 
                 EditorGUI.BeginDisabledGroup(installed.IsEmbedded);
-                EditorGUI.BeginDisabledGroup(!CanUpdateLatest(package));
-                if (installed.IsInstalled && GUILayout.Button("Update Latest Version", GUILayout.Width(150)))
-                    ApplyPackage(package, package.LatestVersion);
-                EditorGUI.EndDisabledGroup();
                 if (GUILayout.Button(installed.IsInstalled ? "Apply Version" : "Install", GUILayout.Width(120)))
                     ApplyPackage(package, selectedVersion);
                 EditorGUI.EndDisabledGroup();
@@ -207,6 +192,15 @@ public class ActionFitPackageManagerWindow : EditorWindow
                 if (GUILayout.Button("Remove", GUILayout.Width(90)))
                     RemovePackage(package);
                 EditorGUI.EndDisabledGroup();
+
+                if (GUILayout.Button("History", GUILayout.Width(90)))
+                    ShowHistory(package, false, installed.Version, selectedVersion.Version);
+
+                if (installed.IsInstalled && !installed.IsEmbedded && !IsSameVersion(selectedVersion.Version, installed.Version))
+                {
+                    if (GUILayout.Button("Changes", GUILayout.Width(90)))
+                        ShowHistory(package, true, installed.Version, selectedVersion.Version);
+                }
             }
 
             if (installed.IsEmbedded)
@@ -219,6 +213,163 @@ public class ActionFitPackageManagerWindow : EditorWindow
             if (!string.IsNullOrWhiteSpace(updateStatus))
                 EditorGUILayout.LabelField("Update", updateStatus, EditorStyles.miniLabel);
         }
+    }
+
+    private void DrawUpdateManager(List<PackageGroup> packages)
+    {
+        var candidates = BuildUpdateCandidates(packages);
+        var updatable = candidates.Where(c => c.CanApply).ToList();
+
+        using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+        {
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                EditorGUILayout.LabelField($"Available Updates ({updatable.Count}/{candidates.Count})", EditorStyles.boldLabel);
+                GUILayout.FlexibleSpace();
+
+                EditorGUI.BeginDisabledGroup(updatable.Count == 0);
+                if (GUILayout.Button("Select All", GUILayout.Width(80)))
+                {
+                    _selectedUpdatePackageIds.Clear();
+                    foreach (var candidate in updatable)
+                        _selectedUpdatePackageIds.Add(candidate.Package.Id);
+                }
+
+                if (GUILayout.Button("Clear", GUILayout.Width(60)))
+                    _selectedUpdatePackageIds.Clear();
+
+                var selectedPackages = updatable
+                    .Where(c => _selectedUpdatePackageIds.Contains(c.Package.Id))
+                    .Select(c => c.Package)
+                    .ToList();
+
+                EditorGUI.BeginDisabledGroup(selectedPackages.Count == 0);
+                if (GUILayout.Button($"Update Selected ({selectedPackages.Count})", GUILayout.Width(150)))
+                    UpdateAllLatest(selectedPackages);
+                EditorGUI.EndDisabledGroup();
+
+                if (GUILayout.Button($"Update All ({updatable.Count})", GUILayout.Width(120)))
+                    UpdateAllLatest(updatable.Select(c => c.Package).ToList());
+                EditorGUI.EndDisabledGroup();
+            }
+
+            if (candidates.Count == 0)
+            {
+                EditorGUILayout.HelpBox("No installed packages have a different catalog latest version.", MessageType.None);
+                DrawHistoryPanel();
+                return;
+            }
+
+            foreach (var candidate in candidates)
+            {
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    EditorGUI.BeginDisabledGroup(!candidate.CanApply);
+                    bool selected = _selectedUpdatePackageIds.Contains(candidate.Package.Id);
+                    bool nextSelected = EditorGUILayout.Toggle(selected, GUILayout.Width(18));
+                    if (nextSelected) _selectedUpdatePackageIds.Add(candidate.Package.Id);
+                    else _selectedUpdatePackageIds.Remove(candidate.Package.Id);
+                    EditorGUI.EndDisabledGroup();
+
+                    EditorGUILayout.LabelField(candidate.Package.DisplayName, GUILayout.MinWidth(180));
+                    EditorGUILayout.LabelField($"{candidate.Installed.Version} -> {candidate.Latest.Version}", EditorStyles.miniLabel, GUILayout.Width(150));
+                    EditorGUILayout.LabelField(candidate.Installed.IsEmbedded ? "embedded" : candidate.Package.Id, EditorStyles.miniLabel, GUILayout.MinWidth(180));
+
+                    if (GUILayout.Button("Changes", GUILayout.Width(80)))
+                        ShowHistory(candidate.Package, true, candidate.Installed.Version, candidate.Latest.Version);
+
+                    if (GUILayout.Button("History", GUILayout.Width(80)))
+                        ShowHistory(candidate.Package, false, candidate.Installed.Version, candidate.Latest.Version);
+
+                    EditorGUI.BeginDisabledGroup(!candidate.CanApply);
+                    if (GUILayout.Button("Update", GUILayout.Width(80)))
+                        ApplyPackage(candidate.Package, candidate.Latest);
+                    EditorGUI.EndDisabledGroup();
+                }
+
+                if (!candidate.CanApply && candidate.Installed.IsEmbedded)
+                    EditorGUILayout.HelpBox($"{candidate.Package.Id} is embedded under Packages/. Remove the embedded folder before Git UPM update.", MessageType.Info);
+            }
+
+            DrawHistoryPanel();
+        }
+    }
+
+    private List<UpdateCandidate> BuildUpdateCandidates(List<PackageGroup> packages)
+    {
+        var result = new List<UpdateCandidate>();
+        foreach (var package in packages)
+        {
+            var installed = GetInstalledVersion(package.Id);
+            if (!installed.IsInstalled || package.LatestVersion == null) continue;
+            if (IsSameVersion(package.LatestVersion.Version, installed.Version)) continue;
+
+            result.Add(new UpdateCandidate(package, installed, package.LatestVersion, !installed.IsEmbedded));
+        }
+
+        return result
+            .OrderByDescending(c => c.CanApply)
+            .ThenBy(c => c.Package.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private void ShowHistory(PackageGroup package, bool rangeOnly, string fromVersion, string toVersion)
+    {
+        _historyPackageId = package.Id;
+        _historyRangeOnly = rangeOnly;
+        _historyFromVersion = fromVersion;
+        _historyToVersion = toVersion;
+    }
+
+    private void DrawHistoryPanel()
+    {
+        if (string.IsNullOrWhiteSpace(_historyPackageId)) return;
+
+        var package = _packages.FirstOrDefault(p => p.Id == _historyPackageId);
+        if (package == null) return;
+
+        EditorGUILayout.Space(8);
+        using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+        {
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                EditorGUILayout.LabelField(
+                    _historyRangeOnly
+                        ? $"Update Changes: {package.DisplayName} ({_historyFromVersion} -> {_historyToVersion})"
+                        : $"Version History: {package.DisplayName}",
+                    EditorStyles.boldLabel);
+                if (GUILayout.Button("Close", GUILayout.Width(70)))
+                    _historyPackageId = "";
+            }
+
+            var versions = _historyRangeOnly
+                ? GetVersionRange(package, _historyFromVersion, _historyToVersion)
+                : package.Versions;
+
+            if (versions.Count == 0)
+            {
+                EditorGUILayout.HelpBox("No changelog rows were found for the selected version range.", MessageType.None);
+                return;
+            }
+
+            foreach (var version in versions)
+            {
+                EditorGUILayout.LabelField(version.VersionLabel, EditorStyles.boldLabel);
+                DrawReadonlyText("Changelog", version.Changelog);
+            }
+        }
+    }
+
+    private static List<PackageVersion> GetVersionRange(PackageGroup package, string fromVersion, string toVersion)
+    {
+        if (string.IsNullOrWhiteSpace(toVersion)) return new List<PackageVersion>();
+
+        return package.Versions
+            .Where(v =>
+                (string.IsNullOrWhiteSpace(fromVersion) || PackageVersionComparer.Instance.Compare(v.Version, fromVersion) > 0) &&
+                PackageVersionComparer.Instance.Compare(v.Version, toVersion) <= 0)
+            .OrderBy(v => v.Version, PackageVersionComparer.Instance)
+            .ToList();
     }
 
     private void DrawReadonlyText(string label, string value)
@@ -243,15 +394,6 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
         int latest = package.Versions.FindIndex(v => v.IsLatest);
         return latest >= 0 ? latest : 0;
-    }
-
-    private bool CanUpdateLatest(PackageGroup package)
-    {
-        var installed = GetInstalledVersion(package.Id);
-        return installed.IsInstalled &&
-               !installed.IsEmbedded &&
-               package.LatestVersion != null &&
-               !IsSameVersion(package.LatestVersion.Version, installed.Version);
     }
 
     private static string GetUpdateStatus(PackageGroup package, InstalledPackage installed)
@@ -829,6 +971,22 @@ public class ActionFitPackageManagerWindow : EditorWindow
         public string Dependencies;
         public string PackageUrl => $"{RepoUrl}#{Version}";
         public string VersionLabel => IsLatest ? $"{Version} ({Status}, latest)" : $"{Version} ({Status})";
+    }
+
+    private readonly struct UpdateCandidate
+    {
+        public UpdateCandidate(PackageGroup package, InstalledPackage installed, PackageVersion latest, bool canApply)
+        {
+            Package = package;
+            Installed = installed;
+            Latest = latest;
+            CanApply = canApply;
+        }
+
+        public PackageGroup Package { get; }
+        public InstalledPackage Installed { get; }
+        public PackageVersion Latest { get; }
+        public bool CanApply { get; }
     }
 
     private readonly struct InstalledPackage

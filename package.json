@@ -1,8 +1,8 @@
 {
   "name": "com.actionfit.custompackagemanager",
-  "version": "1.1.26",
+  "version": "1.1.27",
   "displayName": "Custom Package Manager",
-  "description": "ActionFit UPM 패키지 카탈로그를 보고 Git URL 기반 설치와 버전 적용을 도와주는 Unity 에디터 툴.",
+  "description": "ActionFit UPM \uD328\uD0A4\uC9C0 \uCE74\uD0C8\uB85C\uADF8\uB97C \uBCF4\uACE0 Git URL \uAE30\uBC18 \uC124\uCE58\uC640 \uBC84\uC804 \uC801\uC6A9\uC744 \uB3C4\uC640\uC8FC\uB294 Unity \uC5D0\uB514\uD130 \uD234.",
   "unity": "6000.2",
   "author": { "name": "ActionFit" },
   "dependencies": {}

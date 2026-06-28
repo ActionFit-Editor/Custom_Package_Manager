@@ -1,96 +1,63 @@
 # Custom Package Manager (com.actionfit.custompackagemanager)
 
-ActionFit 전용 UPM 패키지 카탈로그를 표시하고, 선택한 패키지 버전을 `Packages/manifest.json`에 Git URL dependency로 적용하는 Unity 에디터 툴입니다.
+ActionFit 내부 UPM 패키지 카탈로그를 조회하고, 선택한 패키지를 `Packages/manifest.json`의 Git URL dependency로 설치하거나 버전을 변경하는 Unity 에디터 툴입니다.
 
-## 설치 (manifest.json, Git URL)
+## Install
 
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.26"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.27"
   }
 }
 ```
 
-## 사용
+## Menu
 
-- 메뉴: `Tools > ActionFit > Package Manager`
-- 설정 SO: 설치 후 `Assets/_Data/_CustomPackageManager/ActionFitPackageCatalogSettings_SO.asset`이 없으면 자동 생성됩니다. 이 SO에 Spreadsheet URL, Web App URL, Token, GitHub Org, GitHub Token, Publish Root를 입력합니다.
-- 카탈로그: `Assets/_Data/_CustomPackageManager/package_catalog.csv`가 있으면 우선 사용하고, 없으면 패키지 내부 `Editor/Catalog/package_catalog.csv`를 fallback으로 사용합니다.
-- Update: 설정 SO의 스프레드시트에서 `package_catalog`/`package_versions` 탭을 받아 로컬 카탈로그 CSV를 생성한 뒤 목록을 새로고침합니다.
-- 1. Create Package: 새 `Packages/com.actionfit.*` 패키지 폴더와 `package.json`, README, Editor asmdef, `Editor/Scripts`, PackageInfo SO를 생성합니다.
-- 2. Create Repo: 아직 카탈로그에 등록되지 않은 PackageInfo SO를 스캔해 첫 레포 생성/카탈로그 등록 창을 엽니다.
-- 3. Publish Package: 이미 카탈로그에 등록된 PackageInfo SO를 스캔해 버전 입력 후 업데이트 배포 창을 엽니다.
-- Publish Changed: 로컬 `package.json` 버전이 카탈로그 최신 버전보다 높은 등록 패키지만 모아 확인하고 한 번에 배포합니다.
-- Update All Latest: 다운로드 받은 패키지 중 최신 버전이 아닌 항목을 최신 버전으로 한 번에 적용합니다.
-- README: 패키지 생성, 배포, 업데이트 플로우를 확인할 수 있도록 전용 README 창을 엽니다.
-- 설치/버전 적용: 선택한 패키지와 카탈로그에 등록된 dependency를 `Packages/manifest.json`에 반영한 뒤 Package Manager resolve를 실행합니다.
-- 삭제: manifest dependency로 설치된 패키지를 `Packages/manifest.json`에서 제거하고 Package Manager resolve를 실행합니다. `Packages/` 아래 embedded 패키지는 자동 삭제하지 않습니다.
-- 카탈로그 목록: 단일 카탈로그 안에서 Package Manager, embedded 패키지, 다운로드 받은 Git UPM 패키지, 다운로드 가능한 패키지를 섹션으로 나눠 함께 볼 수 있습니다.
-- Embedded 패키지는 `Packages/` 아래 로컬 폴더가 우선 적용되므로 `Update All Latest` 대상에서 제외됩니다. 배포는 `Publish Changed`에서 처리합니다.
+- `Tools > ActionFit > Package Manager > Package Manager`: 패키지 설치, 버전 적용, 삭제, 업데이트 확인을 관리합니다.
+- `Tools > ActionFit > Package Manager > Manager Console`: 패키지 생성, 저장소 생성, 배포, README/카탈로그/manifest 열기 같은 운영 기능을 모아둔 별도 창입니다.
 
-## 새 패키지 생성
+## Package Manager
 
-1. 새 패키지는 `1. Create Package`로 기본 폴더와 파일을 생성합니다.
-2. 생성 창에서 `Package Id`, `Display Name`, `Repo Name`, `Version`, `Unity`, 설명, 릴리즈 노트를 입력합니다.
-3. 생성 후 아래 기본 구조가 만들어졌는지 확인합니다.
+- `Reload`: 현재 카탈로그와 설치 상태를 다시 읽습니다.
+- `Update Catalog`: 설정 SO에 저장된 Spreadsheet/Web App 설정을 사용해 로컬 카탈로그 CSV를 갱신합니다.
+- `Settings`: `Assets/_Data/_CustomPackageManager/ActionFitPackageCatalogSettings_SO.asset`을 선택합니다.
+- `Updates`: 설치된 패키지 중 카탈로그 latest와 현재 버전이 다른 항목을 모아서 보여줍니다.
+- `Console`: 운영 기능을 모아둔 Manager Console 창을 엽니다.
 
-```text
-Packages/com.actionfit.yourpackage/
-├── package.json
-├── README.md
-└── Editor/
-    ├── com.actionfit.yourpackage.Editor.asmdef
-    ├── Scripts/
-    └── PackageInfo/
-        └── ActionFitPackageInfo_SO.asset
-```
+패키지 목록은 Package Manager, Embedded Packages, Downloaded Packages, Available Packages로 구분됩니다. Embedded package는 `Packages/` 아래에 직접 존재하는 패키지이며, Git UPM 업데이트는 embedded 폴더를 제거한 뒤 사용할 수 있습니다.
 
-4. 배포할 에디터 스크립트와 파일을 패키지 폴더 안에 추가합니다. 에디터 전용 코드는 기본적으로 `Editor/Scripts`에 둡니다.
-5. 런타임 코드가 필요한 패키지는 `Runtime` 폴더와 Runtime asmdef를 별도로 추가합니다.
+## Updates
 
-## 첫 등록
+`Updates` 패널은 현재 프로젝트에 적용된 패키지를 기준으로 업데이트 가능 여부를 보여줍니다.
 
-1. `2. Create Repo`를 누르면 아직 카탈로그에 없는 PackageInfo SO 목록이 표시됩니다.
-2. 설명, 릴리즈 노트, 레포명을 확인합니다.
-3. `2. Create Repo`로 GitHub 레포 생성/확인, push/tag, 카탈로그 append를 실행합니다.
+- Downloaded package는 개별 업데이트, 선택 업데이트, 전체 업데이트를 사용할 수 있습니다.
+- Embedded package는 목록에 표시되지만 Git UPM 업데이트 버튼은 비활성화됩니다.
+- `Changes`는 현재 설치 버전 다음 버전부터 선택한 버전까지의 업데이트 내역을 보여줍니다.
+- `History`는 해당 패키지의 전체 버전 내역을 최신부터 초기 버전까지 보여줍니다.
 
-## 배포
+예를 들어 현재 버전이 `1.0.1`이고 선택한 버전이 `1.0.4`이면 `Changes`는 `1.0.2`, `1.0.3`, `1.0.4`의 changelog를 함께 보여줍니다.
 
-1. 설정 SO에 Spreadsheet URL, Web App URL, Token, GitHub Org, GitHub Token, Publish Root를 입력합니다.
-2. Package Manager 창에서 `2. Create Repo`, `3. Publish Package`, 또는 `Publish Changed`를 누릅니다.
-3. 창에서 대상 패키지를 확인하고 실행합니다.
-4. 툴이 GitHub 레포를 생성/확인하고, 패키지 내용을 `Publish Root`에 복사한 뒤 commit, push, tag를 수행합니다.
-5. Apps Script에 카탈로그 append/upsert를 요청합니다.
-6. 카탈로그 CSV를 다시 동기화하고 Package Manager 목록을 갱신합니다.
+## Manager Console
 
-## 업데이트
+운영성 버튼은 메인 Package Manager 창에서 분리되어 Manager Console에 있습니다.
 
-1. 기존 패키지의 파일을 수정합니다.
-2. `package.json` 버전과 `ActionFitPackageInfo_SO`의 릴리즈 노트를 새 버전에 맞게 수정합니다.
-3. Package Manager 창에서 `Publish Changed`를 눌러 카탈로그 최신 버전보다 높은 로컬 버전만 확인합니다.
-4. 여러 패키지를 한 번에 배포하려면 `Publish All Changed`를 누릅니다. 개별 배포가 필요하면 항목을 펼쳐 `Publish Changed`를 누릅니다.
+- `1. Create Package`: `Packages/com.actionfit.*` 패키지 뼈대와 PackageInfo SO를 생성합니다.
+- `2. Create Repo`: 카탈로그에 아직 등록되지 않은 PackageInfo SO를 기준으로 GitHub 저장소와 카탈로그 행을 생성합니다.
+- `3. Publish Package`: 이미 등록된 PackageInfo SO를 기준으로 버전 배포를 진행합니다.
+- `Publish Changed`: 현재 `package.json` 버전과 카탈로그 최신 버전을 비교해 변경된 패키지를 찾아 배포합니다.
+- `README`: 패키지 사용법과 배포 설명을 볼 수 있는 README 창을 엽니다.
+- `Open Catalog`: 로컬 카탈로그 CSV를 선택합니다.
+- `Open Manifest`: 프로젝트 `Packages/manifest.json`을 엽니다.
+- `Settings`: 카탈로그 설정 SO를 선택합니다.
 
-## Dependencies 설정
+## Catalog And Manifest
 
-Dependencies는 카탈로그의 `dependencies` 열에 저장되고, 해당 패키지를 설치/버전 적용할 때 먼저 `Packages/manifest.json`에 반영됩니다.
+- 로컬 카탈로그 기본 경로는 `Assets/_Data/_CustomPackageManager/package_catalog.csv`입니다.
+- 로컬 카탈로그가 없으면 패키지 내부 fallback 카탈로그 `Packages/com.actionfit.custompackagemanager/Editor/Catalog/package_catalog.csv`를 사용합니다.
+- 설치와 버전 적용은 `Packages/manifest.json` dependencies 블록을 갱신한 뒤 Unity Package Manager resolve를 실행합니다.
+- manifest dependency 블록은 쓰기 시 4칸 들여쓰기, 빈 줄 제거, 마지막 항목 trailing comma 제거 형식으로 정리됩니다.
 
-- 특정 버전 고정: `com.actionfit.csvimporter@1.2.3`
-- 카탈로그 latest 사용: `com.actionfit.csvimporter`
-- 여러 개 입력: `com.actionfit.csvimporter@1.2.3;com.actionfit.sosingleton@1.0.0`
+## Publish Notes
 
-여러 dependency는 `;`, `,`, `|`로 구분할 수 있습니다. `package.json`의 `"dependencies"` 값은 배포 시 자동으로 `패키지ID@버전` 형태로 추출되며, `ActionFitPackageInfo_SO`의 `Dependencies Override`에 값이 있으면 override 값이 우선 사용됩니다.
-
-Apps Script는 JSON POST의 `action: "upsertPackageVersion"`을 받아 `package_catalog`/`package_versions`에 append/upsert하도록 구성되어 있어야 합니다. 응답에는 `success`, `package_id`, `version`, `catalog_id`가 포함되어야 합니다.
-
-GitHub Token은 레포 생성과 push 권한을 가지므로 실제 값은 커밋하지 말고 각 개발자 로컬 설정 SO에서만 입력합니다.
-
-## 구성
-
-- **Editor** (`com.actionfit.custompackagemanager.Editor`):
-  - `ActionFitPackageManagerWindow` — 패키지 목록, 설치 상태, 버전 선택 UI
-  - `ActionFitPackagePublishWindow` — 첫 등록과 업데이트 배포 대상 스캔/편집/실행 UI
-  - `ActionFitPackageReadmeWindow` — 패키지 생성/배포 플로우 README 표시 창
-  - `ActionFitPackageCatalogSettings_SO` — 스프레드시트 동기화 설정
-  - `ActionFitPackageInfo_SO` — 패키지별 배포/카탈로그 등록 메타데이터
-  - `package_catalog.csv` — ActionFit 패키지 카탈로그 fallback
+이 패키지는 실제 GitHub push/tag 배포를 자동으로 실행하지 않습니다. 배포가 필요하면 Unity에서 `Tools > ActionFit > Package Manager > Manager Console`을 열고 `3. Publish Package` 또는 `Publish Changed`를 수동으로 실행하세요.
