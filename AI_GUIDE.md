@@ -7,7 +7,7 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.custompackagemanager`
 - Display name: Custom Package Manager
 - Repository: `https://github.com/ActionFit-Editor/Custom_Package_Manager.git`
-- Current package version at generation time: `1.1.29`
+- Current package version at generation time: `1.1.30`
 - Unity version: `6000.2`
 
 ## Purpose
@@ -39,7 +39,7 @@ Read this file when:
 - `Editor/Scripts/ActionFitPackagePublishWindow.cs`: publish target scan and publish UI.
 - `Editor/Scripts/ActionFitPackagePublisher.cs`: GitHub repository publish and catalog upsert request.
 - `Editor/Scripts/ActionFitPackageCatalogUpdater.cs`: spreadsheet/web-app catalog download.
-- `Editor/Scripts/ActionFitPackageAiGuideRouter.cs`: scans package `AI_GUIDE.md` files, syncs `PACKAGE_AI_GUIDE_ROUTER.md`, and connects an existing project AI entry point when present.
+- `Editor/Scripts/ActionFitPackageAiGuideRouter.cs`: scans embedded and Git UPM package `AI_GUIDE.md` files, syncs `PACKAGE_AI_GUIDE_ROUTER.md`, and connects an existing project AI entry point when present.
 - `Editor/PackageInfo/ActionFitPackageInfo_SO.asset`: catalog metadata source for this package.
 - `PACKAGE_AI_GUIDE_ROUTER.md`: package-shipped AI router for choosing which package `AI_GUIDE.md` to read for a task.
 
@@ -84,7 +84,8 @@ Read this file when:
 - `ActionFitPackageAiGuideRouter` reads each package's `Requested router entry` and automatically refreshes the `Package Guide Entries` section in `PACKAGE_AI_GUIDE_ROUTER.md`.
 - `PACKAGE_AI_GUIDE_ROUTER.md` keeps the short package-to-task routing table and asks to be linked from the project's AI default reading sequence when needed.
 - `README.md` is for humans; `AI_GUIDE.md` is for AI assistants working inside consuming projects.
-- Custom Package Manager should scan installed package guides, refresh `PACKAGE_AI_GUIDE_ROUTER.md`, then link the package router from an existing project AI entry point when one can be found.
+- Custom Package Manager should scan installed package guides from both embedded `Packages/com.actionfit.*` folders and Git UPM `Library/PackageCache/com.actionfit.*@*` folders, refresh `PACKAGE_AI_GUIDE_ROUTER.md`, then link the package router from an existing project AI entry point when one can be found.
+- Router entries must point to the actual discovered `AI_GUIDE.md` path. Embedded packages use `Packages/com.actionfit.*/AI_GUIDE.md`; Git UPM packages use `Library/PackageCache/com.actionfit.*@hash/AI_GUIDE.md`.
 - AI entry point discovery should prefer known project router paths (`Docs/AI/PROJECT.md`, `PROJECT.md`), then a single unambiguous `PROJECT.md` found elsewhere in the project, then fallback files such as `AGENTS.md`, `CLAUDE.md`, or `GEMINI.md`.
 - If multiple non-standard `PROJECT.md` files exist, do not choose one silently. Use a known fallback AI entry point if present; otherwise leave the package router refreshed and let the assistant ask the user where to register it.
 - Project-level compatibility pointer generation should be placed next to the discovered AI entry point, not hard-coded to `Docs/AI`.

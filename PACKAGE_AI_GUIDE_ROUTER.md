@@ -18,6 +18,7 @@ Do not silently create `Docs/AI/PROJECT.md` or any other AI entry point in a pro
 
 - Use the package entries below to choose the correct package-local `AI_GUIDE.md`.
 - After choosing a package, read that package's `AI_GUIDE.md` before editing, debugging, explaining, or preparing a release.
+- Entries should point to the actual installed guide path. Embedded packages usually live under `Packages/com.actionfit.*`; Git UPM packages usually live under `Library/PackageCache/com.actionfit.*@hash`.
 - Keep entries short. Detailed architecture, editing rules, migration notes, and release rules belong in each package `AI_GUIDE.md`.
 - Package `AI_GUIDE.md` files request their own router entry through their `Project Router Registration` section.
 - Custom Package Manager can refresh the entries below from each guide's `Requested router entry` block.

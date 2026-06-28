@@ -13,6 +13,7 @@ public static class ActionFitPackageAiGuideRouter
 {
     private const string PackageGuideRouterPath = "Packages/com.actionfit.custompackagemanager/PACKAGE_AI_GUIDE_ROUTER.md";
     private const string PackageRoot = "Packages";
+    private const string PackageCacheRoot = "Library/PackageCache";
     private const string GuideFileName = "AI_GUIDE.md";
     private const string StartMarker = "<!-- ACTIONFIT_PACKAGE_AI_GUIDES_START -->";
     private const string EndMarker = "<!-- ACTIONFIT_PACKAGE_AI_GUIDES_END -->";
@@ -45,35 +46,72 @@ public static class ActionFitPackageAiGuideRouter
 
     private static List<PackageGuide> FindGuides()
     {
-        string packagesFullPath = ProjectRelativeFullPath(PackageRoot);
-        if (!Directory.Exists(packagesFullPath)) return new List<PackageGuide>();
-
-        var result = new List<PackageGuide>();
-        foreach (string dir in Directory.GetDirectories(packagesFullPath, "com.actionfit.*", SearchOption.TopDirectoryOnly))
+        var byPackageId = new Dictionary<string, PackageGuide>(StringComparer.OrdinalIgnoreCase);
+        foreach (string dir in EnumerateInstalledPackageDirectories())
         {
-            string guideFullPath = Path.Combine(dir, GuideFileName);
-            if (!File.Exists(guideFullPath)) continue;
+            if (!TryReadGuide(dir, out var guide)) continue;
 
-            string packageJsonFullPath = Path.Combine(dir, "package.json");
-            string packageId = Path.GetFileName(dir);
-            string displayName = packageId;
-            string version = "";
-            if (File.Exists(packageJsonFullPath))
-            {
-                string json = File.ReadAllText(packageJsonFullPath);
-                packageId = ExtractJsonString(json, "name", packageId);
-                displayName = ExtractJsonString(json, "displayName", displayName);
-                version = ExtractJsonString(json, "version", version);
-            }
+            // Prefer embedded package paths because they are editable and stable in the project tree.
+            if (byPackageId.TryGetValue(guide.PackageId, out var existing) && existing.IsEmbedded)
+                continue;
 
-            string guidePath = ToProjectRelativePath(guideFullPath);
-            string packagePath = ToProjectRelativePath(dir);
-            string guideText = File.ReadAllText(guideFullPath);
-            string routerEntry = ExtractRequestedRouterEntry(guideText, guidePath, displayName);
-            result.Add(new PackageGuide(packageId, displayName, version, packagePath, guidePath, ExtractReadWhen(guideText), routerEntry));
+            byPackageId[guide.PackageId] = guide;
         }
 
-        return result.OrderBy(g => g.PackageId, StringComparer.OrdinalIgnoreCase).ToList();
+        return byPackageId.Values.OrderBy(g => g.PackageId, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    private static IEnumerable<string> EnumerateInstalledPackageDirectories()
+    {
+        foreach (string dir in EnumeratePackageDirectories(PackageRoot, "com.actionfit.*"))
+            yield return dir;
+
+        foreach (string dir in EnumeratePackageDirectories(PackageCacheRoot, "com.actionfit.*@*"))
+            yield return dir;
+    }
+
+    private static IEnumerable<string> EnumeratePackageDirectories(string relativeRoot, string pattern)
+    {
+        string fullRoot = ProjectRelativeFullPath(relativeRoot);
+        if (!Directory.Exists(fullRoot)) yield break;
+
+        foreach (string dir in Directory.GetDirectories(fullRoot, pattern, SearchOption.TopDirectoryOnly))
+            yield return dir;
+    }
+
+    private static bool TryReadGuide(string dir, out PackageGuide guide)
+    {
+        guide = default;
+
+        string guideFullPath = Path.Combine(dir, GuideFileName);
+        if (!File.Exists(guideFullPath)) return false;
+
+        string packageJsonFullPath = Path.Combine(dir, "package.json");
+        string folderName = Path.GetFileName(dir);
+        string packageId = folderName.Split('@')[0];
+        string displayName = packageId;
+        string version = "";
+        if (File.Exists(packageJsonFullPath))
+        {
+            string json = File.ReadAllText(packageJsonFullPath);
+            packageId = ExtractJsonString(json, "name", packageId);
+            displayName = ExtractJsonString(json, "displayName", displayName);
+            version = ExtractJsonString(json, "version", version);
+        }
+
+        string guidePath = ToProjectRelativePath(guideFullPath);
+        string packagePath = ToProjectRelativePath(dir);
+        string guideText = File.ReadAllText(guideFullPath);
+        string routerEntry = ExtractRequestedRouterEntry(guideText, guidePath, displayName);
+        routerEntry = RewriteRouterEntryPath(routerEntry, guidePath);
+
+        guide = new PackageGuide(packageId, displayName, version, packagePath, guidePath, ExtractReadWhen(guideText), routerEntry);
+        return true;
+    }
+
+    private static string RewriteRouterEntryPath(string routerEntry, string guidePath)
+    {
+        return Regex.Replace(routerEntry, @"^- `[^`]+`", $"- `{guidePath}`", RegexOptions.CultureInvariant);
     }
 
     private static void WritePackageGuideRouter(List<PackageGuide> guides)
@@ -212,7 +250,7 @@ public static class ActionFitPackageAiGuideRouter
             "\n" +
             "## Installed ActionFit Package AI Guides\n" +
             "\n" +
-            $"- `{PackageGuideRouterPath}` - package-shipped AI router for installed ActionFit package guides ({guideCount} found); read when working with files under `Packages/com.actionfit.*` or diagnosing ActionFit package install/update/publish behavior.\n" +
+            $"- `{PackageGuideRouterPath}` - package-shipped AI router for installed ActionFit package guides ({guideCount} found); read when working with files under `Packages/com.actionfit.*` or `Library/PackageCache/com.actionfit.*@*`, or diagnosing ActionFit package install/update/publish behavior.\n" +
             "\n" +
             EndMarker;
 
@@ -312,6 +350,7 @@ public static class ActionFitPackageAiGuideRouter
         public string GuidePath { get; }
         public List<string> ReadWhen { get; }
         public string RouterEntry { get; }
+        public bool IsEmbedded => PackagePath.StartsWith("Packages/", StringComparison.OrdinalIgnoreCase);
     }
 }
 #endif
