@@ -20,60 +20,43 @@ MonoBehaviour:
   _description: "ActionFit UPM \uD328\uD0A4\uC9C0 \uCE74\uD0C8\uB85C\uADF8\uB97C
     \uBCF4\uACE0 Git URL \uAE30\uBC18 \uC124\uCE58\uC640 \uBC84\uC804 \uC801\uC6A9\uC744
     \uB3C4\uC640\uC8FC\uB294 Unity \uC5D0\uB514\uD130 \uD234."
-  _releaseNote: '## 1.1.28
-
-    - Fixed the remaining embedded package update block.
-    If `Custom Package Manager` is installed as `Packages/com.actionfit.custompackagemanager`
-    at `1.1.26` or `1.1.27`, selecting a different catalog version now enables `Apply
-    Version` instead of staying disabled.
-
-    - Applying a different version to
-    an embedded package now writes the Git UPM dependency to `Packages/manifest.json`,
-    removes the embedded package folder, and runs Package Manager resolve. The selected
-    version can actually replace the embedded folder instead of being shadowed by
-    it.
-
-    - The `Updates` panel now treats embedded packages with a different
-    latest version as actionable update candidates. `Update`, `Update Selected`,
-    and `Update All` use the same embedded-to-Git-UPM replacement path.
-
-    - Update
-    status text now marks embedded update candidates as `embedded, newer` or `embedded,
-    different`, making the reason and target clearer before applying.
-
-    - README
-    was updated so embedded package updates are documented as supported conversion
-    updates, not as permanently disabled actions.
-
-    - Caution: `1.1.27` is already
-    tagged, so this fix must be published as `1.1.28`.
-
-
-    ## 1.1.27
-
-    - Package
-    Manager menu was reorganized to `Tools > ActionFit > Package Manager > Package
-    Manager`, and operational tools moved to `Manager Console`. The main install/update
-    window now keeps only the buttons needed for package management.
-
-    - `Manager
-    Console` now groups create, repo, publish, README, catalog, manifest, and settings
-    actions in a separate window, reducing toolbar clutter in daily package install
-    flows.
-
-    - The new `Updates` panel collects installed packages whose catalog
-    latest version differs from the current version. Downloaded packages can be updated
-    individually, by selection, or all at once.
-
-    - Update history viewing was
-    added. `History` shows all catalog changelogs newest to oldest, while `Changes`
-    shows only the changelogs between the installed version and the selected target
-    version.
-
-    - Embedded packages still appear in update checks, but Git UPM
-    update actions remain disabled until the embedded package folder is removed.
-
-    -
-    README and package metadata Korean text were restored from mojibake and updated
-    for the new menu paths and update management flow.'
+  _releaseNote: "- ActionFit \uD328\uD0A4\uC9C0 \uB8E8\uD2B8\uC5D0 `AI_GUIDE.md`\uB97C
+    \uBC30\uD3EC\uD558\uB3C4\uB85D \uCD94\uAC00\uD574, \uB2E4\uB978 \uD504\uB85C\uC81D\uD2B8\uC5D0\uC11C\uB3C4
+    \uC18C\uC2A4 \uD504\uB85C\uC81D\uD2B8\uC758 `Docs/AI` \uC5C6\uC774 \uD328\uD0A4\uC9C0\uBCC4
+    AI \uC791\uC5C5 \uADDC\uCE59\uC744 \uC77D\uC744 \uC218 \uC788\uAC8C \uD588\uC2B5\uB2C8\uB2E4.\n-
+    ActionFit UPM \uD328\uD0A4\uC9C0 \uC0DD\uC131, \uBC84\uC804 \uC900\uBE44, changelog,
+    catalog, AI guide, router, \uC218\uB3D9 publish \uADDC\uCE59\uC744 Custom Package
+    Manager\uC758 \uD328\uD0A4\uC9C0 \uB0B4 `AI_GUIDE.md`\uB85C \uC774\uB3D9\uD574
+    \uD328\uD0A4\uC9C0 \uBC30\uD3EC\uBB3C \uC548\uC5D0\uC11C \uAD00\uB9AC\uB418\uB3C4\uB85D
+    \uD588\uC2B5\uB2C8\uB2E4.\n- CSV Importer\uC640 \uC5D0\uB514\uD130 \uD328\uD0A4\uC9C0
+    \uC0AC\uC6A9/\uB77C\uC6B0\uD305 \uC124\uBA85\uC744 \uD504\uB85C\uC81D\uD2B8 \uC804\uC6A9
+    `Docs/AI` \uBB38\uC11C\uC5D0\uC11C \uAC01 \uD328\uD0A4\uC9C0\uC758 `AI_GUIDE.md`\uB85C
+    \uC62E\uACA8, \uD328\uD0A4\uC9C0\uB97C \uC124\uCE58\uD55C \uD504\uB85C\uC81D\uD2B8\uC5D0\uC11C\uB3C4
+    \uB3D9\uC77C\uD55C AI \uCEE8\uD14D\uC2A4\uD2B8\uB97C \uBC1B\uC744 \uC218 \uC788\uAC8C
+    \uD588\uC2B5\uB2C8\uB2E4.\n- `PACKAGE_AI_GUIDE_ROUTER.md`\uB97C \uCD94\uAC00\uD574
+    \uC124\uCE58\uB41C ActionFit \uD328\uD0A4\uC9C0 \uC911 \uC5B4\uB5A4 `AI_GUIDE.md`\uB97C
+    \uC77D\uC5B4\uC57C \uD558\uB294\uC9C0 \uD310\uB2E8\uD558\uB294 \uD328\uD0A4\uC9C0
+    \uB0B4 \uB77C\uC6B0\uD130\uB97C \uC81C\uACF5\uD588\uC2B5\uB2C8\uB2E4.\n- `ActionFitPackageAiGuideRouter`\uAC00
+    \uAC01 \uD328\uD0A4\uC9C0 \uAC00\uC774\uB4DC\uC758 `Requested router entry`\uB97C
+    \uC77D\uC5B4 `PACKAGE_AI_GUIDE_ROUTER.md`\uC758 `Package Guide Entries`\uB97C
+    \uC790\uB3D9 \uAC31\uC2E0\uD558\uB3C4\uB85D \uD574\uC11C \uB77C\uC6B0\uD130 \uC218\uB3D9
+    \uAD00\uB9AC \uB204\uB77D\uC744 \uC904\uC600\uC2B5\uB2C8\uB2E4.\n- AI guide \uB4F1\uB85D\uC774
+    `Docs/AI/PROJECT.md`\uC5D0 \uACE0\uC815\uB418\uC9C0 \uC54A\uACE0, \uC54C\uB824\uC9C4
+    `PROJECT.md` \uC704\uCE58, \uB2E8\uC77C `PROJECT.md`, `AGENTS.md`, `CLAUDE.md`,
+    `GEMINI.md` \uC21C\uC11C\uB85C \uAE30\uC874 AI \uC9C4\uC785\uC810\uC744 \uCC3E\uC544
+    \uC5F0\uACB0\uD558\uB3C4\uB85D \uBCC0\uACBD\uD588\uC2B5\uB2C8\uB2E4.\n- \uD638\uD658
+    \uD3EC\uC778\uD130 `packages/actionfit-packages.md`\uB97C \uBC1C\uACAC\uB41C
+    AI \uC9C4\uC785\uC810 \uC606\uC5D0 \uC0DD\uC131\uD558\uB3C4\uB85D \uBCC0\uACBD\uD574,
+    \uD504\uB85C\uC81D\uD2B8\uAC00 AI \uBB38\uC11C\uB97C `Docs/AI` \uBC16\uC5D0 \uB450\uC5B4\uB3C4
+    \uD328\uD0A4\uC9C0 \uB77C\uC6B0\uD130\uB97C \uC5F0\uACB0\uD560 \uC218 \uC788\uAC8C
+    \uD588\uC2B5\uB2C8\uB2E4.\n- \uC0C8 \uD328\uD0A4\uC9C0 \uC0DD\uC131 \uC2DC `README.md`,
+    `package.json`, asmdef, PackageInfo SO\uC640 \uD568\uAED8 `AI_GUIDE.md`\uB97C
+    \uC0DD\uC131\uD558\uACE0, AI \uC9C4\uC785\uC810 \uC704\uCE58\uB97C \uACE0\uC815\uD558\uC9C0
+    \uC54A\uB294 \uC548\uB0B4\uB97C \uD3EC\uD568\uD558\uB3C4\uB85D \uD588\uC2B5\uB2C8\uB2E4.\n-
+    `README.md`\uB97C \uC0AC\uB78C\uC774 \uC77D\uB294 \uD328\uD0A4\uC9C0 \uBB38\uC11C\uB85C
+    \uBCF5\uAD6C\uD558\uACE0, \uC0AC\uB78C\uC6A9 `README.md`\uC640 AI\uC6A9 `AI_GUIDE.md`\uC758
+    \uC5ED\uD560 \uBD84\uB9AC\uB97C \uC124\uBA85\uD558\uB3C4\uB85D \uC815\uB9AC\uD588\uC2B5\uB2C8\uB2E4.\n-
+    \uC8FC\uC758: `1.1.28`\uC740 \uC774\uBBF8 \uD0DC\uADF8\uAC00 \uC788\uC73C\uBBC0\uB85C,
+    \uC774\uBC88 \uD328\uD0A4\uC9C0 \uB85C\uCEEC AI guide \uBC0F router \uB4F1\uB85D
+    \uBCC0\uACBD\uC740 `1.1.29`\uB85C \uBC30\uD3EC\uD574\uC57C \uD569\uB2C8\uB2E4."
   _dependenciesOverride: 

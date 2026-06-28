@@ -23,6 +23,7 @@ public static class ActionFitPackageInfoUtility
 {
     public const string PackageInfoFolder = "Editor/PackageInfo";
     public const string PackageInfoAssetName = "ActionFitPackageInfo_SO.asset";
+    public const string AiGuideFileName = "AI_GUIDE.md";
     private const string PackageInfoScriptPath = "Packages/com.actionfit.custompackagemanager/Editor/Scripts/ActionFitPackageInfo_SO.cs";
 
     public static ActionFitPackageInfo_SO CreateOrUpdateFromSelection()
@@ -68,7 +69,7 @@ public static class ActionFitPackageInfoUtility
         SetIfEmpty(serialized, "_displayName", manifest.DisplayName);
         SetIfEmpty(serialized, "_repoName", ToRepoName(manifest.DisplayName, manifest.Name));
         SetIfEmpty(serialized, "_description", manifest.Description);
-        SetIfEmpty(serialized, "_releaseNote", "package_catalog/package_versions 카탈로그 마이그레이션을 위한 재배포 버전");
+        SetIfEmpty(serialized, "_releaseNote", "카탈로그 메타데이터 갱신 릴리즈.");
         serialized.ApplyModifiedPropertiesWithoutUndo();
 
         EditorUtility.SetDirty(info);
@@ -98,6 +99,7 @@ public static class ActionFitPackageInfoUtility
 
         File.WriteAllText(Path.Combine(fullPackageRoot, "package.json"), BuildPackageJson(request), new UTF8Encoding(false));
         File.WriteAllText(Path.Combine(fullPackageRoot, "README.md"), BuildReadme(request), new UTF8Encoding(false));
+        File.WriteAllText(Path.Combine(fullPackageRoot, AiGuideFileName), BuildAiGuide(request), new UTF8Encoding(false));
         WritePackageInfoAssetFile(GetPackageInfoAssetPath(packageRoot), request);
         AssetDatabase.Refresh();
 
@@ -243,7 +245,7 @@ public static class ActionFitPackageInfoUtility
         request.Description = (request.Description ?? "").Trim();
         request.Owner = string.IsNullOrWhiteSpace(request.Owner) ? "ActionFit" : request.Owner.Trim();
         request.Status = string.IsNullOrWhiteSpace(request.Status) ? "verified" : request.Status.Trim();
-        request.ReleaseNote = string.IsNullOrWhiteSpace(request.ReleaseNote) ? "검증된 최초 버전" : request.ReleaseNote.Trim();
+        request.ReleaseNote = string.IsNullOrWhiteSpace(request.ReleaseNote) ? "초기 검증 릴리즈." : request.ReleaseNote.Trim();
     }
 
     private static string NormalizePackageId(string value)
@@ -291,7 +293,7 @@ public static class ActionFitPackageInfoUtility
     {
         return $"# {request.DisplayName} ({request.PackageId})\n\n" +
                $"{request.Description}\n\n" +
-               "## 설치 (manifest.json, Git URL)\n\n" +
+               "## Install\n\n" +
                "```json\n" +
                "{\n" +
                "  \"dependencies\": {\n" +
@@ -299,10 +301,52 @@ public static class ActionFitPackageInfoUtility
                "  }\n" +
                "}\n" +
                "```\n\n" +
-               "## 구성\n\n" +
-               $"- **Editor** (`{request.PackageId}.Editor`): 에디터 전용 코드\n";
+               "## AI Guide\n\n" +
+               $"- Read `{AiGuideFileName}` before modifying or diagnosing this package in a consuming project.\n\n" +
+               "## Assembly\n\n" +
+               $"- **Editor** (`{request.PackageId}.Editor`): editor-only package assembly.\n";
     }
 
+    private static string BuildAiGuide(ActionFitPackageCreateRequest request)
+    {
+        return $"# AI Guide - {request.DisplayName}\n\n" +
+               "This file is shipped inside the UPM package so an AI assistant in a consuming Unity project can understand the package without access to the source project's `Docs/AI` folder.\n\n" +
+               "## Package Identity\n\n" +
+               $"- Package ID: `{request.PackageId}`\n" +
+               $"- Display name: {request.DisplayName}\n" +
+               $"- Repository: `https://github.com/ActionFit-Editor/{request.RepoName}.git`\n" +
+               $"- Current package version at generation time: `{request.Version}`\n" +
+               $"- Unity version: `{request.UnityVersion}`\n\n" +
+               "## Purpose\n\n" +
+               $"{request.Description}\n\n" +
+               "## Project Router Registration\n\n" +
+               "This package should be listed in `Packages/com.actionfit.custompackagemanager/PACKAGE_AI_GUIDE_ROUTER.md`.\n\n" +
+               "Requested router entry:\n\n" +
+               $"- `Packages/{request.PackageId}/AI_GUIDE.md` - {request.DisplayName} provides an ActionFit Unity editor workflow. Read when changing `{request.DisplayName}` package behavior, settings, metadata, or release flow.\n\n" +
+               "If the router file is not already included in the AI assistant's default reading sequence, the router file is responsible for asking the user to link it from the project's primary AI markdown entry point. Prefer an existing `PROJECT.md` wherever the project keeps it, otherwise use `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, or another primary AI markdown entry point.\n\n" +
+               "Read this file when:\n\n" +
+               $"- changing files under `Packages/{request.PackageId}/`\n" +
+               $"- diagnosing `{request.DisplayName}` behavior in a consuming project\n" +
+               $"- preparing a release for `{request.PackageId}`\n" +
+               "- editing package metadata, README, AI guide, package version, or release notes\n\n" +
+               "## How To Work On This Package\n\n" +
+               "- Treat `package.json` as the source for package ID, version, Unity version, and package dependencies.\n" +
+               $"- Treat `Editor/PackageInfo/{PackageInfoAssetName}` as the source for catalog metadata, owner, status, description, release note, repository name, and dependency override.\n" +
+               "- Read `Packages/com.actionfit.custompackagemanager/PACKAGE_AI_GUIDE_ROUTER.md` only when deciding which installed ActionFit package `AI_GUIDE.md` applies to a task.\n" +
+               "- Keep `README.md` focused on human usage and setup.\n" +
+               "- Keep this `AI_GUIDE.md` focused on AI-facing architecture, constraints, migration notes, and package-specific editing rules.\n" +
+               "- When behavior changes, update `AI_GUIDE.md` in the same package before publishing so consuming projects receive the latest AI context.\n\n" +
+               "## Release Note Rules\n\n" +
+               "- `ActionFitPackageInfo_SO.ReleaseNote` must be written in Korean so planners and developers can read package patch notes directly. Keep code identifiers, package IDs, menu paths, config keys, and file paths in their original spelling.\n" +
+               "- `ActionFitPackageInfo_SO.ReleaseNote` must contain only the single version being prepared.\n" +
+               "- Do not copy older changelog entries into the newest release note.\n" +
+               "- Version history and update-range summaries are composed by Custom Package Manager from separate catalog version rows.\n" +
+               "- Do not add headings such as `## 1.0.0` inside ReleaseNote unless a specific package UI requires it; the catalog row already carries the version.\n\n" +
+               "## Publish Notes\n\n" +
+               "- Publishing is manual through Custom Package Manager.\n" +
+               "- Before reusing a version, check the remote Git tags. Published tags are immutable.\n" +
+               "- If this package is modified after a version was tagged, bump to the next unused patch version before publishing.\n";
+    }
     private static string BuildEditorAsmdef(string packageId)
     {
         return "{\n" +

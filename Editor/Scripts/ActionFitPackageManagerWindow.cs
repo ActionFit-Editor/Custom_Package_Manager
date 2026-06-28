@@ -465,32 +465,33 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
     private static List<PackageVersion> ReadCatalog(string path)
     {
-        string[] lines = File.ReadAllLines(path);
-        if (lines.Length < 2) return new List<PackageVersion>();
+        var records = ReadCsvRecords(File.ReadAllText(path));
+        if (records.Count < 2) return new List<PackageVersion>();
 
-        var header = SplitCsvLine(lines[0]).Select(h => h.Trim()).ToArray();
+        var header = SplitCsvLine(records[0]).Select(h => h.Trim()).ToArray();
         var index = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         for (int i = 0; i < header.Length; i++) index[header[i]] = i;
 
         var rows = new List<PackageVersion>();
-        for (int i = 1; i < lines.Length; i++)
+        for (int i = 1; i < records.Count; i++)
         {
-            if (string.IsNullOrWhiteSpace(lines[i])) continue;
-            if (lines[i].Contains("(string)", StringComparison.OrdinalIgnoreCase)) continue;
+            if (string.IsNullOrWhiteSpace(records[i])) continue;
+            if (records[i].Contains("(string)", StringComparison.OrdinalIgnoreCase)) continue;
 
-            string[] cols = SplitCsvLine(lines[i]);
+            string[] cols = SplitCsvLine(records[i]);
+            string version = Get(cols, index, "version");
             var row = new PackageVersion
             {
                 Id = Get(cols, index, "package_id"),
                 DisplayName = Get(cols, index, "display_name"),
                 Owner = Get(cols, index, "owner"),
                 RepoUrl = Get(cols, index, "repo_url"),
-                Version = Get(cols, index, "version"),
+                Version = version,
                 Status = Get(cols, index, "status"),
                 IsLatest = IsTrue(Get(cols, index, "is_latest")),
                 UnityMin = Get(cols, index, "unity_min"),
                 Description = Get(cols, index, "description"),
-                Changelog = Get(cols, index, "changelog"),
+                Changelog = NormalizeChangelog(Get(cols, index, "changelog"), version),
                 Dependencies = Get(cols, index, "dependencies"),
             };
 
@@ -501,6 +502,57 @@ public class ActionFitPackageManagerWindow : EditorWindow
         }
 
         return rows;
+    }
+
+    private static List<string> ReadCsvRecords(string text)
+    {
+        var records = new List<string>();
+        var sb = new StringBuilder();
+        bool inQuotes = false;
+
+        for (int i = 0; i < text.Length; i++)
+        {
+            char c = text[i];
+            if (c == '"')
+            {
+                if (inQuotes && i + 1 < text.Length && text[i + 1] == '"')
+                {
+                    sb.Append(c);
+                    sb.Append(text[i + 1]);
+                    i++;
+                    continue;
+                }
+
+                inQuotes = !inQuotes;
+            }
+
+            if ((c == '\n' || c == '\r') && !inQuotes)
+            {
+                if (c == '\r' && i + 1 < text.Length && text[i + 1] == '\n')
+                    i++;
+
+                records.Add(sb.ToString());
+                sb.Clear();
+                continue;
+            }
+
+            sb.Append(c);
+        }
+
+        if (sb.Length > 0)
+            records.Add(sb.ToString());
+
+        return records;
+    }
+
+    private static string NormalizeChangelog(string raw, string version)
+    {
+        string text = (raw ?? "").Replace("\r\n", "\n").Replace('\r', '\n').Trim();
+        if (string.IsNullOrWhiteSpace(text) || string.IsNullOrWhiteSpace(version))
+            return text;
+
+        string exactHeading = $@"^\s*#+\s*{Regex.Escape(version)}\s*(\n|$)";
+        return Regex.Replace(text, exactHeading, "", RegexOptions.IgnoreCase).Trim();
     }
 
     private void ApplyPackage(PackageGroup package, PackageVersion version)
@@ -553,6 +605,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
         if (replaceEmbedded)
             RemoveEmbeddedFolderWithoutManifestChange(package);
 
+        ActionFitPackageAiGuideRouter.EnsureProjectRouter();
         AssetDatabase.Refresh();
         Client.Resolve();
         QueueReload();
@@ -621,6 +674,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
         foreach (var package in embeddedReplacements)
             RemoveEmbeddedFolderWithoutManifestChange(package);
 
+        ActionFitPackageAiGuideRouter.EnsureProjectRouter();
         AssetDatabase.Refresh();
         Client.Resolve();
         QueueReload();
@@ -671,6 +725,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
         File.WriteAllText(manifestPath, manifest, new UTF8Encoding(false));
         UnityEngine.Debug.Log($"[ActionFitPackageManager] Removed manifest dependency: {package.Id}");
 
+        ActionFitPackageAiGuideRouter.EnsureProjectRouter();
         AssetDatabase.Refresh();
         Client.Resolve();
         QueueReload();
@@ -714,6 +769,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
         }
 
         UnityEngine.Debug.Log($"[ActionFitPackageManager] Removed embedded package folder: {packageRoot}");
+        ActionFitPackageAiGuideRouter.EnsureProjectRouter();
         AssetDatabase.Refresh();
         Client.Resolve();
         QueueReload();

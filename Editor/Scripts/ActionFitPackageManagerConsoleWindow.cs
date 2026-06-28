@@ -59,6 +59,9 @@ public class ActionFitPackageManagerConsoleWindow : EditorWindow
 
             if (GUILayout.Button("Settings"))
                 Selection.activeObject = ActionFitPackageCatalogSettingsProvider.FindOrCreate();
+
+            if (GUILayout.Button("Refresh AI Guide Router"))
+                ActionFitPackageAiGuideRouter.EnsureProjectRouter();
         }
     }
 }

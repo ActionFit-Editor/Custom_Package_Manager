@@ -1,63 +1,84 @@
 # Custom Package Manager (com.actionfit.custompackagemanager)
 
-ActionFit 내부 UPM 패키지 카탈로그를 조회하고, 선택한 패키지를 `Packages/manifest.json`의 Git URL dependency로 설치하거나 버전을 변경하는 Unity 에디터 툴입니다.
+ActionFit UPM package catalog viewer and installer for Unity. It installs packages into `Packages/manifest.json` as Git URL dependencies, applies selected versions, removes packages, and supports manual publish workflows for ActionFit editor packages.
 
 ## Install
 
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.28"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.29"
   }
 }
 ```
 
 ## Menu
 
-- `Tools > ActionFit > Package Manager > Package Manager`: 패키지 설치, 버전 적용, 삭제, 업데이트 확인을 관리합니다.
-- `Tools > ActionFit > Package Manager > Manager Console`: 패키지 생성, 저장소 생성, 배포, README/카탈로그/manifest 열기 같은 운영 기능을 모아둔 별도 창입니다.
+- `Tools > ActionFit > Package Manager > Package Manager`: install, apply versions, remove packages, and inspect updates.
+- `Tools > ActionFit > Package Manager > Manager Console`: create packages, create repositories, publish packages, open README/catalog/manifest/settings.
 
 ## Package Manager
 
-- `Reload`: 현재 카탈로그와 설치 상태를 다시 읽습니다.
-- `Update Catalog`: 설정 SO에 저장된 Spreadsheet/Web App 설정을 사용해 로컬 카탈로그 CSV를 갱신합니다.
-- `Settings`: `Assets/_Data/_CustomPackageManager/ActionFitPackageCatalogSettings_SO.asset`을 선택합니다.
-- `Updates`: 설치된 패키지 중 카탈로그 latest와 현재 버전이 다른 항목을 모아서 보여줍니다.
-- `Console`: 운영 기능을 모아둔 Manager Console 창을 엽니다.
+- `Reload`: reloads the active catalog and current package install state.
+- `Update Catalog`: downloads the local catalog CSV from the configured spreadsheet/web app.
+- `Settings`: selects `Assets/_Data/_CustomPackageManager/ActionFitPackageCatalogSettings_SO.asset`.
+- `Updates`: shows installed packages whose catalog latest version differs from the current version.
+- `Console`: opens the Manager Console.
 
-패키지 목록은 Package Manager, Embedded Packages, Downloaded Packages, Available Packages로 구분됩니다. Embedded package는 `Packages/` 아래에 직접 존재하는 패키지이며, 다른 버전을 적용하면 Git UPM dependency로 전환하고 embedded 폴더를 제거한 뒤 Package Manager resolve를 실행합니다.
+Package sections are grouped as Package Manager, Embedded Packages, Downloaded Packages, and Available Packages. If an embedded package under `Packages/` applies a different version, the tool writes the Git UPM dependency, removes the embedded folder, and runs Package Manager resolve.
 
 ## Updates
 
-`Updates` 패널은 현재 프로젝트에 적용된 패키지를 기준으로 업데이트 가능 여부를 보여줍니다.
+The `Updates` panel shows update candidates across installed packages.
 
-- Downloaded package는 개별 업데이트, 선택 업데이트, 전체 업데이트를 사용할 수 있습니다.
-- Embedded package는 목록에 표시되며, 현재 버전과 다른 버전을 선택하면 Git UPM dependency로 전환하는 업데이트를 실행할 수 있습니다.
-- `Changes`는 현재 설치 버전 다음 버전부터 선택한 버전까지의 업데이트 내역을 보여줍니다.
-- `History`는 해당 패키지의 전체 버전 내역을 최신부터 초기 버전까지 보여줍니다.
+- Downloaded packages can be updated individually, by selection, or all at once.
+- Embedded packages are shown too. Selecting a different version converts them to Git UPM dependencies.
+- `Changes` shows changelog rows between the installed version and the selected target version.
+- `History` shows all catalog changelog rows for the package.
 
-예를 들어 현재 버전이 `1.0.1`이고 선택한 버전이 `1.0.4`이면 `Changes`는 `1.0.2`, `1.0.3`, `1.0.4`의 changelog를 함께 보여줍니다.
+For example, updating from `1.0.1` to `1.0.4` shows the changelog rows for `1.0.2`, `1.0.3`, and `1.0.4` at display time. Those rows are not stored inside the newest release note.
+
+## Changelog Rules
+
+Each package's `ActionFitPackageInfo_SO.ReleaseNote` must contain only the single version being prepared. Do not accumulate old changelog entries in the newest release note.
+
+Package Manager composes `History` and `Changes` from separate catalog version rows. Release notes do not need headings such as `## 1.1.28`; the UI already displays the version label.
+
+## AI Guide
+
+Every ActionFit package should ship an `AI_GUIDE.md` at the package root. This file lets AI assistants in consuming projects understand package-specific rules without access to this source project's `Docs/AI` folder.
+
+- `README.md`: human-facing setup and usage.
+- `AI_GUIDE.md`: AI-facing package identity, editing rules, release-note rules, migration notes, and the package's requested router entry.
+- `PACKAGE_AI_GUIDE_ROUTER.md`: package-shipped AI router for choosing which installed package `AI_GUIDE.md` should be read for a task, plus the request to link this router from the project's default AI reading sequence.
+- `package.json`: package ID, version, Unity version, and dependencies.
+- `Editor/PackageInfo/ActionFitPackageInfo_SO.asset`: catalog metadata and release note source.
+
+When package behavior changes, update that package's `AI_GUIDE.md` before publishing. Custom Package Manager reads each package's `Requested router entry` and refreshes `PACKAGE_AI_GUIDE_ROUTER.md` automatically.
+
+Custom Package Manager scans installed `Packages/com.actionfit.*/AI_GUIDE.md` files and refreshes `PACKAGE_AI_GUIDE_ROUTER.md` from their `Requested router entry` blocks. When a consuming project already has a primary AI markdown entry point, it also generates a `packages/actionfit-packages.md` compatibility pointer next to that entry point and adds an auto-managed section so the project-level AI router can discover `PACKAGE_AI_GUIDE_ROUTER.md`.
+
+If an AI assistant reads this package documentation before the automatic router has registered it, the package `AI_GUIDE.md` exposes its requested router entry and `PACKAGE_AI_GUIDE_ROUTER.md` tells the assistant where the router should be linked.
 
 ## Manager Console
 
-운영성 버튼은 메인 Package Manager 창에서 분리되어 Manager Console에 있습니다.
-
-- `1. Create Package`: `Packages/com.actionfit.*` 패키지 뼈대와 PackageInfo SO를 생성합니다.
-- `2. Create Repo`: 카탈로그에 아직 등록되지 않은 PackageInfo SO를 기준으로 GitHub 저장소와 카탈로그 행을 생성합니다.
-- `3. Publish Package`: 이미 등록된 PackageInfo SO를 기준으로 버전 배포를 진행합니다.
-- `Publish Changed`: 현재 `package.json` 버전과 카탈로그 최신 버전을 비교해 변경된 패키지를 찾아 배포합니다.
-- `README`: 패키지 사용법과 배포 설명을 볼 수 있는 README 창을 엽니다.
-- `Open Catalog`: 로컬 카탈로그 CSV를 선택합니다.
-- `Open Manifest`: 프로젝트 `Packages/manifest.json`을 엽니다.
-- `Settings`: 카탈로그 설정 SO를 선택합니다.
+- `1. Create Package`: creates the `Packages/com.actionfit.*` package skeleton, README, AI guide, asmdef, and PackageInfo SO.
+- `2. Create Repo`: creates/checks the GitHub repository and first catalog row for packages not yet registered.
+- `3. Publish Package`: publishes an already registered package version.
+- `Publish Changed`: finds packages whose local `package.json` version is higher than the catalog latest version and publishes them.
+- `README`: opens this README in a dedicated window.
+- `Open Catalog`: selects the local or fallback catalog CSV.
+- `Open Manifest`: opens the project `Packages/manifest.json`.
+- `Settings`: selects the catalog settings SO.
+- `Refresh AI Guide Router`: refreshes `PACKAGE_AI_GUIDE_ROUTER.md`, regenerates the local `packages/actionfit-packages.md` compatibility pointer next to the discovered AI entry point, and refreshes that entry point's auto-managed package guide section when one exists.
 
 ## Catalog And Manifest
 
-- 로컬 카탈로그 기본 경로는 `Assets/_Data/_CustomPackageManager/package_catalog.csv`입니다.
-- 로컬 카탈로그가 없으면 패키지 내부 fallback 카탈로그 `Packages/com.actionfit.custompackagemanager/Editor/Catalog/package_catalog.csv`를 사용합니다.
-- 설치와 버전 적용은 `Packages/manifest.json` dependencies 블록을 갱신한 뒤 Unity Package Manager resolve를 실행합니다.
-- manifest dependency 블록은 쓰기 시 4칸 들여쓰기, 빈 줄 제거, 마지막 항목 trailing comma 제거 형식으로 정리됩니다.
+- Local catalog path: `Assets/_Data/_CustomPackageManager/package_catalog.csv`.
+- Fallback catalog path: `Packages/com.actionfit.custompackagemanager/Editor/Catalog/package_catalog.csv`.
+- Installing or applying a version updates `Packages/manifest.json` and runs Unity Package Manager resolve.
+- Manifest dependency formatting is normalized when written.
 
 ## Publish Notes
 
-이 패키지는 실제 GitHub push/tag 배포를 자동으로 실행하지 않습니다. 배포가 필요하면 Unity에서 `Tools > ActionFit > Package Manager > Manager Console`을 열고 `3. Publish Package` 또는 `Publish Changed`를 수동으로 실행하세요.
+This package does not automatically publish itself. To publish, open Unity and run `Tools > ActionFit > Package Manager > Manager Console`, then use `3. Publish Package` or `Publish Changed`.
