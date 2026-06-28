@@ -16,6 +16,8 @@ public class ActionFitPackageManagerWindow : EditorWindow
     private const string ReadmePath = "Packages/com.actionfit.custompackagemanager/README.md";
     private const string ManifestPath = "Packages/manifest.json";
     private static readonly string PackageCatalogPath = Path.Combine("Packages", PackageName, CatalogRelativePath).Replace("\\", "/");
+    private static string ProjectRootPath => Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+    private static string ManifestFullPath => Path.Combine(ProjectRootPath, "Packages", "manifest.json");
 
     private readonly Dictionary<string, int> _selectedVersionByPackage = new();
     private readonly HashSet<string> _expandedPackageIds = new();
@@ -334,7 +336,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
     private void ApplyPackage(PackageGroup package, PackageVersion version)
     {
-        string manifestPath = Path.GetFullPath(ManifestPath);
+        string manifestPath = ManifestFullPath;
         if (!File.Exists(manifestPath))
         {
             EditorUtility.DisplayDialog("ActionFit Package Manager", "Packages/manifest.json not found.", "OK");
@@ -380,7 +382,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
                 "Cancel"))
             return;
 
-        string manifestPath = Path.GetFullPath(ManifestPath);
+        string manifestPath = ManifestFullPath;
         if (!File.Exists(manifestPath))
         {
             EditorUtility.DisplayDialog("ActionFit Package Manager", "Packages/manifest.json not found.", "OK");
@@ -425,7 +427,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
                 "Cancel"))
             return;
 
-        string manifestPath = Path.GetFullPath(ManifestPath);
+        string manifestPath = ManifestFullPath;
         if (!File.Exists(manifestPath))
         {
             EditorUtility.DisplayDialog("ActionFit Package Manager", "Packages/manifest.json not found.", "OK");
@@ -520,14 +522,14 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
     private InstalledPackage GetInstalledVersion(string packageId)
     {
-        string embeddedPackageJson = Path.GetFullPath($"Packages/{packageId}/package.json");
+        string embeddedPackageJson = Path.Combine(ProjectRootPath, "Packages", packageId, "package.json");
         if (File.Exists(embeddedPackageJson))
         {
             string version = ExtractJsonString(File.ReadAllText(embeddedPackageJson), "version");
             return new InstalledPackage(true, true, version, $"embedded ({version})");
         }
 
-        string manifestPath = Path.GetFullPath(ManifestPath);
+        string manifestPath = ManifestFullPath;
         if (!File.Exists(manifestPath)) return InstalledPackage.NotInstalled;
 
         string manifestValue = ExtractDependencyValue(File.ReadAllText(manifestPath), packageId);
