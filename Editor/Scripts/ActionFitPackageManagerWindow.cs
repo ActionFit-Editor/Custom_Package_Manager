@@ -556,48 +556,79 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
     private static string SetDependency(string manifest, string packageId, string value)
     {
-        string escapedId = Regex.Escape(packageId);
-        var existing = new Regex($"(\"{escapedId}\"\\s*:\\s*\")([^\"]*)(\"\\s*,?)");
-        if (existing.IsMatch(manifest))
-            return existing.Replace(manifest, $"$1{value}$3", 1);
+        var dependencies = ReadDependencies(manifest, out int openBrace, out int closeBrace);
+        bool updated = false;
+        for (int i = 0; i < dependencies.Count; i++)
+        {
+            if (!string.Equals(dependencies[i].Id, packageId, StringComparison.Ordinal)) continue;
 
-        int dependenciesStart = manifest.IndexOf("\"dependencies\"", StringComparison.Ordinal);
-        if (dependenciesStart < 0) throw new InvalidOperationException("manifest.json has no dependencies block.");
+            dependencies[i] = (packageId, value);
+            updated = true;
+            break;
+        }
 
-        int openBrace = manifest.IndexOf('{', dependenciesStart);
-        int closeBrace = FindMatchingBrace(manifest, openBrace);
-        string dependenciesBody = manifest.Substring(openBrace + 1, closeBrace - openBrace - 1);
-        bool hasExistingDependencies = !string.IsNullOrWhiteSpace(dependenciesBody);
-        string suffix = hasExistingDependencies ? ",\n" : "\n";
-        string insert = $"        \"{packageId}\": \"{value}\"{suffix}";
-        return manifest.Insert(openBrace + 1, "\n" + insert);
+        if (!updated)
+            dependencies.Add((packageId, value));
+
+        return WriteDependencies(manifest, openBrace, closeBrace, dependencies);
     }
 
     private static string RemoveDependency(string manifest, string packageId, out bool removed)
     {
-        removed = false;
-        string newline = manifest.Contains("\r\n") ? "\r\n" : "\n";
-        var lines = manifest.Replace("\r\n", "\n").Split('\n').ToList();
-        var pattern = new Regex($"^\\s*\"{Regex.Escape(packageId)}\"\\s*:");
+        var dependencies = ReadDependencies(manifest, out int openBrace, out int closeBrace);
+        int removedCount = dependencies.RemoveAll(d => string.Equals(d.Id, packageId, StringComparison.Ordinal));
+        removed = removedCount > 0;
+        return removed ? WriteDependencies(manifest, openBrace, closeBrace, dependencies) : manifest;
+    }
 
-        int index = lines.FindIndex(line => pattern.IsMatch(line));
-        if (index < 0) return manifest;
+    private static List<(string Id, string Value)> ReadDependencies(string manifest, out int openBrace, out int closeBrace)
+    {
+        int dependenciesStart = manifest.IndexOf("\"dependencies\"", StringComparison.Ordinal);
+        if (dependenciesStart < 0) throw new InvalidOperationException("manifest.json has no dependencies block.");
 
-        bool removedLineHadComma = lines[index].TrimEnd().EndsWith(",", StringComparison.Ordinal);
-        lines.RemoveAt(index);
+        openBrace = manifest.IndexOf('{', dependenciesStart);
+        closeBrace = FindMatchingBrace(manifest, openBrace);
+        string dependenciesBody = manifest.Substring(openBrace + 1, closeBrace - openBrace - 1);
+        var dependencies = new List<(string Id, string Value)>();
+        var pattern = new Regex("^\\s*\"([^\"]+)\"\\s*:\\s*\"([^\"]*)\"\\s*,?\\s*$");
 
-        if (!removedLineHadComma)
+        foreach (string line in dependenciesBody.Replace("\r\n", "\n").Split('\n'))
         {
-            for (int i = index - 1; i >= 0; i--)
-            {
-                if (!lines[i].Contains(":")) continue;
-                lines[i] = Regex.Replace(lines[i], @",\s*$", "");
-                break;
-            }
+            if (string.IsNullOrWhiteSpace(line)) continue;
+
+            var match = pattern.Match(line);
+            if (!match.Success) continue;
+
+            dependencies.Add((match.Groups[1].Value, match.Groups[2].Value));
         }
 
-        removed = true;
-        return string.Join(newline, lines);
+        return dependencies;
+    }
+
+    private static string WriteDependencies(string manifest, int openBrace, int closeBrace, List<(string Id, string Value)> dependencies)
+    {
+        string newline = manifest.Contains("\r\n") ? "\r\n" : "\n";
+        var sb = new StringBuilder();
+        sb.Append('{');
+
+        if (dependencies.Count > 0)
+        {
+            sb.Append(newline);
+            for (int i = 0; i < dependencies.Count; i++)
+            {
+                var dependency = dependencies[i];
+                string comma = i < dependencies.Count - 1 ? "," : "";
+                sb.Append("    ")
+                    .Append('"').Append(dependency.Id).Append("\": \"")
+                    .Append(dependency.Value).Append('"').Append(comma)
+                    .Append(newline);
+            }
+
+            sb.Append("  ");
+        }
+
+        sb.Append('}');
+        return manifest.Substring(0, openBrace) + sb + manifest[(closeBrace + 1)..];
     }
 
     private InstalledPackage GetInstalledVersion(string packageId)
