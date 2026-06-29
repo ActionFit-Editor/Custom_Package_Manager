@@ -757,7 +757,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
         string sourceVersion = ExtractJsonString(File.ReadAllText(sourcePackageJson), "version");
         if (!EditorUtility.DisplayDialog(
                 "ActionFit Package Manager",
-                $"Embed downloaded package for edit?\n\n{package.Id}: {sourceVersion}\n\nSource: {ToProjectRelativePath(sourcePath)}\nDestination: {packageRoot}\n\nThis will copy the package into Packages/ and remove its Git UPM dependency from Packages/manifest.json.",
+                $"Embed downloaded package for edit?\n\n{package.Id}: {sourceVersion}\n\nSource: {ToProjectRelativePath(sourcePath)}\nDestination: {packageRoot}\n\nThis will copy the package into Packages/ and replace its Git UPM dependency with a local file dependency.",
                 "Embed for Edit",
                 "Cancel"))
             return;
@@ -770,12 +770,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
         }
 
         string manifest = File.ReadAllText(manifestPath);
-        string updatedManifest = RemoveDependency(manifest, package.Id, out bool removedDependency);
-        if (!removedDependency)
-        {
-            EditorUtility.DisplayDialog("ActionFit Package Manager", $"Package dependency was not found in Packages/manifest.json:\n{package.Id}", "OK");
-            return;
-        }
+        string updatedManifest = SetDependency(manifest, package.Id, LocalPackageDependencyValue(package.Id));
 
         try
         {
@@ -832,7 +827,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
         string localVersion = ExtractJsonString(packageJson, "version");
         if (!EditorUtility.DisplayDialog(
                 "ActionFit Package Manager",
-                $"Use existing local package folder for edit?\n\n{package.Id}: {localVersion}\n\nFolder: {packageRoot}\n\nThis will remove the Git UPM dependency from Packages/manifest.json without copying or overwriting the local folder.",
+                $"Use existing local package folder for edit?\n\n{package.Id}: {localVersion}\n\nFolder: {packageRoot}\n\nThis will replace the Git UPM dependency with a local file dependency without copying or overwriting the local folder.",
                 "Use Existing Local",
                 "Cancel"))
             return;
@@ -845,15 +840,10 @@ public class ActionFitPackageManagerWindow : EditorWindow
         }
 
         string manifest = File.ReadAllText(manifestPath);
-        string updatedManifest = RemoveDependency(manifest, package.Id, out bool removedDependency);
-        if (!removedDependency)
-        {
-            EditorUtility.DisplayDialog("ActionFit Package Manager", $"Package dependency was not found in Packages/manifest.json:\n{package.Id}", "OK");
-            return;
-        }
+        string updatedManifest = SetDependency(manifest, package.Id, LocalPackageDependencyValue(package.Id));
 
         File.WriteAllText(manifestPath, updatedManifest, new UTF8Encoding(false));
-        UnityEngine.Debug.Log($"[ActionFitPackageManager] Using existing local package folder for edit: {package.Id}\nFolder: {packageRoot}");
+        UnityEngine.Debug.Log($"[ActionFitPackageManager] Using existing local package folder for edit: {package.Id}\nDependency: {LocalPackageDependencyValue(package.Id)}\nFolder: {packageRoot}");
 
         ActionFitPackageAiGuideRouter.EnsureProjectRouter();
         AssetDatabase.Refresh();
@@ -1265,6 +1255,11 @@ public class ActionFitPackageManagerWindow : EditorWindow
     {
         int hash = packageUrl.LastIndexOf('#');
         return hash >= 0 && hash < packageUrl.Length - 1 ? packageUrl[(hash + 1)..] : "";
+    }
+
+    private static string LocalPackageDependencyValue(string packageId)
+    {
+        return $"file:{packageId}";
     }
 
     private static bool IsLocalPackageDependency(string manifestValue)
