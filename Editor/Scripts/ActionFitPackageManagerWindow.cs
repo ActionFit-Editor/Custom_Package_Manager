@@ -203,7 +203,12 @@ public class ActionFitPackageManagerWindow : EditorWindow
                     RemovePackage(package);
                 EditorGUI.EndDisabledGroup();
 
-                if (installed.IsInstalled && !installed.IsEmbedded)
+                if (installed.IsInstalled && installed.IsEmbedded)
+                {
+                    if (GUILayout.Button("Use Downloaded", GUILayout.Width(120)))
+                        ConvertEmbeddedToDownloaded(package, selectedVersion);
+                }
+                else if (installed.IsInstalled)
                 {
                     if (GUILayout.Button("Embed for Edit", GUILayout.Width(120)))
                         ConvertDownloadedToEmbedded(package, installed);
@@ -728,7 +733,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
         string fullPackageRoot = Path.Combine(ProjectRootPath, "Packages", package.Id);
         if (Directory.Exists(fullPackageRoot))
         {
-            EditorUtility.DisplayDialog("ActionFit Package Manager", $"Local package folder already exists:\n{packageRoot}", "OK");
+            UseExistingLocalFolderForEdit(package, packageRoot, fullPackageRoot);
             return;
         }
 
@@ -799,6 +804,129 @@ public class ActionFitPackageManagerWindow : EditorWindow
             UnityEngine.Debug.LogWarning($"[ActionFitPackageManager] PackageInfo refresh skipped for {package.Id}: {ex.Message}");
         }
 
+        AssetDatabase.Refresh();
+        Client.Resolve();
+        QueueReload();
+    }
+
+    private void UseExistingLocalFolderForEdit(PackageGroup package, string packageRoot, string fullPackageRoot)
+    {
+        string packageJsonPath = Path.Combine(fullPackageRoot, "package.json");
+        if (!File.Exists(packageJsonPath))
+        {
+            EditorUtility.DisplayDialog("ActionFit Package Manager", $"Local package folder already exists without package.json:\n{packageRoot}", "OK");
+            return;
+        }
+
+        string packageJson = File.ReadAllText(packageJsonPath);
+        string localPackageId = ExtractJsonString(packageJson, "name");
+        if (!string.Equals(localPackageId, package.Id, StringComparison.Ordinal))
+        {
+            EditorUtility.DisplayDialog(
+                "ActionFit Package Manager",
+                $"Local package folder package ID does not match.\n\nExpected: {package.Id}\nFound: {localPackageId}\nFolder: {packageRoot}",
+                "OK");
+            return;
+        }
+
+        string localVersion = ExtractJsonString(packageJson, "version");
+        if (!EditorUtility.DisplayDialog(
+                "ActionFit Package Manager",
+                $"Use existing local package folder for edit?\n\n{package.Id}: {localVersion}\n\nFolder: {packageRoot}\n\nThis will remove the Git UPM dependency from Packages/manifest.json without copying or overwriting the local folder.",
+                "Use Existing Local",
+                "Cancel"))
+            return;
+
+        string manifestPath = ManifestFullPath;
+        if (!File.Exists(manifestPath))
+        {
+            EditorUtility.DisplayDialog("ActionFit Package Manager", "Packages/manifest.json not found.", "OK");
+            return;
+        }
+
+        string manifest = File.ReadAllText(manifestPath);
+        string updatedManifest = RemoveDependency(manifest, package.Id, out bool removedDependency);
+        if (!removedDependency)
+        {
+            EditorUtility.DisplayDialog("ActionFit Package Manager", $"Package dependency was not found in Packages/manifest.json:\n{package.Id}", "OK");
+            return;
+        }
+
+        File.WriteAllText(manifestPath, updatedManifest, new UTF8Encoding(false));
+        UnityEngine.Debug.Log($"[ActionFitPackageManager] Using existing local package folder for edit: {package.Id}\nFolder: {packageRoot}");
+
+        ActionFitPackageAiGuideRouter.EnsureProjectRouter();
+        AssetDatabase.Refresh();
+
+        try
+        {
+            ActionFitPackageInfoUtility.CreateOrUpdate(packageRoot);
+        }
+        catch (Exception ex)
+        {
+            UnityEngine.Debug.LogWarning($"[ActionFitPackageManager] PackageInfo refresh skipped for {package.Id}: {ex.Message}");
+        }
+
+        AssetDatabase.Refresh();
+        Client.Resolve();
+        QueueReload();
+    }
+
+    private void ConvertEmbeddedToDownloaded(PackageGroup package, PackageVersion version)
+    {
+        if (version == null)
+        {
+            EditorUtility.DisplayDialog("ActionFit Package Manager", "Catalog version not found.", "OK");
+            return;
+        }
+
+        string packageRoot = $"Packages/{package.Id}";
+        string fullPackageRoot = Path.Combine(ProjectRootPath, "Packages", package.Id);
+        if (!Directory.Exists(fullPackageRoot))
+        {
+            EditorUtility.DisplayDialog("ActionFit Package Manager", $"Embedded package folder not found:\n{packageRoot}", "OK");
+            QueueReload();
+            return;
+        }
+
+        if (!EditorUtility.DisplayDialog(
+                "ActionFit Package Manager",
+                $"Use downloaded Git UPM package instead of local embedded package?\n\n{package.Id}: {version.Version}\n\nThis will write Packages/manifest.json, move {packageRoot} to trash, and run Package Manager resolve.",
+                "Use Downloaded",
+                "Cancel"))
+            return;
+
+        string manifestPath = ManifestFullPath;
+        if (!File.Exists(manifestPath))
+        {
+            EditorUtility.DisplayDialog("ActionFit Package Manager", "Packages/manifest.json not found.", "OK");
+            return;
+        }
+
+        string manifest = File.ReadAllText(manifestPath);
+        var changes = new List<string>();
+
+        foreach (var dep in ParseDependencies(version.Dependencies))
+        {
+            var depVersion = FindVersion(dep.Id, dep.Version);
+            if (depVersion == null)
+            {
+                UnityEngine.Debug.LogWarning($"[ActionFitPackageManager] Dependency not found in catalog: {dep.Id}@{dep.Version}");
+                continue;
+            }
+
+            manifest = SetDependency(manifest, depVersion.Id, depVersion.PackageUrl);
+            changes.Add($"{depVersion.Id} -> {depVersion.PackageUrl}");
+        }
+
+        manifest = SetDependency(manifest, version.Id, version.PackageUrl);
+        changes.Add($"{version.Id} -> {version.PackageUrl}");
+
+        File.WriteAllText(manifestPath, manifest, new UTF8Encoding(false));
+        UnityEngine.Debug.Log("[ActionFitPackageManager] Converted embedded package to downloaded dependency:\n" + string.Join("\n", changes));
+
+        RemoveEmbeddedFolderWithoutManifestChange(package);
+        ActionFitPackageAiGuideRouter.EnsureProjectRouter();
         AssetDatabase.Refresh();
         Client.Resolve();
         QueueReload();
@@ -1075,6 +1203,25 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
     private InstalledPackage GetInstalledVersion(string packageId)
     {
+        string manifestPath = ManifestFullPath;
+        if (File.Exists(manifestPath))
+        {
+            string manifestValue = ExtractDependencyValue(File.ReadAllText(manifestPath), packageId);
+            if (!string.IsNullOrWhiteSpace(manifestValue))
+            {
+                if (!IsLocalPackageDependency(manifestValue))
+                {
+                    string versionFromUrl = ExtractVersionFromPackageUrl(manifestValue);
+                    string label = string.IsNullOrWhiteSpace(versionFromUrl) ? manifestValue : versionFromUrl;
+                    return new InstalledPackage(true, false, versionFromUrl, label);
+                }
+
+                string localVersion = ExtractLocalPackageVersion(packageId, manifestValue);
+                string localLabel = string.IsNullOrWhiteSpace(localVersion) ? manifestValue : $"embedded ({localVersion})";
+                return new InstalledPackage(true, true, localVersion, localLabel);
+            }
+        }
+
         string embeddedPackageJson = Path.Combine(ProjectRootPath, "Packages", packageId, "package.json");
         if (File.Exists(embeddedPackageJson))
         {
@@ -1082,15 +1229,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
             return new InstalledPackage(true, true, version, $"embedded ({version})");
         }
 
-        string manifestPath = ManifestFullPath;
-        if (!File.Exists(manifestPath)) return InstalledPackage.NotInstalled;
-
-        string manifestValue = ExtractDependencyValue(File.ReadAllText(manifestPath), packageId);
-        if (string.IsNullOrWhiteSpace(manifestValue)) return InstalledPackage.NotInstalled;
-
-        string versionFromUrl = ExtractVersionFromPackageUrl(manifestValue);
-        string label = string.IsNullOrWhiteSpace(versionFromUrl) ? manifestValue : versionFromUrl;
-        return new InstalledPackage(true, false, versionFromUrl, label);
+        return InstalledPackage.NotInstalled;
     }
 
     private static List<(string Id, string Version)> ParseDependencies(string raw)
@@ -1126,6 +1265,23 @@ public class ActionFitPackageManagerWindow : EditorWindow
     {
         int hash = packageUrl.LastIndexOf('#');
         return hash >= 0 && hash < packageUrl.Length - 1 ? packageUrl[(hash + 1)..] : "";
+    }
+
+    private static bool IsLocalPackageDependency(string manifestValue)
+    {
+        return manifestValue.Trim().StartsWith("file:", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ExtractLocalPackageVersion(string packageId, string manifestValue)
+    {
+        string value = manifestValue.Trim();
+        string relative = value.StartsWith("file:", StringComparison.OrdinalIgnoreCase) ? value[5..] : value;
+        string fullPath = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(ManifestFullPath), relative));
+        string packageJson = Path.Combine(fullPath, "package.json");
+        if (!File.Exists(packageJson))
+            packageJson = Path.Combine(ProjectRootPath, "Packages", packageId, "package.json");
+
+        return File.Exists(packageJson) ? ExtractJsonString(File.ReadAllText(packageJson), "version") : "";
     }
 
     private static bool IsVersionNewer(string candidateVersion, string installedVersion)

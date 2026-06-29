@@ -7,7 +7,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.32"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.33"
   }
 }
 ```
@@ -25,9 +25,9 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 - `Updates`: shows installed packages whose catalog latest version is higher than the current version.
 - `Console`: opens the Manager Console.
 
-Package sections are grouped as Package Manager, Embedded Packages, Downloaded Packages, and Available Packages. If an embedded package under `Packages/` applies a different version, the tool writes the Git UPM dependency, removes the embedded folder, and runs Package Manager resolve.
+Package sections are grouped as Package Manager, Embedded Packages, Downloaded Packages, and Available Packages. Git/registry dependencies in `Packages/manifest.json` are shown as Downloaded Packages. Local `file:` dependencies or package folders under `Packages/` without a manifest dependency are shown as Embedded Packages.
 
-Downloaded packages include `Embed for Edit`. This copies the resolved package source from Unity's package cache into `Packages/<packageId>/`, removes the Git UPM dependency from `Packages/manifest.json`, and runs Package Manager resolve so the package becomes editable as a local embedded package.
+Downloaded packages include `Embed for Edit`. This copies the resolved package source from Unity's package cache into `Packages/<packageId>/`, removes the Git UPM dependency from `Packages/manifest.json`, and runs Package Manager resolve so the package becomes editable as a local embedded package. If the local package folder already exists and its `package.json` name matches, the tool can use that existing folder instead of copying over it. Embedded packages include `Use Downloaded`, which writes the selected catalog Git UPM version back to `Packages/manifest.json`, removes the local folder, and returns the package to the downloaded flow.
 
 After editing an embedded package, bump its `package.json` version above the catalog latest version before using `Publish Changed`.
 
