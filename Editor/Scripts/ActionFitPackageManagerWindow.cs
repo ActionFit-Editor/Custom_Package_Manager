@@ -33,7 +33,12 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
     private readonly Dictionary<string, int> _selectedVersionByPackage = new();
     private readonly HashSet<string> _expandedPackageIds = new();
+    private readonly HashSet<string> _expandedCommunityPackageIds = new();
+    private readonly HashSet<string> _expandedCommentKeys = new();
     private readonly HashSet<string> _selectedUpdatePackageIds = new();
+    private readonly Dictionary<string, ActionFitPackageCommunityClient.Summary> _communitySummariesByPackage = new();
+    private readonly Dictionary<string, CommentPanelState> _commentStatesByPackage = new();
+    private readonly Dictionary<string, string> _communityMessagesByPackage = new();
     private readonly List<PackageGroup> _packages = new();
     private ActionFitPackageCatalogSettings_SO _settings;
     private Vector2 _scroll;
@@ -99,13 +104,13 @@ public class ActionFitPackageManagerWindow : EditorWindow
         var filtered = FilteredPackages().ToList();
         var manager = filtered.Where(p => p.Id == PackageName).ToList();
         var catalogPackages = filtered.Where(p => p.Id != PackageName).ToList();
-        var embedded = catalogPackages.Where(p => GetInstalledVersion(p.Id).IsEmbedded).ToList();
-        var downloaded = catalogPackages.Where(p =>
+        var embedded = SortPackagesForDisplay(catalogPackages.Where(p => GetInstalledVersion(p.Id).IsEmbedded));
+        var downloaded = SortPackagesForDisplay(catalogPackages.Where(p =>
         {
             var installed = GetInstalledVersion(p.Id);
             return installed.IsInstalled && !installed.IsEmbedded;
-        }).ToList();
-        var available = catalogPackages.Where(p => !GetInstalledVersion(p.Id).IsInstalled).ToList();
+        }));
+        var available = SortPackagesForDisplay(catalogPackages.Where(p => !GetInstalledVersion(p.Id).IsInstalled));
 
         DrawPackageSection("Package Manager", manager);
         EditorGUILayout.Space(4);
@@ -157,6 +162,16 @@ public class ActionFitPackageManagerWindow : EditorWindow
             p.Owner.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0);
     }
 
+    private List<PackageGroup> SortPackagesForDisplay(IEnumerable<PackageGroup> packages)
+    {
+        return packages
+            .OrderByDescending(p => GetCommunitySummary(p).Score)
+            .ThenByDescending(p => GetCommunitySummary(p).Likes)
+            .ThenByDescending(p => GetCommunitySummary(p).CommentCount)
+            .ThenBy(p => p.DisplayName, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
     private void DrawPackage(PackageGroup package)
     {
         var installed = GetInstalledVersion(package.Id);
@@ -173,11 +188,13 @@ public class ActionFitPackageManagerWindow : EditorWindow
                 if (nextExpanded) _expandedPackageIds.Add(package.Id);
                 else _expandedPackageIds.Remove(package.Id);
 
+                var community = GetCommunitySummary(package);
                 GUILayout.FlexibleSpace();
                 EditorGUILayout.LabelField($"Installed: {installed.Label}", EditorStyles.miniLabel, GUILayout.Width(150));
                 EditorGUILayout.LabelField($"Latest: {package.LatestVersionLabel}", EditorStyles.miniLabel, GUILayout.Width(150));
+                EditorGUILayout.LabelField($"Score: {community.Score}  L/D: {community.Likes}/{community.Dislikes}  C: {community.CommentCount}", EditorStyles.miniLabel, GUILayout.Width(170));
                 EditorGUILayout.LabelField($"Owner: {package.Owner}", EditorStyles.miniLabel, GUILayout.Width(120));
-                EditorGUILayout.LabelField(package.Id, EditorStyles.miniLabel, GUILayout.Width(260));
+                EditorGUILayout.LabelField(package.Id, EditorStyles.miniLabel, GUILayout.Width(240));
             }
 
             if (!_expandedPackageIds.Contains(package.Id)) return;
@@ -233,7 +250,219 @@ public class ActionFitPackageManagerWindow : EditorWindow
             string updateStatus = GetUpdateStatus(package, installed);
             if (!string.IsNullOrWhiteSpace(updateStatus))
                 EditorGUILayout.LabelField("Update", updateStatus, EditorStyles.miniLabel);
+
+            DrawCommunity(package);
         }
+    }
+
+    private void DrawCommunity(PackageGroup package)
+    {
+        var summary = GetCommunitySummary(package);
+
+        using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+        {
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                bool expanded = _expandedCommunityPackageIds.Contains(package.Id);
+                bool nextExpanded = EditorGUILayout.Foldout(expanded, "Community", true);
+                if (nextExpanded) _expandedCommunityPackageIds.Add(package.Id);
+                else _expandedCommunityPackageIds.Remove(package.Id);
+
+                GUILayout.FlexibleSpace();
+                EditorGUILayout.LabelField($"Score: {summary.Score}", EditorStyles.miniLabel, GUILayout.Width(70));
+                EditorGUILayout.LabelField($"Likes: {summary.Likes}", EditorStyles.miniLabel, GUILayout.Width(75));
+                EditorGUILayout.LabelField($"Dislikes: {summary.Dislikes}", EditorStyles.miniLabel, GUILayout.Width(90));
+                EditorGUILayout.LabelField($"Comments: {summary.CommentCount}", EditorStyles.miniLabel, GUILayout.Width(105));
+            }
+
+            if (!_expandedCommunityPackageIds.Contains(package.Id)) return;
+
+            DrawVoteControls(package);
+            DrawCommentPanel(package);
+
+            if (_communityMessagesByPackage.TryGetValue(package.Id, out string message) &&
+                !string.IsNullOrWhiteSpace(message))
+            {
+                EditorGUILayout.HelpBox(message, IsCommunityFailureMessage(message) ? MessageType.Warning : MessageType.Info);
+            }
+        }
+    }
+
+    private void DrawVoteControls(PackageGroup package)
+    {
+        string localVote = ActionFitPackageCommunityClient.GetLocalVote(package.Id);
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            EditorGUILayout.LabelField("Vote", GUILayout.Width(80));
+
+            EditorGUI.BeginDisabledGroup(string.Equals(localVote, ActionFitPackageCommunityClient.VoteLike, StringComparison.OrdinalIgnoreCase));
+            if (GUILayout.Button(string.Equals(localVote, ActionFitPackageCommunityClient.VoteLike, StringComparison.OrdinalIgnoreCase) ? "Liked" : "Like", GUILayout.Width(90)))
+                SubmitVote(package, ActionFitPackageCommunityClient.VoteLike);
+            EditorGUI.EndDisabledGroup();
+
+            EditorGUI.BeginDisabledGroup(string.Equals(localVote, ActionFitPackageCommunityClient.VoteDislike, StringComparison.OrdinalIgnoreCase));
+            if (GUILayout.Button(string.Equals(localVote, ActionFitPackageCommunityClient.VoteDislike, StringComparison.OrdinalIgnoreCase) ? "Disliked" : "Dislike", GUILayout.Width(90)))
+                SubmitVote(package, ActionFitPackageCommunityClient.VoteDislike);
+            EditorGUI.EndDisabledGroup();
+
+            GUILayout.FlexibleSpace();
+        }
+    }
+
+    private void DrawCommentPanel(PackageGroup package)
+    {
+        var state = GetCommentState(package.Id);
+
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            EditorGUILayout.LabelField($"Comments ({GetCommunitySummary(package).CommentCount})", EditorStyles.boldLabel);
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button(state.Loaded ? "Refresh Comments" : "Load Comments", GUILayout.Width(130)))
+                LoadComments(package);
+        }
+
+        if (!state.Loaded)
+        {
+            EditorGUILayout.HelpBox("Load comments to view package feedback and edit this project's comment.", MessageType.None);
+        }
+        else if (state.Comments.Count == 0)
+        {
+            EditorGUILayout.HelpBox("No comments yet.", MessageType.None);
+        }
+        else
+        {
+            for (int i = 0; i < state.Comments.Count; i++)
+                DrawComment(package, state.Comments[i], i);
+        }
+
+        EditorGUILayout.Space(4);
+        EditorGUILayout.LabelField(state.HasMyComment ? "My Comment" : "Add Comment", EditorStyles.boldLabel);
+        state.TitleDraft = EditorGUILayout.TextField("Title", state.TitleDraft ?? "");
+        EditorGUILayout.LabelField("Description");
+        var textAreaStyle = new GUIStyle(EditorStyles.textArea) { wordWrap = true };
+        state.BodyDraft = EditorGUILayout.TextArea(state.BodyDraft ?? "", textAreaStyle, GUILayout.MinHeight(64f));
+
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            EditorGUILayout.LabelField("One editable comment per project and package.", EditorStyles.miniLabel);
+            GUILayout.FlexibleSpace();
+
+            bool canSubmit = !string.IsNullOrWhiteSpace(state.TitleDraft) && !string.IsNullOrWhiteSpace(state.BodyDraft);
+            EditorGUI.BeginDisabledGroup(!canSubmit);
+            if (GUILayout.Button(state.HasMyComment ? "Update Comment" : "Save Comment", GUILayout.Width(130)))
+                SaveComment(package);
+            EditorGUI.EndDisabledGroup();
+        }
+    }
+
+    private void DrawComment(PackageGroup package, ActionFitPackageCommunityClient.Comment comment, int index)
+    {
+        string key = CommentFoldoutKey(package.Id, comment, index);
+        bool expanded = _expandedCommentKeys.Contains(key);
+        string title = string.IsNullOrWhiteSpace(comment.title) ? "(untitled)" : comment.title.Trim();
+        string updated = FirstNonEmpty(comment.updated_at, comment.created_at);
+        string mine = comment.is_mine ? " (mine)" : "";
+        string label = string.IsNullOrWhiteSpace(updated) ? $"{title}{mine}" : $"{title}{mine} - {updated}";
+
+        bool nextExpanded = EditorGUILayout.Foldout(expanded, label, true);
+        if (nextExpanded) _expandedCommentKeys.Add(key);
+        else _expandedCommentKeys.Remove(key);
+
+        if (!nextExpanded) return;
+
+        DrawReadonlyText("Description", comment.body);
+    }
+
+    private void SubmitVote(PackageGroup package, string vote)
+    {
+        _settings = ActionFitPackageCatalogSettingsProvider.FindOrCreate();
+        if (ActionFitPackageCommunityClient.SubmitVote(_settings, package.Id, vote, out var summary, out string message))
+        {
+            _communitySummariesByPackage[package.Id] = summary;
+            _communityMessagesByPackage[package.Id] = message;
+            Repaint();
+            return;
+        }
+
+        _communityMessagesByPackage[package.Id] = message;
+        UnityEngine.Debug.LogWarning($"[ActionFitPackageManager] {message}");
+        Repaint();
+    }
+
+    private void LoadComments(PackageGroup package)
+    {
+        _settings = ActionFitPackageCatalogSettingsProvider.FindOrCreate();
+        var state = GetCommentState(package.Id);
+        if (ActionFitPackageCommunityClient.FetchComments(_settings, package.Id, out var result, out string message))
+        {
+            state.Loaded = true;
+            state.Comments = result.Comments;
+            state.HasMyComment = result.MyComment != null;
+            if (result.MyComment != null)
+            {
+                state.TitleDraft = result.MyComment.title ?? "";
+                state.BodyDraft = result.MyComment.body ?? "";
+            }
+
+            _communitySummariesByPackage[package.Id] = result.Summary;
+            _communityMessagesByPackage[package.Id] = message;
+            Repaint();
+            return;
+        }
+
+        _communityMessagesByPackage[package.Id] = message;
+        UnityEngine.Debug.LogWarning($"[ActionFitPackageManager] {message}");
+        Repaint();
+    }
+
+    private void SaveComment(PackageGroup package)
+    {
+        _settings = ActionFitPackageCatalogSettingsProvider.FindOrCreate();
+        var state = GetCommentState(package.Id);
+        if (ActionFitPackageCommunityClient.UpsertComment(_settings, package.Id, state.TitleDraft, state.BodyDraft, out var summary, out string message))
+        {
+            _communitySummariesByPackage[package.Id] = summary;
+            _communityMessagesByPackage[package.Id] = message;
+            LoadComments(package);
+            return;
+        }
+
+        _communityMessagesByPackage[package.Id] = message;
+        UnityEngine.Debug.LogWarning($"[ActionFitPackageManager] {message}");
+        Repaint();
+    }
+
+    private CommentPanelState GetCommentState(string packageId)
+    {
+        if (!_commentStatesByPackage.TryGetValue(packageId, out var state))
+        {
+            state = new CommentPanelState();
+            _commentStatesByPackage[packageId] = state;
+        }
+
+        return state;
+    }
+
+    private ActionFitPackageCommunityClient.Summary GetCommunitySummary(PackageGroup package)
+    {
+        if (_communitySummariesByPackage.TryGetValue(package.Id, out var summary))
+            return summary;
+
+        return new ActionFitPackageCommunityClient.Summary(package.Likes, package.Dislikes, package.CommentCount);
+    }
+
+    private static string CommentFoldoutKey(string packageId, ActionFitPackageCommunityClient.Comment comment, int index)
+    {
+        string stable = FirstNonEmpty(comment.comment_id, comment.updated_at, comment.created_at, comment.title, index.ToString());
+        return $"{packageId}:{stable}";
+    }
+
+    private static bool IsCommunityFailureMessage(string message)
+    {
+        return message.IndexOf("failed", StringComparison.OrdinalIgnoreCase) >= 0 ||
+               message.IndexOf("required", StringComparison.OrdinalIgnoreCase) >= 0 ||
+               message.IndexOf("invalid", StringComparison.OrdinalIgnoreCase) >= 0 ||
+               message.IndexOf("unauthorized", StringComparison.OrdinalIgnoreCase) >= 0;
     }
 
     private void DrawUpdateManager(List<PackageGroup> packages)
@@ -503,6 +732,9 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
             string[] cols = SplitCsvLine(records[i]);
             string version = Get(cols, index, "version");
+            int likes = ParseInt(GetAny(cols, index, "likes", "like_count", "likeCount"));
+            int dislikes = ParseInt(GetAny(cols, index, "dislikes", "dislike_count", "dislikeCount"));
+            string voteScoreRaw = GetAny(cols, index, "vote_score", "voteScore", "score");
             var row = new PackageVersion
             {
                 Id = Get(cols, index, "package_id"),
@@ -516,6 +748,10 @@ public class ActionFitPackageManagerWindow : EditorWindow
                 Description = Get(cols, index, "description"),
                 Changelog = NormalizeChangelog(Get(cols, index, "changelog"), version),
                 Dependencies = Get(cols, index, "dependencies"),
+                Likes = likes,
+                Dislikes = dislikes,
+                VoteScore = string.IsNullOrWhiteSpace(voteScoreRaw) ? likes - dislikes : ParseInt(voteScoreRaw),
+                CommentCount = ParseInt(GetAny(cols, index, "comment_count", "commentCount", "comments")),
             };
 
             if (!string.IsNullOrWhiteSpace(row.Id) &&
@@ -1314,6 +1550,30 @@ public class ActionFitPackageManagerWindow : EditorWindow
         return index.TryGetValue(key, out int i) && i < cols.Length ? cols[i].Trim() : "";
     }
 
+    private static string GetAny(string[] cols, Dictionary<string, int> index, params string[] keys)
+    {
+        foreach (string key in keys)
+        {
+            string value = Get(cols, index, key);
+            if (!string.IsNullOrWhiteSpace(value)) return value;
+        }
+
+        return "";
+    }
+
+    private static string FirstNonEmpty(params string[] values)
+    {
+        foreach (string value in values)
+            if (!string.IsNullOrWhiteSpace(value))
+                return value.Trim();
+        return "";
+    }
+
+    private static int ParseInt(string value)
+    {
+        return int.TryParse((value ?? "").Trim(), out int result) ? result : 0;
+    }
+
     private static bool IsTrue(string value)
     {
         return value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
@@ -1357,6 +1617,15 @@ public class ActionFitPackageManagerWindow : EditorWindow
         return result.ToArray();
     }
 
+    private sealed class CommentPanelState
+    {
+        public bool Loaded;
+        public bool HasMyComment;
+        public List<ActionFitPackageCommunityClient.Comment> Comments = new();
+        public string TitleDraft = "";
+        public string BodyDraft = "";
+    }
+
     private sealed class PackageGroup
     {
         public PackageGroup(string id, List<PackageVersion> versions)
@@ -1366,12 +1635,19 @@ public class ActionFitPackageManagerWindow : EditorWindow
             DisplayName = versions.FirstOrDefault()?.DisplayName ?? id;
             Owner = versions.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v.Owner))?.Owner ?? "ActionFit";
             LatestVersionLabel = versions.FirstOrDefault(v => v.IsLatest)?.Version ?? versions.FirstOrDefault()?.Version ?? "";
+            var summarySource = versions.FirstOrDefault(v => v.IsLatest) ?? versions.FirstOrDefault();
+            Likes = summarySource?.Likes ?? 0;
+            Dislikes = summarySource?.Dislikes ?? 0;
+            CommentCount = summarySource?.CommentCount ?? 0;
         }
 
         public string Id { get; }
         public string DisplayName { get; }
         public string Owner { get; }
         public string LatestVersionLabel { get; }
+        public int Likes { get; }
+        public int Dislikes { get; }
+        public int CommentCount { get; }
         public PackageVersion LatestVersion => Versions.FirstOrDefault(v => v.IsLatest) ?? Versions.FirstOrDefault();
         public List<PackageVersion> Versions { get; }
     }
@@ -1420,6 +1696,10 @@ public class ActionFitPackageManagerWindow : EditorWindow
         public string Description;
         public string Changelog;
         public string Dependencies;
+        public int Likes;
+        public int Dislikes;
+        public int VoteScore;
+        public int CommentCount;
         public string PackageUrl => $"{RepoUrl}#{Version}";
         public string VersionLabel => IsLatest ? $"{Version} ({Status}, latest)" : $"{Version} ({Status})";
     }

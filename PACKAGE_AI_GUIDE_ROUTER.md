@@ -38,7 +38,6 @@ Do not silently create `Docs/AI/PROJECT.md` or any other AI entry point in a pro
 - `Packages/com.actionfit.filenamereplace/AI_GUIDE.md` - File Name Replace manages batch file renaming. Read when changing rename rules, before/after replacement workflows, or file rename safety.
 - `Packages/com.actionfit.findfolder/AI_GUIDE.md` - Find Folder manages saved folder/file focus shortcuts. Read when changing GUID/path tracking, shortcut storage, migration, or Project window focusing.
 - `Packages/com.actionfit.playmodelogsaver/AI_GUIDE.md` - Play Mode Log Saver saves editor play mode logs. Read when changing log capture, save paths, or play mode log settings.
-- `Library/PackageCache/com.actionfit.sdfsdf@ecdf197fd981/AI_GUIDE.md` - sdfsdfsdf provides an ActionFit Unity editor workflow. Read when changing `sdfsdfsdf` package behavior, settings, metadata, or release flow.
 - `Packages/com.actionfit.sosingleton/AI_GUIDE.md` - SO Singleton provides ScriptableObject singleton loading conventions. Read when changing singleton load paths, Resources/SO behavior, or singleton base APIs.
 - `Packages/com.actionfit.texturebatchimporter/AI_GUIDE.md` - Texture Batch Importer manages batch texture and atlas import settings. Read when changing texture importer presets, sprite import settings, or atlas batch workflows.
 

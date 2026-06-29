@@ -7,7 +7,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.34"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.35"
   }
 }
 ```
@@ -27,9 +27,23 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 
 Package sections are grouped as Package Manager, Embedded Packages, Downloaded Packages, and Available Packages. Git/registry dependencies in `Packages/manifest.json` are shown as Downloaded Packages. Local `file:` dependencies or package folders under `Packages/` without a manifest dependency are shown as Embedded Packages.
 
+Package sections are sorted by package community score, `likes - dislikes`, highest first. When the catalog spreadsheet Web App exposes `package_vote_summary`, `Update Catalog` imports `likes`, `dislikes`, `vote_score`, and `comment_count` into the local catalog CSV.
+
 Downloaded packages include `Embed for Edit`. This copies the resolved package source from Unity's package cache into `Packages/<packageId>/`, writes `file:<packageId>` to `Packages/manifest.json`, and runs Package Manager resolve so the package becomes editable as a local embedded package. If the local package folder already exists and its `package.json` name matches, the tool can use that existing folder instead of copying over it. Embedded packages include `Use Downloaded`, which writes the selected catalog Git UPM version back to `Packages/manifest.json`, removes the local folder, and returns the package to the downloaded flow.
 
 After editing an embedded package, bump its `package.json` version above the catalog latest version before using `Publish Changed`.
+
+## Community Feedback
+
+Each package detail view includes a `Community` foldout.
+
+- `Like` and `Dislike` send one vote per anonymous project ID and package.
+- The anonymous project ID is stored at `UserSettings/ActionFitPackageManager/community_id.txt` and is not a user account or machine identity.
+- Clicking the already selected vote is disabled. Switching from `Like` to `Dislike`, or the reverse, updates the same project vote instead of adding another vote.
+- Comments use a `Title` and `Description`. Comment titles are shown as foldouts so users can scan titles first and open only the descriptions they want to read.
+- Each project can keep one editable comment per package.
+
+The configured catalog Web App must support `votePackage`, `getPackageComments`, and `upsertPackageComment`. See `Editor/Documentation/PackageCommunityWebAppContract.md` for the required sheet and response contract.
 
 ## Updates
 
@@ -81,6 +95,7 @@ If an AI assistant reads this package documentation before the automatic router 
 
 - Local catalog path: `Assets/_Data/_CustomPackageManager/package_catalog.csv`.
 - Fallback catalog path: `Packages/com.actionfit.custompackagemanager/Editor/Catalog/package_catalog.csv`.
+- Optional community summary sheet: `package_vote_summary`.
 - Installing or applying a version updates `Packages/manifest.json` and runs Unity Package Manager resolve.
 - Manifest dependency formatting is normalized when written.
 

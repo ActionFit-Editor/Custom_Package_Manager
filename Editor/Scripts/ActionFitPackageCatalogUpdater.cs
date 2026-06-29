@@ -12,6 +12,7 @@ public static class ActionFitPackageCatalogUpdater
 {
     private const string PackageSheetName = "package_catalog";
     private const string VersionSheetName = "package_versions";
+    private const string VoteSummarySheetName = "package_vote_summary";
 
     private static string ProjectRootPath => Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
 
@@ -119,6 +120,9 @@ public static class ActionFitPackageCatalogUpdater
             var versionSheet = response.sheets.FirstOrDefault(s =>
                 string.Equals(s.name, VersionSheetName, StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(s.name, VersionSheetName + ".csv", StringComparison.OrdinalIgnoreCase));
+            var voteSummarySheet = response.sheets.FirstOrDefault(s =>
+                string.Equals(s.name, VoteSummarySheetName, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(s.name, VoteSummarySheetName + ".csv", StringComparison.OrdinalIgnoreCase));
 
             if (packageSheet == null || versionSheet == null)
             {
@@ -126,7 +130,7 @@ public static class ActionFitPackageCatalogUpdater
                 return false;
             }
 
-            csv = BuildCatalogCsv(packageSheet.csv, versionSheet.csv);
+            csv = BuildCatalogCsv(packageSheet.csv, versionSheet.csv, voteSummarySheet?.csv);
             return true;
         }
         catch (Exception ex)
@@ -136,16 +140,21 @@ public static class ActionFitPackageCatalogUpdater
         }
     }
 
-    private static string BuildCatalogCsv(string packageCsv, string versionCsv)
+    private static string BuildCatalogCsv(string packageCsv, string versionCsv, string voteSummaryCsv)
     {
         var packages = ReadCsv(packageCsv)
             .Where(r => !string.IsNullOrWhiteSpace(GetAny(r, "package_id", "packageId")))
             .GroupBy(r => GetAny(r, "package_id", "packageId"), StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
+        var voteSummaries = ReadCsv(voteSummaryCsv)
+            .Where(r => !string.IsNullOrWhiteSpace(GetAny(r, "package_id", "packageId")))
+            .GroupBy(r => GetAny(r, "package_id", "packageId"), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
         var rows = new StringBuilder();
-        rows.AppendLine("catalog_id,package_id,display_name,owner,repo_url,version,status,is_latest,unity_min,description,changelog,dependencies");
-        rows.AppendLine("catalogId(string)[key],packageId(string),displayName(string),owner(string),repoUrl(string),version(string),status(string),isLatest(bool)[nondata],unityMin(string),description(string),changelog(string),dependencies(string)");
+        rows.AppendLine("catalog_id,package_id,display_name,owner,repo_url,version,status,is_latest,unity_min,description,changelog,dependencies,likes,dislikes,vote_score,comment_count");
+        rows.AppendLine("catalogId(string)[key],packageId(string),displayName(string),owner(string),repoUrl(string),version(string),status(string),isLatest(bool)[nondata],unityMin(string),description(string),changelog(string),dependencies(string),likes(int),dislikes(int),voteScore(int),commentCount(int)");
 
         foreach (var version in ReadCsv(versionCsv))
         {
@@ -154,6 +163,7 @@ public static class ActionFitPackageCatalogUpdater
             if (string.IsNullOrWhiteSpace(packageId) || string.IsNullOrWhiteSpace(packageVersion)) continue;
 
             packages.TryGetValue(packageId, out var package);
+            voteSummaries.TryGetValue(packageId, out var voteSummary);
             string catalogId = FirstNonEmpty(GetAny(version, "catalog_id", "catalogId"), $"{packageId}@{packageVersion}");
             string displayName = FirstNonEmpty(GetAny(package, "display_name", "displayName"), GetAny(version, "display_name", "displayName"), packageId);
             string owner = FirstNonEmpty(Get(package, "owner"), Get(version, "owner"), "ActionFit");
@@ -164,6 +174,12 @@ public static class ActionFitPackageCatalogUpdater
             string description = FirstNonEmpty(Get(package, "description"), Get(version, "description"));
             string changelog = FirstNonEmpty(Get(version, "changelog"), Get(version, "release_note"), Get(version, "releaseNote"));
             string dependencies = FirstNonEmpty(Get(version, "dependencies"), Get(package, "dependencies"));
+            string likes = FirstNonEmpty(GetAny(voteSummary, "likes", "like_count", "likeCount"), GetAny(package, "likes", "like_count", "likeCount"), GetAny(version, "likes", "like_count", "likeCount"), "0");
+            string dislikes = FirstNonEmpty(GetAny(voteSummary, "dislikes", "dislike_count", "dislikeCount"), GetAny(package, "dislikes", "dislike_count", "dislikeCount"), GetAny(version, "dislikes", "dislike_count", "dislikeCount"), "0");
+            string voteScore = FirstNonEmpty(GetAny(voteSummary, "vote_score", "voteScore", "score"), GetAny(package, "vote_score", "voteScore", "score"), GetAny(version, "vote_score", "voteScore", "score"));
+            string commentCount = FirstNonEmpty(GetAny(voteSummary, "comment_count", "commentCount", "comments"), GetAny(package, "comment_count", "commentCount", "comments"), GetAny(version, "comment_count", "commentCount", "comments"), "0");
+            if (string.IsNullOrWhiteSpace(voteScore))
+                voteScore = (ParseInt(likes) - ParseInt(dislikes)).ToString();
 
             rows.AppendLine(string.Join(",", new[]
             {
@@ -178,7 +194,11 @@ public static class ActionFitPackageCatalogUpdater
                 Csv(unityMin),
                 Csv(description),
                 Csv(changelog),
-                Csv(dependencies)
+                Csv(dependencies),
+                Csv(likes),
+                Csv(dislikes),
+                Csv(voteScore),
+                Csv(commentCount)
             }));
         }
 
@@ -265,6 +285,11 @@ public static class ActionFitPackageCatalogUpdater
             if (!string.IsNullOrWhiteSpace(value))
                 return value.Trim();
         return "";
+    }
+
+    private static int ParseInt(string value)
+    {
+        return int.TryParse((value ?? "").Trim(), out int result) ? result : 0;
     }
 
     private static string Csv(string value)
