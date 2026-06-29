@@ -7,7 +7,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.31"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.32"
   }
 }
 ```
@@ -22,10 +22,14 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 - `Reload`: reloads the active catalog and current package install state.
 - `Update Catalog`: downloads the local catalog CSV from the configured spreadsheet/web app.
 - `Settings`: selects `Assets/_Data/_CustomPackageManager/ActionFitPackageCatalogSettings_SO.asset`.
-- `Updates`: shows installed packages whose catalog latest version differs from the current version.
+- `Updates`: shows installed packages whose catalog latest version is higher than the current version.
 - `Console`: opens the Manager Console.
 
 Package sections are grouped as Package Manager, Embedded Packages, Downloaded Packages, and Available Packages. If an embedded package under `Packages/` applies a different version, the tool writes the Git UPM dependency, removes the embedded folder, and runs Package Manager resolve.
+
+Downloaded packages include `Embed for Edit`. This copies the resolved package source from Unity's package cache into `Packages/<packageId>/`, removes the Git UPM dependency from `Packages/manifest.json`, and runs Package Manager resolve so the package becomes editable as a local embedded package.
+
+After editing an embedded package, bump its `package.json` version above the catalog latest version before using `Publish Changed`.
 
 ## Updates
 

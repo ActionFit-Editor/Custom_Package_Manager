@@ -14,11 +14,21 @@ public class ActionFitPackageManagerWindow : EditorWindow
     private const string PackageName = "com.actionfit.custompackagemanager";
     private const string CatalogRelativePath = "Editor/Catalog/package_catalog.csv";
     private static readonly string PackageCatalogPath = Path.Combine("Packages", PackageName, CatalogRelativePath).Replace("\\", "/");
+    private static readonly string PackageCachePath = Path.Combine("Library", "PackageCache").Replace("\\", "/");
     private static string ProjectRootPath => Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
     private static string ManifestFullPath => Path.Combine(ProjectRootPath, "Packages", "manifest.json");
     private static string ProjectRelativeFullPath(string relativePath)
     {
         return Path.Combine(ProjectRootPath, relativePath.Replace("/", Path.DirectorySeparatorChar.ToString()));
+    }
+
+    private static string ToProjectRelativePath(string fullPath)
+    {
+        string root = ProjectRootPath.Replace("\\", "/").TrimEnd('/');
+        string normalized = Path.GetFullPath(fullPath).Replace("\\", "/");
+        return normalized.StartsWith(root + "/", StringComparison.Ordinal)
+            ? normalized[(root.Length + 1)..]
+            : normalized;
     }
 
     private readonly Dictionary<string, int> _selectedVersionByPackage = new();
@@ -192,6 +202,12 @@ public class ActionFitPackageManagerWindow : EditorWindow
                 if (GUILayout.Button("Remove", GUILayout.Width(90)))
                     RemovePackage(package);
                 EditorGUI.EndDisabledGroup();
+
+                if (installed.IsInstalled && !installed.IsEmbedded)
+                {
+                    if (GUILayout.Button("Embed for Edit", GUILayout.Width(120)))
+                        ConvertDownloadedToEmbedded(package, installed);
+                }
 
                 if (GUILayout.Button("History", GUILayout.Width(90)))
                     ShowHistory(package, false, installed.Version, selectedVersion.Version);
@@ -700,6 +716,94 @@ public class ActionFitPackageManagerWindow : EditorWindow
         RemoveManifestPackage(package);
     }
 
+    private void ConvertDownloadedToEmbedded(PackageGroup package, InstalledPackage installed)
+    {
+        if (!installed.IsInstalled || installed.IsEmbedded)
+        {
+            EditorUtility.DisplayDialog("ActionFit Package Manager", "Only downloaded packages can be embedded for edit.", "OK");
+            return;
+        }
+
+        string packageRoot = $"Packages/{package.Id}";
+        string fullPackageRoot = Path.Combine(ProjectRootPath, "Packages", package.Id);
+        if (Directory.Exists(fullPackageRoot))
+        {
+            EditorUtility.DisplayDialog("ActionFit Package Manager", $"Local package folder already exists:\n{packageRoot}", "OK");
+            return;
+        }
+
+        if (!TryFindDownloadedPackageSource(package.Id, out string sourcePath, out string sourceError))
+        {
+            EditorUtility.DisplayDialog("ActionFit Package Manager", sourceError, "OK");
+            return;
+        }
+
+        string sourcePackageJson = Path.Combine(sourcePath, "package.json");
+        string sourcePackageId = ExtractJsonString(File.ReadAllText(sourcePackageJson), "name");
+        if (!string.Equals(sourcePackageId, package.Id, StringComparison.Ordinal))
+        {
+            EditorUtility.DisplayDialog(
+                "ActionFit Package Manager",
+                $"Resolved package source does not match.\n\nExpected: {package.Id}\nFound: {sourcePackageId}\nSource: {ToProjectRelativePath(sourcePath)}",
+                "OK");
+            return;
+        }
+
+        string sourceVersion = ExtractJsonString(File.ReadAllText(sourcePackageJson), "version");
+        if (!EditorUtility.DisplayDialog(
+                "ActionFit Package Manager",
+                $"Embed downloaded package for edit?\n\n{package.Id}: {sourceVersion}\n\nSource: {ToProjectRelativePath(sourcePath)}\nDestination: {packageRoot}\n\nThis will copy the package into Packages/ and remove its Git UPM dependency from Packages/manifest.json.",
+                "Embed for Edit",
+                "Cancel"))
+            return;
+
+        string manifestPath = ManifestFullPath;
+        if (!File.Exists(manifestPath))
+        {
+            EditorUtility.DisplayDialog("ActionFit Package Manager", "Packages/manifest.json not found.", "OK");
+            return;
+        }
+
+        string manifest = File.ReadAllText(manifestPath);
+        string updatedManifest = RemoveDependency(manifest, package.Id, out bool removedDependency);
+        if (!removedDependency)
+        {
+            EditorUtility.DisplayDialog("ActionFit Package Manager", $"Package dependency was not found in Packages/manifest.json:\n{package.Id}", "OK");
+            return;
+        }
+
+        try
+        {
+            CopyDirectoryForEmbeddedPackage(sourcePath, fullPackageRoot);
+            File.WriteAllText(manifestPath, updatedManifest, new UTF8Encoding(false));
+        }
+        catch (Exception ex)
+        {
+            if (Directory.Exists(fullPackageRoot))
+                Directory.Delete(fullPackageRoot, true);
+
+            EditorUtility.DisplayDialog("ActionFit Package Manager", $"Embed for edit failed:\n{ex.Message}", "OK");
+            return;
+        }
+
+        UnityEngine.Debug.Log($"[ActionFitPackageManager] Embedded package for edit: {package.Id}\nSource: {ToProjectRelativePath(sourcePath)}\nDestination: {packageRoot}");
+        ActionFitPackageAiGuideRouter.EnsureProjectRouter();
+        AssetDatabase.Refresh();
+
+        try
+        {
+            ActionFitPackageInfoUtility.CreateOrUpdate(packageRoot);
+        }
+        catch (Exception ex)
+        {
+            UnityEngine.Debug.LogWarning($"[ActionFitPackageManager] PackageInfo refresh skipped for {package.Id}: {ex.Message}");
+        }
+
+        AssetDatabase.Refresh();
+        Client.Resolve();
+        QueueReload();
+    }
+
     private void RemoveManifestPackage(PackageGroup package)
     {
         if (!EditorUtility.DisplayDialog(
@@ -799,6 +903,97 @@ public class ActionFitPackageManagerWindow : EditorWindow
         if (!string.IsNullOrWhiteSpace(version))
             return group.Versions.FirstOrDefault(v => v.Version == version);
         return group.Versions.FirstOrDefault(v => v.IsLatest) ?? group.Versions.FirstOrDefault();
+    }
+
+    private static bool TryFindDownloadedPackageSource(string packageId, out string sourcePath, out string error)
+    {
+        sourcePath = "";
+        error = "";
+
+        try
+        {
+            var packageInfo = UnityEditor.PackageManager.PackageInfo
+                .GetAllRegisteredPackages()
+                .FirstOrDefault(p => string.Equals(p.name, packageId, StringComparison.Ordinal));
+
+            if (packageInfo != null && IsValidDownloadedPackageSource(packageId, packageInfo.resolvedPath))
+            {
+                sourcePath = packageInfo.resolvedPath;
+                return true;
+            }
+        }
+        catch (Exception ex)
+        {
+            UnityEngine.Debug.LogWarning($"[ActionFitPackageManager] Registered package lookup failed for {packageId}: {ex.Message}");
+        }
+
+        string cacheRoot = ProjectRelativeFullPath(PackageCachePath);
+        if (Directory.Exists(cacheRoot))
+        {
+            foreach (string dir in Directory.GetDirectories(cacheRoot, packageId + "@*", SearchOption.TopDirectoryOnly)
+                         .OrderByDescending(Directory.GetLastWriteTimeUtc))
+            {
+                if (!IsValidDownloadedPackageSource(packageId, dir)) continue;
+
+                sourcePath = dir;
+                return true;
+            }
+        }
+
+        error =
+            $"Downloaded package cache was not found for {packageId}.\n\n" +
+            "Open the project in Unity, run Package Manager resolve/reload, then try again.";
+        return false;
+    }
+
+    private static bool IsValidDownloadedPackageSource(string packageId, string path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
+            return false;
+
+        string relativePath = ToProjectRelativePath(path).Replace("\\", "/");
+        if (relativePath.StartsWith("Packages/", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        string packageJson = Path.Combine(path, "package.json");
+        if (!File.Exists(packageJson))
+            return false;
+
+        string name = ExtractJsonString(File.ReadAllText(packageJson), "name");
+        return string.Equals(name, packageId, StringComparison.Ordinal);
+    }
+
+    private static void CopyDirectoryForEmbeddedPackage(string source, string destination)
+    {
+        string fullSource = Path.GetFullPath(source).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        Directory.CreateDirectory(destination);
+
+        foreach (string dir in Directory.GetDirectories(fullSource, "*", SearchOption.AllDirectories))
+        {
+            string relative = dir[(fullSource.Length + 1)..];
+            if (IsGitMetadataPath(relative)) continue;
+
+            Directory.CreateDirectory(Path.Combine(destination, relative));
+        }
+
+        foreach (string file in Directory.GetFiles(fullSource, "*", SearchOption.AllDirectories))
+        {
+            string relative = file[(fullSource.Length + 1)..];
+            if (IsGitMetadataPath(relative)) continue;
+
+            string target = Path.Combine(destination, relative);
+            Directory.CreateDirectory(Path.GetDirectoryName(target));
+            File.Copy(file, target, true);
+            File.SetAttributes(target, File.GetAttributes(target) & ~FileAttributes.ReadOnly);
+        }
+    }
+
+    private static bool IsGitMetadataPath(string relativePath)
+    {
+        string normalized = relativePath.Replace("\\", "/");
+        return normalized.Equals(".git", StringComparison.OrdinalIgnoreCase) ||
+               normalized.StartsWith(".git/", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Contains("/.git/", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string SetDependency(string manifest, string packageId, string value)

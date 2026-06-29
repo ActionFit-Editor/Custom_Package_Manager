@@ -7,7 +7,7 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.custompackagemanager`
 - Display name: Custom Package Manager
 - Repository: `https://github.com/ActionFit-Editor/Custom_Package_Manager.git`
-- Current package version at generation time: `1.1.31`
+- Current package version at generation time: `1.1.32`
 - Unity version: `6000.2`
 
 ## Purpose
@@ -68,6 +68,8 @@ Read this file when:
 - Package Manager reads the local catalog when present, otherwise the embedded package catalog.
 - It manages internal UPM package install/update/remove, repository creation, changelog/history display, AI guide routing, and manual publish flows.
 - The `Updates` panel must include only installed packages whose catalog latest version is higher than the installed version. Do not treat any version difference as an update, because that can downgrade packages such as `1.0.30 -> 1.0.29`.
+- Downloaded packages may be converted to editable embedded packages through `Embed for Edit`. The conversion should copy the resolved package source into `Packages/<packageId>/`, remove that package's manifest dependency, refresh package AI routing, and run Package Manager resolve without requiring publish credentials.
+- `Embed for Edit` does not publish by itself. After editing, the package `package.json` version must be bumped above the catalog latest version before `Publish Changed` will pick it up.
 
 ## Changelog And History Rules
 
