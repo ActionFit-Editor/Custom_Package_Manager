@@ -7,7 +7,7 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.custompackagemanager`
 - Display name: Custom Package Manager
 - Repository: `https://github.com/ActionFit-Editor/Custom_Package_Manager.git`
-- Current package version at generation time: `1.1.30`
+- Current package version at generation time: `1.1.31`
 - Unity version: `6000.2`
 
 ## Purpose
@@ -39,7 +39,7 @@ Read this file when:
 - `Editor/Scripts/ActionFitPackagePublishWindow.cs`: publish target scan and publish UI.
 - `Editor/Scripts/ActionFitPackagePublisher.cs`: GitHub repository publish and catalog upsert request.
 - `Editor/Scripts/ActionFitPackageCatalogUpdater.cs`: spreadsheet/web-app catalog download.
-- `Editor/Scripts/ActionFitPackageAiGuideRouter.cs`: scans embedded and Git UPM package `AI_GUIDE.md` files, syncs `PACKAGE_AI_GUIDE_ROUTER.md`, and connects an existing project AI entry point when present.
+- `Editor/Scripts/ActionFitPackageAiGuideRouter.cs`: scans embedded and Git UPM package `AI_GUIDE.md` files, syncs `PACKAGE_AI_GUIDE_ROUTER.md`, and connects discovered AI entry points through adapter-style helpers.
 - `Editor/PackageInfo/ActionFitPackageInfo_SO.asset`: catalog metadata source for this package.
 - `PACKAGE_AI_GUIDE_ROUTER.md`: package-shipped AI router for choosing which package `AI_GUIDE.md` to read for a task.
 
@@ -67,6 +67,7 @@ Read this file when:
 - Fallback catalog path: `Packages/com.actionfit.custompackagemanager/Editor/Catalog/package_catalog.csv`.
 - Package Manager reads the local catalog when present, otherwise the embedded package catalog.
 - It manages internal UPM package install/update/remove, repository creation, changelog/history display, AI guide routing, and manual publish flows.
+- The `Updates` panel must include only installed packages whose catalog latest version is higher than the installed version. Do not treat any version difference as an update, because that can downgrade packages such as `1.0.30 -> 1.0.29`.
 
 ## Changelog And History Rules
 
@@ -85,6 +86,7 @@ Read this file when:
 - `PACKAGE_AI_GUIDE_ROUTER.md` keeps the short package-to-task routing table and asks to be linked from the project's AI default reading sequence when needed.
 - `README.md` is for humans; `AI_GUIDE.md` is for AI assistants working inside consuming projects.
 - Custom Package Manager should scan installed package guides from both embedded `Packages/com.actionfit.*` folders and Git UPM `Library/PackageCache/com.actionfit.*@*` folders, refresh `PACKAGE_AI_GUIDE_ROUTER.md`, then link the package router from an existing project AI entry point when one can be found.
+- AI entry point registration should be routed through small adapter-style helpers so additional tools can be supported without duplicating package guide scan or router-write logic.
 - Router entries must point to the actual discovered `AI_GUIDE.md` path. Embedded packages use `Packages/com.actionfit.*/AI_GUIDE.md`; Git UPM packages use `Library/PackageCache/com.actionfit.*@hash/AI_GUIDE.md`.
 - AI entry point discovery should prefer known project router paths (`Docs/AI/PROJECT.md`, `PROJECT.md`), then a single unambiguous `PROJECT.md` found elsewhere in the project, then fallback files such as `AGENTS.md`, `CLAUDE.md`, or `GEMINI.md`.
 - If multiple non-standard `PROJECT.md` files exist, do not choose one silently. Use a known fallback AI entry point if present; otherwise leave the package router refreshed and let the assistant ask the user where to register it.
@@ -141,4 +143,5 @@ When updating a package version, write PackageInfo release notes using these sta
 - Publishing is manual through Custom Package Manager.
 - Before reusing a version, check the remote Git tags. Published tags are immutable.
 - If this package is modified after a version was tagged, bump to the next unused patch version before publishing.
+- Before pushing package contents, the publisher should fetch `origin/main` and reset the local publish clone to it so cached publish folders do not fail with non-fast-forward push rejections.
 - The package repository should include this `AI_GUIDE.md` so other projects can load the AI package context after installing the package.

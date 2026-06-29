@@ -32,11 +32,13 @@ public static class ActionFitPackageAiGuideRouter
             var guides = FindGuides();
             WritePackageGuideRouter(guides);
 
-            string projectRouterFullPath = FindPrimaryAiEntryPoint();
-            if (string.IsNullOrEmpty(projectRouterFullPath)) return;
+            foreach (var entryPoint in FindAiEntryPoints())
+            {
+                if (entryPoint.WritePackageIndex)
+                    WritePackageIndex(entryPoint.FullPath, guides);
 
-            WritePackageIndex(projectRouterFullPath, guides);
-            EnsureProjectRouterLink(projectRouterFullPath, guides.Count);
+                EnsureProjectRouterLink(entryPoint.FullPath, guides.Count);
+            }
         }
         catch (Exception ex)
         {
@@ -159,7 +161,42 @@ public static class ActionFitPackageAiGuideRouter
         WriteIfChanged(fullPath, sb.ToString());
     }
 
-    private static string FindPrimaryAiEntryPoint()
+    private static List<AiEntryPoint> FindAiEntryPoints()
+    {
+        var result = new List<AiEntryPoint>();
+        string primaryEntryPoint = FindPrimaryProjectRouter();
+        bool hasProjectRouter = !string.IsNullOrEmpty(primaryEntryPoint);
+        if (!hasProjectRouter)
+            primaryEntryPoint = FindFirstFallbackAiEntryPoint();
+
+        if (!string.IsNullOrEmpty(primaryEntryPoint))
+            AddAiEntryPoint(result, primaryEntryPoint, true);
+
+        // Tool-specific entry points should stay lightweight. In projects that
+        // already use a central PROJECT.md, they normally point there instead
+        // of receiving a duplicated package-router block.
+        if (!hasProjectRouter)
+        {
+            foreach (string relativePath in GetFallbackAiEntryPointCandidates())
+            {
+                string fullPath = ProjectRelativeFullPath(relativePath);
+                if (File.Exists(fullPath))
+                    AddAiEntryPoint(result, fullPath, false);
+            }
+        }
+
+        return result;
+    }
+
+    private static void AddAiEntryPoint(List<AiEntryPoint> entryPoints, string fullPath, bool writePackageIndex)
+    {
+        if (entryPoints.Any(entry => string.Equals(entry.FullPath, fullPath, StringComparison.OrdinalIgnoreCase)))
+            return;
+
+        entryPoints.Add(new AiEntryPoint(fullPath, writePackageIndex));
+    }
+
+    private static string FindPrimaryProjectRouter()
     {
         foreach (string relativePath in GetKnownProjectRouterCandidates())
         {
@@ -169,7 +206,11 @@ public static class ActionFitPackageAiGuideRouter
 
         var projectRouters = FindProjectMdFiles();
         if (projectRouters.Count == 1) return projectRouters[0];
+        return null;
+    }
 
+    private static string FindFirstFallbackAiEntryPoint()
+    {
         foreach (string relativePath in GetFallbackAiEntryPointCandidates())
         {
             string fullPath = ProjectRelativeFullPath(relativePath);
@@ -351,6 +392,18 @@ public static class ActionFitPackageAiGuideRouter
         public List<string> ReadWhen { get; }
         public string RouterEntry { get; }
         public bool IsEmbedded => PackagePath.StartsWith("Packages/", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private readonly struct AiEntryPoint
+    {
+        public AiEntryPoint(string fullPath, bool writePackageIndex)
+        {
+            FullPath = fullPath;
+            WritePackageIndex = writePackageIndex;
+        }
+
+        public string FullPath { get; }
+        public bool WritePackageIndex { get; }
     }
 }
 #endif

@@ -112,20 +112,42 @@ public static class ActionFitPackagePublisher
         if (!Directory.Exists(Path.Combine(dest, ".git")))
             RunGit(publishRoot, $"clone {Quote(remote)} {Quote(dest)}", settings.GitHubToken);
 
+        RunGit(dest, $"remote set-url origin {Quote(remote)}", settings.GitHubToken);
+        RunGit(dest, "fetch --prune origin", settings.GitHubToken);
+        RunGit(dest, "reset --hard", settings.GitHubToken, false);
+        RunGit(dest, "clean -fdx", settings.GitHubToken, false);
+
+        if (RunGit(dest, "show-ref --verify --quiet refs/remotes/origin/main", settings.GitHubToken, false))
+        {
+            RunGit(dest, "checkout -B main origin/main", settings.GitHubToken);
+            RunGit(dest, "reset --hard origin/main", settings.GitHubToken);
+        }
+        else
+        {
+            RunGit(dest, "checkout -B main", settings.GitHubToken);
+        }
+
         ClearDirectoryExceptGit(dest);
         CopyDirectory(Path.GetFullPath(packageRoot), dest);
 
-        RunGit(dest, "checkout -B main", settings.GitHubToken);
         RunGit(dest, "add -A", settings.GitHubToken);
 
         if (!RunGit(dest, "diff --cached --quiet", settings.GitHubToken, false))
             RunGit(dest, $"commit -m {Quote($"{manifest.Name} {manifest.Version}")}", settings.GitHubToken);
 
-        if (!RunGit(dest, $"rev-parse {Quote(manifest.Version)}", settings.GitHubToken, false))
+        string tagRef = $"refs/tags/{manifest.Version}";
+        bool remoteTagExists = RunGit(dest, $"ls-remote --exit-code --tags origin {Quote(tagRef)}", settings.GitHubToken, false);
+        if (!remoteTagExists)
+        {
+            if (RunGit(dest, $"show-ref --verify --quiet {Quote(tagRef)}", settings.GitHubToken, false))
+                RunGit(dest, $"tag -d {Quote(manifest.Version)}", settings.GitHubToken);
+
             RunGit(dest, $"tag {Quote(manifest.Version)}", settings.GitHubToken);
+        }
 
         RunGit(dest, "push -u origin main", settings.GitHubToken);
-        RunGit(dest, $"push origin {Quote(manifest.Version)}", settings.GitHubToken);
+        if (!remoteTagExists)
+            RunGit(dest, $"push origin {Quote(manifest.Version)}", settings.GitHubToken);
     }
 
     private static void AppendCatalog(ActionFitPackageCatalogSettings_SO settings, ActionFitPackageInfo_SO info, ActionFitPackageManifest manifest)

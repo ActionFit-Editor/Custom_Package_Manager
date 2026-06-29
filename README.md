@@ -7,7 +7,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.30"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.31"
   }
 }
 ```
@@ -29,12 +29,13 @@ Package sections are grouped as Package Manager, Embedded Packages, Downloaded P
 
 ## Updates
 
-The `Updates` panel shows update candidates across installed packages.
+The `Updates` panel shows installed packages only when the catalog latest version is higher than the current installed version.
 
 - Downloaded packages can be updated individually, by selection, or all at once.
 - Embedded packages are shown too. Selecting a different version converts them to Git UPM dependencies.
 - `Changes` shows changelog rows between the installed version and the selected target version.
 - `History` shows all catalog changelog rows for the package.
+- If the installed package is newer than the catalog latest version, it stays out of the `Updates` panel to avoid accidental downgrade.
 
 For example, updating from `1.0.1` to `1.0.4` shows the changelog rows for `1.0.2`, `1.0.3`, and `1.0.4` at display time. Those rows are not stored inside the newest release note.
 
@@ -70,7 +71,7 @@ If an AI assistant reads this package documentation before the automatic router 
 - `Open Catalog`: selects the local or fallback catalog CSV.
 - `Open Manifest`: opens the project `Packages/manifest.json`.
 - `Settings`: selects the catalog settings SO.
-- `Refresh AI Guide Router`: refreshes `PACKAGE_AI_GUIDE_ROUTER.md`, regenerates the local `packages/actionfit-packages.md` compatibility pointer next to the discovered AI entry point, and refreshes that entry point's auto-managed package guide section when one exists.
+- `Refresh AI Guide Router`: refreshes `PACKAGE_AI_GUIDE_ROUTER.md`, regenerates the local `packages/actionfit-packages.md` compatibility pointer next to the discovered AI entry point, and refreshes that entry point's auto-managed package guide section when one exists. The router code now keeps AI entry point registration behind adapter-style helpers so additional AI tools can be added without duplicating package guide scanning.
 
 ## Catalog And Manifest
 
@@ -82,3 +83,5 @@ If an AI assistant reads this package documentation before the automatic router 
 ## Publish Notes
 
 This package does not automatically publish itself. To publish, open Unity and run `Tools > ActionFit > Package Manager > Manager Console`, then use `3. Publish Package` or `Publish Changed`.
+
+Before pushing package contents, the publisher refreshes the local publish clone from `origin/main` so an older cached clone does not trigger a non-fast-forward push rejection.

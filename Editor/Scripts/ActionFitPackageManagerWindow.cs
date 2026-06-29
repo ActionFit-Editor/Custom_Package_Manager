@@ -255,7 +255,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
             if (candidates.Count == 0)
             {
-                EditorGUILayout.HelpBox("No installed packages have a different catalog latest version.", MessageType.None);
+                EditorGUILayout.HelpBox("No installed packages have a newer catalog latest version.", MessageType.None);
                 DrawHistoryPanel();
                 return;
             }
@@ -302,7 +302,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
         {
             var installed = GetInstalledVersion(package.Id);
             if (!installed.IsInstalled || package.LatestVersion == null) continue;
-            if (IsSameVersion(package.LatestVersion.Version, installed.Version)) continue;
+            if (!IsVersionNewer(package.LatestVersion.Version, installed.Version)) continue;
 
             result.Add(new UpdateCandidate(package, installed, package.LatestVersion, CanApplySelectedVersion(installed, package.LatestVersion)));
         }
@@ -402,9 +402,11 @@ public class ActionFitPackageManagerWindow : EditorWindow
         if (package.LatestVersion == null) return "latest version not found in catalog";
         if (IsSameVersion(package.LatestVersion.Version, installed.Version)) return "already latest";
 
-        string direction = IsVersionNewer(package.LatestVersion.Version, installed.Version) ? "newer" : "different";
+        if (!IsVersionNewer(package.LatestVersion.Version, installed.Version))
+            return $"installed version is newer than catalog latest ({installed.Version} > {package.LatestVersion.Version})";
+
         string source = installed.IsEmbedded ? "embedded, " : "";
-        return $"{installed.Version} -> {package.LatestVersion.Version} ({source}{direction})";
+        return $"{installed.Version} -> {package.LatestVersion.Version} ({source}newer)";
     }
 
     private static bool CanApplySelectedVersion(InstalledPackage installed, PackageVersion version)
