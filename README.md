@@ -7,7 +7,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.36"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.37"
   }
 }
 ```
@@ -53,6 +53,7 @@ The `Updates` panel shows installed packages only when the catalog latest versio
 - Embedded packages are shown too. Selecting a different version converts them to Git UPM dependencies.
 - `Changes` shows changelog rows between the installed version and the selected target version.
 - `History` shows all catalog changelog rows for the package.
+- `Latest Git` opens the package's catalog latest GitHub repository tag in the default browser.
 - If the installed package is newer than the catalog latest version, it stays out of the `Updates` panel to avoid accidental downgrade.
 
 For example, updating from `1.0.1` to `1.0.4` shows the changelog rows for `1.0.2`, `1.0.3`, and `1.0.4` at display time. Those rows are not stored inside the newest release note.

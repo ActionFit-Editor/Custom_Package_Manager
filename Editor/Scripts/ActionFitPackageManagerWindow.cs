@@ -234,6 +234,9 @@ public class ActionFitPackageManagerWindow : EditorWindow
                 if (GUILayout.Button("History", GUILayout.Width(90)))
                     ShowHistory(package, false, installed.Version, selectedVersion.Version);
 
+                if (GUILayout.Button("Latest Git", GUILayout.Width(90)))
+                    OpenLatestGit(package);
+
                 if (installed.IsInstalled && !IsSameVersion(selectedVersion.Version, installed.Version))
                 {
                     if (GUILayout.Button("Changes", GUILayout.Width(90)))
@@ -531,6 +534,9 @@ public class ActionFitPackageManagerWindow : EditorWindow
                     if (GUILayout.Button("History", GUILayout.Width(80)))
                         ShowHistory(candidate.Package, false, candidate.Installed.Version, candidate.Latest.Version);
 
+                    if (GUILayout.Button("Latest Git", GUILayout.Width(90)))
+                        OpenLatestGit(candidate.Package);
+
                     EditorGUI.BeginDisabledGroup(!candidate.CanApply);
                     if (GUILayout.Button("Update", GUILayout.Width(80)))
                         ApplyPackage(candidate.Package, candidate.Latest);
@@ -569,6 +575,51 @@ public class ActionFitPackageManagerWindow : EditorWindow
         _historyRangeOnly = rangeOnly;
         _historyFromVersion = fromVersion;
         _historyToVersion = toVersion;
+    }
+
+    private static void OpenLatestGit(PackageGroup package)
+    {
+        var latest = package.LatestVersion;
+        string url = BuildLatestGitBrowserUrl(latest?.RepoUrl, latest?.Version);
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            EditorUtility.DisplayDialog("ActionFit Package Manager", $"Git URL not found for {package.DisplayName}.", "OK");
+            return;
+        }
+
+        Application.OpenURL(url);
+    }
+
+    private static string BuildLatestGitBrowserUrl(string repoUrl, string version)
+    {
+        string url = (repoUrl ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(url)) return "";
+
+        int hashIndex = url.IndexOf('#');
+        if (hashIndex >= 0)
+            url = url[..hashIndex];
+
+        if (url.StartsWith("git@github.com:", StringComparison.OrdinalIgnoreCase))
+            url = "https://github.com/" + url["git@github.com:".Length..];
+
+        url = url.Replace("\\", "/");
+        if (url.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
+            url = url[..^4];
+
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) ||
+            !string.Equals(uri.Host, "github.com", StringComparison.OrdinalIgnoreCase))
+            return url;
+
+        string path = uri.AbsolutePath.Trim('/');
+        if (path.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
+            path = path[..^4];
+
+        if (string.IsNullOrWhiteSpace(path)) return url;
+
+        string versionPath = string.IsNullOrWhiteSpace(version)
+            ? ""
+            : $"/tree/{Uri.EscapeDataString(version)}";
+        return $"https://github.com/{path}{versionPath}";
     }
 
     private void DrawHistoryPanel()
