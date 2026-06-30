@@ -7,7 +7,7 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.custompackagemanager`
 - Display name: Custom Package Manager
 - Repository: `https://github.com/ActionFit-Editor/Custom_Package_Manager.git`
-- Current package version at generation time: `1.1.35`
+- Current package version at generation time: `1.1.36`
 - Unity version: `6000.2`
 
 ## Purpose
@@ -35,6 +35,7 @@ Read this file when:
 
 - `Editor/Scripts/ActionFitPackageManagerWindow.cs`: package list, install/apply/remove/update/history UI.
 - `Editor/Scripts/ActionFitPackageManagerConsoleWindow.cs`: operational console for create/repo/publish/readme/catalog/manifest/settings actions.
+- `Editor/Scripts/ActionFitPackageCatalogSettings_SO.cs`: spreadsheet config, GitHub publish default credentials, public repo creation profile, private repo creation profile, and publish cache root.
 - `Editor/Scripts/ActionFitPackageInfoUtility.cs`: package skeleton creation and PackageInfo/README/AI_GUIDE generation.
 - `Editor/Scripts/ActionFitPackagePublishWindow.cs`: publish target scan and publish UI.
 - `Editor/Scripts/ActionFitPackagePublisher.cs`: GitHub repository publish and catalog upsert request.
@@ -69,6 +70,7 @@ Read this file when:
 - Fallback catalog path: `Packages/com.actionfit.custompackagemanager/Editor/Catalog/package_catalog.csv`.
 - Package Manager reads the local catalog when present, otherwise the embedded package catalog.
 - It manages internal UPM package install/update/remove, repository creation, changelog/history display, AI guide routing, and manual publish flows.
+- `2. Create Repo` has a `Public` / `Private` selector. Public creation uses `Repo Creation - Public`; private creation uses `Repo Creation - Private`; profile-specific org/token values may fall back to `GitHub Publish Default` for older settings assets.
 - Package section classification should treat Git/registry dependencies in `Packages/manifest.json` as Downloaded Packages. Only local `file:` dependencies or package folders under `Packages/` without a manifest dependency should be treated as Embedded Packages.
 - The `Updates` panel must include only installed packages whose catalog latest version is higher than the installed version. Do not treat any version difference as an update, because that can downgrade packages such as `1.0.30 -> 1.0.29`.
 - Downloaded packages may be converted to editable embedded packages through `Embed for Edit`. The conversion should copy the resolved package source into `Packages/<packageId>/`, write `file:<packageId>` in `Packages/manifest.json`, refresh package AI routing, and run Package Manager resolve without requiring publish credentials.
@@ -144,7 +146,7 @@ When updating a package version, write PackageInfo release notes using these sta
 - `package.json` is the source for `name`, `version`, `unity`, and `dependencies`.
 - PackageInfo SO is the source for `repoName`, description, owner, status, and release notes.
 - Before package publish, treat that package's `README.md` as user-facing documentation that will be uploaded to GitHub and keep it up to date.
-- `2. Create Repo` handles first registration and repo creation for PackageInfo SOs not yet in the catalog.
+- `2. Create Repo` handles first registration and repo creation for PackageInfo SOs not yet in the catalog. The selected repository visibility controls the GitHub API `private` value, the org/token profile used for the first push, and the catalog `repo_url` org.
 - `3. Publish Package` handles manual version-input update publishing for already registered PackageInfo SOs.
 - Creation and publish flow guidance should stay based on this package's README and Manager Console UI.
 - For real publishing, use the configured ActionFit GitHub authentication and SSH/HTTPS settings in the local environment. AI may run real publish, push, tag, or catalog upsert only when the user explicitly asks.

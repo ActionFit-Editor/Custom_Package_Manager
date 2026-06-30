@@ -15,11 +15,22 @@ public static class ActionFitPackagePublisher
 
     public static bool Publish(ActionFitPackageCatalogSettings_SO settings, ActionFitPackageInfo_SO info, out string message)
     {
-        message = "";
         if (settings == null) { message = "Package Manager settings asset is missing."; return false; }
+        return Publish(settings, info, settings.DefaultGitHubProfile, out message);
+    }
+
+    public static bool Publish(ActionFitPackageCatalogSettings_SO settings, ActionFitPackageInfo_SO info, ActionFitPackageRepositoryVisibility repositoryVisibility, out string message)
+    {
+        if (settings == null) { message = "Package Manager settings asset is missing."; return false; }
+        return Publish(settings, info, settings.GetRepositoryCreationProfile(repositoryVisibility), out message);
+    }
+
+    private static bool Publish(ActionFitPackageCatalogSettings_SO settings, ActionFitPackageInfo_SO info, ActionFitPackageGitHubProfile github, out string message)
+    {
+        message = "";
         if (info == null) { message = "Select an ActionFitPackageInfo_SO asset first."; return false; }
-        if (string.IsNullOrWhiteSpace(settings.GitHubOrg)) { message = "GitHub Org is empty."; return false; }
-        if (string.IsNullOrWhiteSpace(settings.GitHubToken)) { message = "GitHub Token is empty."; return false; }
+        if (string.IsNullOrWhiteSpace(github.Organization)) { message = $"{github.Label} GitHub Org is empty."; return false; }
+        if (string.IsNullOrWhiteSpace(github.Token)) { message = $"{github.Label} GitHub Token is empty."; return false; }
 
         string packageRoot = ActionFitPackageInfoUtility.FindPackageRoot(info);
         if (string.IsNullOrWhiteSpace(packageRoot)) { message = "Could not find package.json above selected PackageInfo asset."; return false; }
@@ -47,13 +58,13 @@ public static class ActionFitPackagePublisher
         try
         {
             EditorUtility.DisplayProgressBar("ActionFit Package Publish", "Checking GitHub repository...", 0.1f);
-            EnsureRepository(settings, info.RepoName);
+            EnsureRepository(github, info.RepoName);
 
             EditorUtility.DisplayProgressBar("ActionFit Package Publish", "Publishing package repository...", 0.45f);
-            PublishGitRepository(settings, packageRoot, info.RepoName, manifest);
+            PublishGitRepository(settings, github, packageRoot, info.RepoName, manifest);
 
             EditorUtility.DisplayProgressBar("ActionFit Package Publish", "Appending catalog row...", 0.8f);
-            AppendCatalog(settings, info, manifest);
+            AppendCatalog(settings, github, info, manifest);
 
             message = $"{manifest.Name}@{manifest.Version} published and catalog append requested.";
             return true;
@@ -69,10 +80,10 @@ public static class ActionFitPackagePublisher
         }
     }
 
-    private static void EnsureRepository(ActionFitPackageCatalogSettings_SO settings, string repoName)
+    private static void EnsureRepository(ActionFitPackageGitHubProfile github, string repoName)
     {
-        string repoPath = $"{settings.GitHubOrg}/{repoName}";
-        var get = CreateGitHubRequest($"https://api.github.com/repos/{repoPath}", settings.GitHubToken, "GET");
+        string repoPath = $"{github.Organization}/{repoName}";
+        var get = CreateGitHubRequest($"https://api.github.com/repos/{repoPath}", github.Token, "GET");
         try
         {
             using var response = (HttpWebResponse)get.GetResponse();
@@ -80,12 +91,13 @@ public static class ActionFitPackagePublisher
         }
         catch (WebException ex) when ((ex.Response as HttpWebResponse)?.StatusCode == HttpStatusCode.NotFound)
         {
-            string body = $"{{\"name\":\"{EscapeJson(repoName)}\",\"private\":false,\"auto_init\":false}}";
-            var create = CreateGitHubRequest($"https://api.github.com/orgs/{settings.GitHubOrg}/repos", settings.GitHubToken, "POST");
+            string visibility = github.IsPrivate ? "true" : "false";
+            string body = $"{{\"name\":\"{EscapeJson(repoName)}\",\"private\":{visibility},\"auto_init\":false}}";
+            var create = CreateGitHubRequest($"https://api.github.com/orgs/{github.Organization}/repos", github.Token, "POST");
             WriteBody(create, body);
             using var response = (HttpWebResponse)create.GetResponse();
             if ((int)response.StatusCode < 200 || (int)response.StatusCode >= 300)
-                throw new InvalidOperationException($"GitHub repository create failed: {response.StatusCode}");
+                throw new InvalidOperationException($"GitHub repository create failed ({github.Label}): {response.StatusCode}");
             return;
         }
     }
@@ -102,55 +114,55 @@ public static class ActionFitPackagePublisher
         return request;
     }
 
-    private static void PublishGitRepository(ActionFitPackageCatalogSettings_SO settings, string packageRoot, string repoName, ActionFitPackageManifest manifest)
+    private static void PublishGitRepository(ActionFitPackageCatalogSettings_SO settings, ActionFitPackageGitHubProfile github, string packageRoot, string repoName, ActionFitPackageManifest manifest)
     {
         string publishRoot = ExpandPath(settings.PublishRoot);
         Directory.CreateDirectory(publishRoot);
 
         string dest = Path.Combine(publishRoot, repoName);
-        string remote = BuildTokenRemote(settings, repoName);
+        string remote = BuildTokenRemote(github, repoName);
         if (!Directory.Exists(Path.Combine(dest, ".git")))
-            RunGit(publishRoot, $"clone {Quote(remote)} {Quote(dest)}", settings.GitHubToken);
+            RunGit(publishRoot, $"clone {Quote(remote)} {Quote(dest)}", github.Token);
 
-        RunGit(dest, $"remote set-url origin {Quote(remote)}", settings.GitHubToken);
-        RunGit(dest, "fetch --prune origin", settings.GitHubToken);
-        RunGit(dest, "reset --hard", settings.GitHubToken, false);
-        RunGit(dest, "clean -fdx", settings.GitHubToken, false);
+        RunGit(dest, $"remote set-url origin {Quote(remote)}", github.Token);
+        RunGit(dest, "fetch --prune origin", github.Token);
+        RunGit(dest, "reset --hard", github.Token, false);
+        RunGit(dest, "clean -fdx", github.Token, false);
 
-        if (RunGit(dest, "show-ref --verify --quiet refs/remotes/origin/main", settings.GitHubToken, false))
+        if (RunGit(dest, "show-ref --verify --quiet refs/remotes/origin/main", github.Token, false))
         {
-            RunGit(dest, "checkout -B main origin/main", settings.GitHubToken);
-            RunGit(dest, "reset --hard origin/main", settings.GitHubToken);
+            RunGit(dest, "checkout -B main origin/main", github.Token);
+            RunGit(dest, "reset --hard origin/main", github.Token);
         }
         else
         {
-            RunGit(dest, "checkout -B main", settings.GitHubToken);
+            RunGit(dest, "checkout -B main", github.Token);
         }
 
         ClearDirectoryExceptGit(dest);
         CopyDirectory(Path.GetFullPath(packageRoot), dest);
 
-        RunGit(dest, "add -A", settings.GitHubToken);
+        RunGit(dest, "add -A", github.Token);
 
-        if (!RunGit(dest, "diff --cached --quiet", settings.GitHubToken, false))
-            RunGit(dest, $"commit -m {Quote($"{manifest.Name} {manifest.Version}")}", settings.GitHubToken);
+        if (!RunGit(dest, "diff --cached --quiet", github.Token, false))
+            RunGit(dest, $"commit -m {Quote($"{manifest.Name} {manifest.Version}")}", github.Token);
 
         string tagRef = $"refs/tags/{manifest.Version}";
-        bool remoteTagExists = RunGit(dest, $"ls-remote --exit-code --tags origin {Quote(tagRef)}", settings.GitHubToken, false);
+        bool remoteTagExists = RunGit(dest, $"ls-remote --exit-code --tags origin {Quote(tagRef)}", github.Token, false);
         if (!remoteTagExists)
         {
-            if (RunGit(dest, $"show-ref --verify --quiet {Quote(tagRef)}", settings.GitHubToken, false))
-                RunGit(dest, $"tag -d {Quote(manifest.Version)}", settings.GitHubToken);
+            if (RunGit(dest, $"show-ref --verify --quiet {Quote(tagRef)}", github.Token, false))
+                RunGit(dest, $"tag -d {Quote(manifest.Version)}", github.Token);
 
-            RunGit(dest, $"tag {Quote(manifest.Version)}", settings.GitHubToken);
+            RunGit(dest, $"tag {Quote(manifest.Version)}", github.Token);
         }
 
-        RunGit(dest, "push -u origin main", settings.GitHubToken);
+        RunGit(dest, "push -u origin main", github.Token);
         if (!remoteTagExists)
-            RunGit(dest, $"push origin {Quote(manifest.Version)}", settings.GitHubToken);
+            RunGit(dest, $"push origin {Quote(manifest.Version)}", github.Token);
     }
 
-    private static void AppendCatalog(ActionFitPackageCatalogSettings_SO settings, ActionFitPackageInfo_SO info, ActionFitPackageManifest manifest)
+    private static void AppendCatalog(ActionFitPackageCatalogSettings_SO settings, ActionFitPackageGitHubProfile github, ActionFitPackageInfo_SO info, ActionFitPackageManifest manifest)
     {
         if (string.IsNullOrWhiteSpace(settings.WebAppUrl) ||
             string.IsNullOrWhiteSpace(settings.FetchToken) ||
@@ -158,7 +170,7 @@ public static class ActionFitPackagePublisher
             throw new InvalidOperationException("Spreadsheet URL, Web App URL, and Fetch Token are required for catalog append.");
 
         string ssId = ExtractSpreadsheetId(settings.SpreadSheetUrl);
-        string repoUrl = $"https://github.com/{settings.GitHubOrg}/{info.RepoName}.git";
+        string repoUrl = $"https://github.com/{github.Organization}/{info.RepoName}.git";
         string dependencies = !string.IsNullOrWhiteSpace(info.DependenciesOverride) ? info.DependenciesOverride : manifest.Dependencies;
         string body =
             "{" +
@@ -231,8 +243,8 @@ public static class ActionFitPackagePublisher
         throw new InvalidOperationException($"git {sanitizedArguments} failed:\n{sanitizedOutput}");
     }
 
-    private static string BuildTokenRemote(ActionFitPackageCatalogSettings_SO settings, string repoName)
-        => $"https://x-access-token:{settings.GitHubToken}@github.com/{settings.GitHubOrg}/{repoName}.git";
+    private static string BuildTokenRemote(ActionFitPackageGitHubProfile github, string repoName)
+        => $"https://x-access-token:{github.Token}@github.com/{github.Organization}/{repoName}.git";
 
     private static void WriteBody(HttpWebRequest request, string body)
     {

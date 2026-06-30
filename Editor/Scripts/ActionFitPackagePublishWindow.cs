@@ -18,6 +18,7 @@ public class ActionFitPackagePublishWindow : EditorWindow
     }
 
     private const string PackageCatalogPath = "Packages/com.actionfit.custompackagemanager/Editor/Catalog/package_catalog.csv";
+    private static readonly string[] RepositoryVisibilityLabels = { "Public", "Private" };
     private static string ProjectRootPath => Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
     private static string ProjectRootNormalized => ProjectRootPath.Replace("\\", "/").TrimEnd('/');
 
@@ -30,6 +31,7 @@ public class ActionFitPackagePublishWindow : EditorWindow
     private readonly HashSet<string> _expandedPackageIds = new();
     private readonly List<Entry> _entries = new();
     private Mode _mode;
+    private ActionFitPackageRepositoryVisibility _createRepoVisibility = ActionFitPackageRepositoryVisibility.Public;
     private Vector2 _scroll;
 
     public static void OpenCreate()
@@ -94,6 +96,17 @@ public class ActionFitPackagePublishWindow : EditorWindow
         using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
         {
             if (GUILayout.Button("Reload", EditorStyles.toolbarButton, GUILayout.Width(70))) Reload();
+            if (_mode == Mode.Create)
+            {
+                GUILayout.Space(8);
+                EditorGUILayout.LabelField("Repo", EditorStyles.miniLabel, GUILayout.Width(34));
+                _createRepoVisibility = (ActionFitPackageRepositoryVisibility)GUILayout.Toolbar(
+                    (int)_createRepoVisibility,
+                    RepositoryVisibilityLabels,
+                    EditorStyles.toolbarButton,
+                    GUILayout.Width(150));
+            }
+
             if (_mode == Mode.Changed)
             {
                 EditorGUI.BeginDisabledGroup(_entries.Count == 0);
@@ -181,9 +194,12 @@ public class ActionFitPackagePublishWindow : EditorWindow
         }
 
         string action = _mode == Mode.Create ? "Create repo" : "Publish package";
+        string visibilityLine = _mode == Mode.Create
+            ? $"\nRepository visibility: {GetRepositoryVisibilityLabel(_createRepoVisibility)}"
+            : "";
         if (!EditorUtility.DisplayDialog(
                 "ActionFit Package Manager",
-                $"{action}: {entry.PackageId}@{version}?\n\nThis will create/check the GitHub repository, push package contents and tag, then append the catalog spreadsheet.",
+                $"{action}: {entry.PackageId}@{version}?{visibilityLine}\n\nThis will create/check the GitHub repository, push package contents and tag, then append the catalog spreadsheet.",
                 _mode == Mode.Create ? "2. Create Repo" : "Publish",
                 "Cancel"))
             return;
@@ -240,7 +256,12 @@ public class ActionFitPackagePublishWindow : EditorWindow
 
         AssetDatabase.ImportAsset(entry.PackageJsonPath, ImportAssetOptions.ForceUpdate);
         var settings = ActionFitPackageCatalogSettingsProvider.FindOrCreate();
-        bool ok = ActionFitPackagePublisher.Publish(settings, entry.Info, out string message);
+        bool ok;
+        string message;
+        if (_mode == Mode.Create)
+            ok = ActionFitPackagePublisher.Publish(settings, entry.Info, _createRepoVisibility, out message);
+        else
+            ok = ActionFitPackagePublisher.Publish(settings, entry.Info, out message);
         if (ok)
         {
             Debug.Log($"[ActionFitPackageManager] {message}");
@@ -261,6 +282,9 @@ public class ActionFitPackagePublishWindow : EditorWindow
         Debug.LogError($"[ActionFitPackageManager] Publish failed: {message}");
         return false;
     }
+
+    private static string GetRepositoryVisibilityLabel(ActionFitPackageRepositoryVisibility visibility)
+        => visibility == ActionFitPackageRepositoryVisibility.Private ? "Private" : "Public";
 
     private string GetVersion(Entry entry)
     {
