@@ -18,7 +18,7 @@ Add these sheets to the same spreadsheet used by the package catalog.
 | `created_at` | First vote timestamp. |
 | `updated_at` | Last vote timestamp. |
 
-The Web App must upsert by `package_id + vote_id`. Repeated equal votes are no-ops. Changing `like` to `dislike`, or the reverse, replaces the stored vote.
+The Web App must treat `package_id + vote_id` as a single final vote. If a vote row already exists, leave the stored `vote` unchanged and return the current `my_vote` and summary counts. Repeated equal votes and attempted changes from `like` to `dislike`, or the reverse, are no-ops.
 
 ### `package_comments`
 
@@ -152,7 +152,7 @@ Response:
 ## Client Behavior
 
 - Package sections are sorted by `likes - dislikes`, highest first.
-- The same project can cast one vote per package and can switch between `like` and `dislike`.
+- The same project can cast one final vote per package. It cannot switch between `like` and `dislike` after the first successful vote.
 - The same project can keep one editable comment per package.
 - Comment titles are shown first; the body is displayed through a foldout per title.
 - If the Web App does not support these actions yet, Unity shows the Web App response in the package `Community` panel.

@@ -294,16 +294,17 @@ public class ActionFitPackageManagerWindow : EditorWindow
     private void DrawVoteControls(PackageGroup package)
     {
         string localVote = ActionFitPackageCommunityClient.GetLocalVote(package.Id);
+        bool hasLocalVote = !string.IsNullOrWhiteSpace(localVote);
         using (new EditorGUILayout.HorizontalScope())
         {
             EditorGUILayout.LabelField("Vote", GUILayout.Width(80));
 
-            EditorGUI.BeginDisabledGroup(string.Equals(localVote, ActionFitPackageCommunityClient.VoteLike, StringComparison.OrdinalIgnoreCase));
+            EditorGUI.BeginDisabledGroup(hasLocalVote);
             if (GUILayout.Button(string.Equals(localVote, ActionFitPackageCommunityClient.VoteLike, StringComparison.OrdinalIgnoreCase) ? "Liked" : "Like", GUILayout.Width(90)))
                 SubmitVote(package, ActionFitPackageCommunityClient.VoteLike);
             EditorGUI.EndDisabledGroup();
 
-            EditorGUI.BeginDisabledGroup(string.Equals(localVote, ActionFitPackageCommunityClient.VoteDislike, StringComparison.OrdinalIgnoreCase));
+            EditorGUI.BeginDisabledGroup(hasLocalVote);
             if (GUILayout.Button(string.Equals(localVote, ActionFitPackageCommunityClient.VoteDislike, StringComparison.OrdinalIgnoreCase) ? "Disliked" : "Dislike", GUILayout.Width(90)))
                 SubmitVote(package, ActionFitPackageCommunityClient.VoteDislike);
             EditorGUI.EndDisabledGroup();

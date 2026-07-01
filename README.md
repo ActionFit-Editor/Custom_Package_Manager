@@ -7,7 +7,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.38"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.39"
   }
 }
 ```
@@ -37,9 +37,9 @@ After editing an embedded package, bump its `package.json` version above the cat
 
 Each package detail view includes a `Community` foldout.
 
-- `Like` and `Dislike` send one vote per anonymous project ID and package.
+- `Like` and `Dislike` share one vote per anonymous project ID and package.
 - The anonymous project ID is stored at `UserSettings/ActionFitPackageManager/community_id.txt` and is not a user account or machine identity.
-- Clicking the already selected vote is disabled. Switching from `Like` to `Dislike`, or the reverse, updates the same project vote instead of adding another vote.
+- After a project submits either `Like` or `Dislike`, both vote buttons are disabled for that package. The first submitted vote is final.
 - Comments use a `Title` and `Description`. Comment titles are shown as foldouts so users can scan titles first and open only the descriptions they want to read.
 - Each project can keep one editable comment per package.
 

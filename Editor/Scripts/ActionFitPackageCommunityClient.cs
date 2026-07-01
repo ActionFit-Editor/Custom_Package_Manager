@@ -43,9 +43,9 @@ public static class ActionFitPackageCommunityClient
         }
 
         string localVote = GetLocalVote(packageId);
-        if (string.Equals(localVote, vote, StringComparison.OrdinalIgnoreCase))
+        if (!string.IsNullOrWhiteSpace(localVote))
         {
-            message = "This project already sent the same vote for this package.";
+            message = $"This project already used its vote for this package: {localVote}.";
             return false;
         }
 

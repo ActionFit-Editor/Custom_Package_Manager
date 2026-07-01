@@ -7,7 +7,7 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.custompackagemanager`
 - Display name: Custom Package Manager
 - Repository: `https://github.com/ActionFit-Editor/Custom_Package_Manager.git`
-- Current package version at generation time: `1.1.38`
+- Current package version at generation time: `1.1.39`
 - Unity version: `6000.2`
 
 ## Purpose
@@ -80,6 +80,7 @@ Read this file when:
 - `Embed for Edit` does not publish by itself. After editing, the package `package.json` version must be bumped above the catalog latest version before `Publish Changed` will pick it up.
 - Package sections should sort by community score (`likes - dislikes`) descending, then likes, comments, and display name. Keep `Package Manager` separate from normal catalog sections.
 - Package community feedback uses an anonymous project ID stored under `UserSettings/ActionFitPackageManager/`, not a user identity. Do not move this ID into committed project settings.
+- Package community voting allows only one final `Like` or `Dislike` per anonymous project ID and package. Do not re-enable switching between vote types without updating the Web App contract.
 - The Web App must support `votePackage`, `getPackageComments`, and `upsertPackageComment` for community buttons to persist. When editing this feature, keep `Editor/Documentation/PackageCommunityWebAppContract.md` aligned with client requests and expected responses.
 - `Update Catalog` should continue working if the Web App does not return `package_vote_summary`; community counts default to zero.
 
