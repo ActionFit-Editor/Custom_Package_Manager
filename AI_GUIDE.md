@@ -7,7 +7,7 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.custompackagemanager`
 - Display name: Custom Package Manager
 - Repository: `https://github.com/ActionFit-Editor/Custom_Package_Manager.git`
-- Current package version at generation time: `1.1.40`
+- Current package version at generation time: `1.1.41`
 - Unity version: `6000.2`
 
 ## Purpose
@@ -38,7 +38,7 @@ Read this file when:
 - `Editor/Scripts/ActionFitPackageCatalogSettings_SO.cs`: spreadsheet config, GitHub publish default credentials, public repo creation profile, private repo creation profile, and publish cache root.
 - `Editor/Scripts/ActionFitPackageInfoUtility.cs`: package skeleton creation and PackageInfo/README/AI_GUIDE generation.
 - `Editor/Scripts/ActionFitPackagePublishWindow.cs`: publish target scan and publish UI.
-- `Editor/Scripts/ActionFitPackagePublisher.cs`: GitHub repository check and local publish clone preparation. Remote `git push`, tag push, and catalog upsert are disabled in this package version.
+- `Editor/Scripts/ActionFitPackagePublisher.cs`: GitHub repository check, local publish clone preparation, remote `git push`, tag push, catalog upsert, and publish step logging.
 - `Editor/Scripts/ActionFitPackageCatalogUpdater.cs`: spreadsheet/web-app catalog download.
 - `Editor/Scripts/ActionFitPackageCommunityClient.cs`: anonymous project vote ID, package vote/comment Web App requests, and local vote state.
 - `Editor/Scripts/ActionFitPackageAiGuideRouter.cs`: scans embedded and Git UPM package `AI_GUIDE.md` files, syncs `PACKAGE_AI_GUIDE_ROUTER.md`, and connects discovered AI entry points through adapter-style helpers.
@@ -149,7 +149,7 @@ When updating a package version, write PackageInfo release notes using these sta
 - PackageInfo SO is the source for `repoName`, description, owner, status, and release notes.
 - Before package publish, treat that package's `README.md` as user-facing documentation that will be uploaded to GitHub and keep it up to date.
 - `2. Create Repo` handles first registration and repo creation for PackageInfo SOs not yet in the catalog. The selected repository visibility controls the GitHub API `private` value, the org/token profile used for the first push, and the catalog `repo_url` org.
-- `3. Publish Package` prepares the local publish clone for already registered PackageInfo SOs, but does not push package contents/tags or append catalog rows.
+- `3. Publish Package` prepares the local publish clone for already registered PackageInfo SOs, pushes package contents/tags, and appends catalog rows.
 - Creation and publish flow guidance should stay based on this package's README and Manager Console UI.
 - For real publishing, use the configured ActionFit GitHub authentication and SSH/HTTPS settings in the local environment. AI may run real publish, push, tag, or catalog upsert only when the user explicitly asks.
 
@@ -158,5 +158,6 @@ When updating a package version, write PackageInfo release notes using these sta
 - Publishing is manual through Custom Package Manager.
 - Before reusing a version, check the remote Git tags. Published tags are immutable.
 - If this package is modified after a version was tagged, bump to the next unused patch version before publishing.
-- The publisher fetches `origin/main` and resets the local publish clone before copying package files, but remote `git push`, tag push, and catalog upsert are intentionally disabled.
+- The publisher fetches `origin/main`, resets the local publish clone, copies package files, creates a package commit/tag, pushes `main`, pushes the package version tag when it does not already exist remotely, then appends the catalog row.
+- Publish logs should identify each major step: repository check, publish clone path, file copy, commit/tag creation, `main` push, tag push, and catalog append.
 - The package repository should include this `AI_GUIDE.md` so other projects can load the AI package context after installing the package.

@@ -57,13 +57,21 @@ public static class ActionFitPackagePublisher
 
         try
         {
+            Debug.Log(
+                $"[ActionFitPackageManager] Publish start: {manifest.Name}@{manifest.Version} " +
+                $"-> {github.Organization}/{info.RepoName}");
             EditorUtility.DisplayProgressBar("ActionFit Package Publish", "Checking GitHub repository...", 0.1f);
             EnsureRepository(github, info.RepoName);
+            Debug.Log($"[ActionFitPackageManager] Repository ready: {github.Organization}/{info.RepoName}");
 
-            EditorUtility.DisplayProgressBar("ActionFit Package Publish", "Preparing package repository...", 0.45f);
+            EditorUtility.DisplayProgressBar("ActionFit Package Publish", "Publishing package repository...", 0.45f);
             PublishGitRepository(settings, github, packageRoot, info.RepoName, manifest);
 
-            message = $"{manifest.Name}@{manifest.Version} prepared locally. Git push, tag push, and catalog append are disabled.";
+            EditorUtility.DisplayProgressBar("ActionFit Package Publish", "Appending catalog row...", 0.8f);
+            AppendCatalog(settings, github, info, manifest);
+            Debug.Log($"[ActionFitPackageManager] Catalog append complete: {manifest.Name}@{manifest.Version}");
+
+            message = $"{manifest.Name}@{manifest.Version} published and catalog append requested.";
             return true;
         }
         catch (Exception ex)
@@ -118,8 +126,12 @@ public static class ActionFitPackagePublisher
 
         string dest = Path.Combine(publishRoot, repoName);
         string remote = BuildTokenRemote(github, repoName);
+        Debug.Log($"[ActionFitPackageManager] Publish clone path: {dest}");
         if (!Directory.Exists(Path.Combine(dest, ".git")))
+        {
+            Debug.Log($"[ActionFitPackageManager] Cloning package repository: {github.Organization}/{repoName}");
             RunGit(publishRoot, $"clone {Quote(remote)} {Quote(dest)}", github.Token);
+        }
 
         RunGit(dest, $"remote set-url origin {Quote(remote)}", github.Token);
         RunGit(dest, "fetch --prune origin", github.Token);
@@ -138,11 +150,19 @@ public static class ActionFitPackagePublisher
 
         ClearDirectoryExceptGit(dest);
         CopyDirectory(Path.GetFullPath(packageRoot), dest);
+        Debug.Log($"[ActionFitPackageManager] Copied package files: {manifest.Name}@{manifest.Version}");
 
         RunGit(dest, "add -A", github.Token);
 
         if (!RunGit(dest, "diff --cached --quiet", github.Token, false))
+        {
             RunGit(dest, $"commit -m {Quote($"{manifest.Name} {manifest.Version}")}", github.Token);
+            Debug.Log($"[ActionFitPackageManager] Package commit created: {manifest.Name}@{manifest.Version}");
+        }
+        else
+        {
+            Debug.Log($"[ActionFitPackageManager] No package file changes to commit: {manifest.Name}@{manifest.Version}");
+        }
 
         string tagRef = $"refs/tags/{manifest.Version}";
         bool remoteTagExists = RunGit(dest, $"ls-remote --exit-code --tags origin {Quote(tagRef)}", github.Token, false);
@@ -152,11 +172,22 @@ public static class ActionFitPackagePublisher
                 RunGit(dest, $"tag -d {Quote(manifest.Version)}", github.Token);
 
             RunGit(dest, $"tag {Quote(manifest.Version)}", github.Token);
+            Debug.Log($"[ActionFitPackageManager] Package tag prepared: {manifest.Version}");
+        }
+        else
+        {
+            Debug.Log($"[ActionFitPackageManager] Remote tag already exists, tag push will be skipped: {manifest.Version}");
         }
 
-        Debug.Log(
-            $"[ActionFitPackageManager] Prepared local package publish clone without remote push: " +
-            $"{dest} ({manifest.Name}@{manifest.Version})");
+        Debug.Log($"[ActionFitPackageManager] Pushing package main branch: {github.Organization}/{repoName}");
+        RunGit(dest, "push -u origin main", github.Token);
+        Debug.Log($"[ActionFitPackageManager] Package main branch pushed: {github.Organization}/{repoName}");
+        if (!remoteTagExists)
+        {
+            Debug.Log($"[ActionFitPackageManager] Pushing package tag: {manifest.Version}");
+            RunGit(dest, $"push origin {Quote(manifest.Version)}", github.Token);
+            Debug.Log($"[ActionFitPackageManager] Package tag pushed: {manifest.Version}");
+        }
     }
 
     private static void AppendCatalog(ActionFitPackageCatalogSettings_SO settings, ActionFitPackageGitHubProfile github, ActionFitPackageInfo_SO info, ActionFitPackageManifest manifest)

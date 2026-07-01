@@ -33,6 +33,7 @@ public class ActionFitPackagePublishWindow : EditorWindow
     private Mode _mode;
     private ActionFitPackageRepositoryVisibility _createRepoVisibility = ActionFitPackageRepositoryVisibility.Public;
     private Vector2 _scroll;
+    private bool _delayedGuiActionQueued;
 
     public static void OpenCreate()
     {
@@ -110,7 +111,8 @@ public class ActionFitPackagePublishWindow : EditorWindow
             if (_mode == Mode.Changed)
             {
                 EditorGUI.BeginDisabledGroup(_entries.Count == 0);
-                if (GUILayout.Button("Publish All Changed", EditorStyles.toolbarButton, GUILayout.Width(145))) PublishAllChanged();
+                if (GUILayout.Button("Publish All Changed", EditorStyles.toolbarButton, GUILayout.Width(145)))
+                    ScheduleGuiAction(PublishAllChanged);
                 EditorGUI.EndDisabledGroup();
             }
             GUILayout.FlexibleSpace();
@@ -179,9 +181,22 @@ public class ActionFitPackagePublishWindow : EditorWindow
                     _ => "3. Publish Package"
                 };
                 if (GUILayout.Button(button, GUILayout.Width(140)))
-                    Publish(entry);
+                    ScheduleGuiAction(() => Publish(entry));
             }
         }
+    }
+
+    private void ScheduleGuiAction(Action action)
+    {
+        if (_delayedGuiActionQueued) return;
+        _delayedGuiActionQueued = true;
+        EditorApplication.delayCall += () =>
+        {
+            if (this == null) return;
+            _delayedGuiActionQueued = false;
+            action();
+            Repaint();
+        };
     }
 
     private void Publish(Entry entry)
@@ -199,7 +214,7 @@ public class ActionFitPackagePublishWindow : EditorWindow
             : "";
         if (!EditorUtility.DisplayDialog(
                 "ActionFit Package Manager",
-                $"{action}: {entry.PackageId}@{version}?{visibilityLine}\n\nThis will create/check the GitHub repository and prepare the local publish clone. It will not push package contents, push tags, or append the catalog spreadsheet.",
+                $"{action}: {entry.PackageId}@{version}?{visibilityLine}\n\nThis will create/check the GitHub repository, prepare the local publish clone, push package contents, push the version tag, and append the catalog spreadsheet.",
                 _mode == Mode.Create ? "2. Create Repo" : "Publish",
                 "Cancel"))
             return;
@@ -216,7 +231,7 @@ public class ActionFitPackagePublishWindow : EditorWindow
         string list = string.Join("\n", targets.Select(e => $"- {e.PackageId}: {e.CatalogLatestVersion} -> {e.Version}"));
         if (!EditorUtility.DisplayDialog(
                 "ActionFit Package Manager",
-                $"Publish all changed packages?\n\n{list}\n\nThis will prepare local publish clones only. It will not push package contents, push tags, or append catalog rows.",
+                $"Publish all changed packages?\n\n{list}\n\nThis will prepare local publish clones, push package contents, push missing version tags, and append catalog rows.",
                 "Publish All Changed",
                 "Cancel"))
             return;

@@ -85,7 +85,7 @@ If an AI assistant reads this package documentation before the automatic router 
 - `1. Create Package`: creates the `Packages/com.actionfit.*` package skeleton, README, AI guide, asmdef, and PackageInfo SO.
 - `2. Create Repo`: creates/checks the GitHub repository and first catalog row for packages not yet registered. The create window has a `Public` / `Private` selector.
 - `3. Publish Package`: prepares the local publish clone for an already registered package version.
-- `Publish Changed`: finds packages whose local `package.json` version is higher than the catalog latest version and prepares their local publish clones.
+- `Publish Changed`: finds packages whose local `package.json` version is higher than the catalog latest version, prepares their local publish clones, pushes package contents/tags, and appends catalog rows.
 - `README`: opens this README in a dedicated window.
 - `Open Catalog`: selects the local or fallback catalog CSV.
 - `Open Manifest`: opens the project `Packages/manifest.json`.
@@ -102,7 +102,7 @@ If an AI assistant reads this package documentation before the automatic router 
 
 ## Publish Notes
 
-This package does not automatically publish itself. `3. Publish Package` and `Publish Changed` now prepare local publish clones only; they do not run `git push`, push tags, or append catalog rows.
+`3. Publish Package` and `Publish Changed` create or refresh the local publish clone, commit copied package files, push `main`, push the version tag when needed, and append the catalog row. The Unity Console prints `[ActionFitPackageManager]` logs for repository check, clone path, file copy, commit/tag, branch push, tag push, and catalog append steps.
 
 `Settings` stores separate repository creation profiles for public and private repositories. Fill `Repo Creation - Public` and `Repo Creation - Private` with the GitHub org and token that should own each kind of repository. If those profile-specific values are empty, the publisher falls back to the legacy `GitHub Publish Default` org/token for compatibility. Private catalog entries can point at private GitHub repositories, so consuming projects still need GitHub access to install them.
 
