@@ -321,13 +321,11 @@ public class ActionFitPackageManagerWindow : EditorWindow
         {
             EditorGUILayout.LabelField($"Comments ({GetCommunitySummary(package).CommentCount})", EditorStyles.boldLabel);
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button(state.Loaded ? "Refresh Comments" : "Load Comments", GUILayout.Width(130)))
-                LoadComments(package);
         }
 
         if (!state.Loaded)
         {
-            EditorGUILayout.HelpBox("Load comments to view package feedback and edit this project's comment.", MessageType.None);
+            EditorGUILayout.HelpBox("Update Catalog to refresh package comments.", MessageType.None);
         }
         else if (state.Comments.Count == 0)
         {
@@ -393,23 +391,15 @@ public class ActionFitPackageManagerWindow : EditorWindow
         Repaint();
     }
 
-    private void LoadComments(PackageGroup package)
+    private void SaveComment(PackageGroup package)
     {
         _settings = ActionFitPackageCatalogSettingsProvider.FindOrCreate();
         var state = GetCommentState(package.Id);
-        if (ActionFitPackageCommunityClient.FetchComments(_settings, package.Id, out var result, out string message))
+        if (ActionFitPackageCommunityClient.UpsertComment(_settings, package.Id, state.TitleDraft, state.BodyDraft, out var summary, out string message))
         {
-            state.Loaded = true;
-            state.Comments = result.Comments;
-            state.HasMyComment = result.MyComment != null;
-            if (result.MyComment != null)
-            {
-                state.TitleDraft = result.MyComment.title ?? "";
-                state.BodyDraft = result.MyComment.body ?? "";
-            }
-
-            _communitySummariesByPackage[package.Id] = result.Summary;
+            _communitySummariesByPackage[package.Id] = summary;
             _communityMessagesByPackage[package.Id] = message;
+            ApplySavedCommentToState(package, state);
             Repaint();
             return;
         }
@@ -419,21 +409,48 @@ public class ActionFitPackageManagerWindow : EditorWindow
         Repaint();
     }
 
-    private void SaveComment(PackageGroup package)
+    private void LoadCachedCommentStates()
     {
-        _settings = ActionFitPackageCatalogSettingsProvider.FindOrCreate();
-        var state = GetCommentState(package.Id);
-        if (ActionFitPackageCommunityClient.UpsertComment(_settings, package.Id, state.TitleDraft, state.BodyDraft, out var summary, out string message))
+        _commentStatesByPackage.Clear();
+        bool hasCommentCache = ActionFitPackageCommunityClient.HasCommentCache;
+        var cached = ActionFitPackageCommunityClient.LoadCachedCommentsByPackage();
+
+        foreach (var package in _packages)
         {
-            _communitySummariesByPackage[package.Id] = summary;
-            _communityMessagesByPackage[package.Id] = message;
-            LoadComments(package);
-            return;
+            var state = GetCommentState(package.Id);
+            state.Loaded = hasCommentCache;
+            if (!cached.TryGetValue(package.Id, out var result)) continue;
+
+            state.Comments = result.Comments;
+            state.HasMyComment = result.MyComment != null;
+            if (result.MyComment == null) continue;
+
+            state.TitleDraft = result.MyComment.title ?? "";
+            state.BodyDraft = result.MyComment.body ?? "";
+        }
+    }
+
+    private static void ApplySavedCommentToState(PackageGroup package, CommentPanelState state)
+    {
+        state.Loaded = true;
+        state.HasMyComment = true;
+
+        var mine = state.Comments.FirstOrDefault(c => c.is_mine);
+        if (mine == null)
+        {
+            mine = new ActionFitPackageCommunityClient.Comment
+            {
+                comment_id = $"{package.Id}:local",
+                package_id = package.Id,
+                created_at = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                is_mine = true
+            };
+            state.Comments.Insert(0, mine);
         }
 
-        _communityMessagesByPackage[package.Id] = message;
-        UnityEngine.Debug.LogWarning($"[ActionFitPackageManager] {message}");
-        Repaint();
+        mine.title = (state.TitleDraft ?? "").Trim();
+        mine.body = (state.BodyDraft ?? "").Trim();
+        mine.updated_at = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ");
     }
 
     private CommentPanelState GetCommentState(string packageId)
@@ -733,6 +750,8 @@ public class ActionFitPackageManagerWindow : EditorWindow
                 .Select(g => new PackageGroup(g.Key, g.OrderByDescending(v => v.Version, PackageVersionComparer.Instance).ToList()))
                 .OrderBy(g => g.DisplayName, StringComparer.OrdinalIgnoreCase));
         }
+
+        LoadCachedCommentStates();
     }
 
     private static string ActiveCatalogPath
@@ -894,18 +913,8 @@ public class ActionFitPackageManagerWindow : EditorWindow
         string manifest = File.ReadAllText(manifestPath);
         var changes = new List<string>();
 
-        foreach (var dep in ParseDependencies(version.Dependencies))
-        {
-            var depVersion = FindVersion(dep.Id, dep.Version);
-            if (depVersion == null)
-            {
-                UnityEngine.Debug.LogWarning($"[ActionFitPackageManager] Dependency not found in catalog: {dep.Id}@{dep.Version}");
-                continue;
-            }
-
-            manifest = SetDependency(manifest, depVersion.Id, depVersion.PackageUrl);
-            changes.Add($"{depVersion.Id} -> {depVersion.PackageUrl}");
-        }
+        if (!ApplyPackageDependencies(ref manifest, version, changes))
+            return;
 
         manifest = SetDependency(manifest, version.Id, version.PackageUrl);
         changes.Add($"{version.Id} -> {version.PackageUrl}");
@@ -962,18 +971,8 @@ public class ActionFitPackageManagerWindow : EditorWindow
             if (GetInstalledVersion(package.Id).IsEmbedded)
                 embeddedReplacements.Add(package);
 
-            foreach (var dep in ParseDependencies(package.LatestVersion.Dependencies))
-            {
-                var depVersion = FindVersion(dep.Id, dep.Version);
-                if (depVersion == null)
-                {
-                    UnityEngine.Debug.LogWarning($"[ActionFitPackageManager] Dependency not found in catalog: {dep.Id}@{dep.Version}");
-                    continue;
-                }
-
-                manifest = SetDependency(manifest, depVersion.Id, depVersion.PackageUrl);
-                changes.Add($"{depVersion.Id} -> {depVersion.PackageUrl}");
-            }
+            if (!ApplyPackageDependencies(ref manifest, package.LatestVersion, changes))
+                return;
 
             manifest = SetDependency(manifest, package.LatestVersion.Id, package.LatestVersion.PackageUrl);
             changes.Add($"{package.LatestVersion.Id} -> {package.LatestVersion.PackageUrl}");
@@ -1224,18 +1223,8 @@ public class ActionFitPackageManagerWindow : EditorWindow
         string manifest = File.ReadAllText(manifestPath);
         var changes = new List<string>();
 
-        foreach (var dep in ParseDependencies(version.Dependencies))
-        {
-            var depVersion = FindVersion(dep.Id, dep.Version);
-            if (depVersion == null)
-            {
-                UnityEngine.Debug.LogWarning($"[ActionFitPackageManager] Dependency not found in catalog: {dep.Id}@{dep.Version}");
-                continue;
-            }
-
-            manifest = SetDependency(manifest, depVersion.Id, depVersion.PackageUrl);
-            changes.Add($"{depVersion.Id} -> {depVersion.PackageUrl}");
-        }
+        if (!ApplyPackageDependencies(ref manifest, version, changes))
+            return;
 
         manifest = SetDependency(manifest, version.Id, version.PackageUrl);
         changes.Add($"{version.Id} -> {version.PackageUrl}");
@@ -1349,6 +1338,64 @@ public class ActionFitPackageManagerWindow : EditorWindow
         if (!string.IsNullOrWhiteSpace(version))
             return group.Versions.FirstOrDefault(v => v.Version == version);
         return group.Versions.FirstOrDefault(v => v.IsLatest) ?? group.Versions.FirstOrDefault();
+    }
+
+    private bool ApplyPackageDependencies(ref string manifest, PackageVersion version, List<string> changes)
+    {
+        foreach (var dep in ParseDependencies(version.Dependencies))
+        {
+            if (!TryResolveDependencyValue(dep, out string value, out bool shouldAbort))
+            {
+                if (!shouldAbort) continue;
+
+                EditorUtility.DisplayDialog(
+                    "ActionFit Package Manager",
+                    $"Required dependency is missing from the catalog.\n\n{dep.Id}@{dep.Version}\n\nUpdate the catalog row before installing {version.Id}.",
+                    "OK");
+                return false;
+            }
+
+            manifest = SetDependency(manifest, dep.Id, value);
+            changes.Add($"{dep.Id} -> {value}");
+        }
+
+        return true;
+    }
+
+    private bool TryResolveDependencyValue((string Id, string Version) dependency, out string value, out bool shouldAbort)
+    {
+        value = "";
+        shouldAbort = false;
+        string dependencyLabel = string.IsNullOrWhiteSpace(dependency.Version)
+            ? dependency.Id
+            : $"{dependency.Id}@{dependency.Version}";
+
+        if (string.IsNullOrWhiteSpace(dependency.Id))
+            return false;
+
+        var depVersion = FindVersion(dependency.Id, dependency.Version);
+        if (depVersion != null)
+        {
+            value = depVersion.PackageUrl;
+            return true;
+        }
+
+        if (IsActionFitPackageId(dependency.Id))
+        {
+            UnityEngine.Debug.LogError($"[ActionFitPackageManager] ActionFit dependency is missing from catalog: {dependencyLabel}");
+            shouldAbort = true;
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(dependency.Version))
+        {
+            value = dependency.Version;
+            UnityEngine.Debug.LogWarning($"[ActionFitPackageManager] Dependency not found in catalog; writing raw dependency value: {dependencyLabel}");
+            return true;
+        }
+
+        UnityEngine.Debug.LogWarning($"[ActionFitPackageManager] Dependency not found in catalog: {dependencyLabel}");
+        return false;
     }
 
     private static bool TryFindDownloadedPackageSource(string packageId, out string sourcePath, out string error)
@@ -1593,6 +1640,11 @@ public class ActionFitPackageManagerWindow : EditorWindow
     private static bool IsLocalPackageDependency(string manifestValue)
     {
         return manifestValue.Trim().StartsWith("file:", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsActionFitPackageId(string packageId)
+    {
+        return packageId.StartsWith("com.actionfit.", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string ExtractLocalPackageVersion(string packageId, string manifestValue)

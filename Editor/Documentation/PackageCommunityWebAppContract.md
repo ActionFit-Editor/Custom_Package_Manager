@@ -49,6 +49,14 @@ This sheet can be computed by Apps Script or spreadsheet formulas and is optiona
 
 When `Update Catalog` receives this sheet, the local catalog CSV includes `likes`, `dislikes`, `vote_score`, and `comment_count`.
 
+### `Update Catalog` comment cache
+
+The catalog fetch response should include the `package_comments` sheet together with `package_catalog`, `package_versions`, and optional `package_vote_summary`.
+
+Unity stores the returned comments at `UserSettings/ActionFitPackageManager/package_comments.csv` and reads that cache in the Package Manager window. There is no per-package comment fetch button; users refresh all visible package comments through `Update Catalog`.
+
+Only visible comments should be returned. If hidden rows are returned, Unity filters rows where `hidden` is `true`, `1`, or `yes`.
+
 ## Actions
 
 All POST bodies include `token`, `action`, `ssId`, `package_id`, and `vote_id`.
@@ -80,46 +88,6 @@ Response:
   "comment_count": 4
 }
 ```
-
-### `getPackageComments`
-
-Request:
-
-```json
-{
-  "token": "configured-token",
-  "action": "getPackageComments",
-  "ssId": "spreadsheet-id",
-  "package_id": "com.actionfit.csvimporter",
-  "vote_id": "anonymous-project-id",
-  "limit": 20
-}
-```
-
-Response:
-
-```json
-{
-  "success": true,
-  "package_id": "com.actionfit.csvimporter",
-  "likes": 12,
-  "dislikes": 3,
-  "comment_count": 4,
-  "comments": [
-    {
-      "comment_id": "com.actionfit.csvimporter:anonymous-project-id",
-      "package_id": "com.actionfit.csvimporter",
-      "title": "Useful importer",
-      "body": "Short description shown when the title foldout is opened.",
-      "created_at": "2026-06-30T00:00:00Z",
-      "updated_at": "2026-06-30T00:00:00Z",
-      "is_mine": true
-    }
-  ]
-}
-```
-
-Return latest visible comments first. `is_mine` should be true when the row's `vote_id` equals the request `vote_id`.
 
 ### `upsertPackageComment`
 
@@ -155,4 +123,5 @@ Response:
 - The same project can cast one final vote per package. It cannot switch between `like` and `dislike` after the first successful vote.
 - The same project can keep one editable comment per package.
 - Comment titles are shown first; the body is displayed through a foldout per title.
+- Package comments are refreshed in bulk by `Update Catalog`. The Package Manager window does not show per-package comment load buttons.
 - If the Web App does not support these actions yet, Unity shows the Web App response in the package `Community` panel.

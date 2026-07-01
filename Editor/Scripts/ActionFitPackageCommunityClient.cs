@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -13,16 +14,79 @@ public static class ActionFitPackageCommunityClient
     public const string VoteDislike = "dislike";
 
     private const string VoteAction = "votePackage";
-    private const string FetchCommentsAction = "getPackageComments";
     private const string UpsertCommentAction = "upsertPackageComment";
-    private const int CommentFetchLimit = 20;
 
     private static readonly string StateFolder = Path.Combine("UserSettings", "ActionFitPackageManager");
     private static readonly string VoteIdPath = Path.Combine(StateFolder, "community_id.txt");
     private static readonly string LocalVotesPath = Path.Combine(StateFolder, "package_votes.tsv");
+    private static readonly string CommentCachePath = Path.Combine(StateFolder, "package_comments.csv");
     private static Dictionary<string, string> _localVotes;
 
-    public static int DefaultCommentFetchLimit => CommentFetchLimit;
+    public static bool HasCommentCache => File.Exists(ProjectRelativeFullPath(CommentCachePath));
+
+    public static bool SaveCommentCache(string csv)
+    {
+        string path = ProjectRelativeFullPath(CommentCachePath);
+        string normalized = Normalize(csv);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            if (!File.Exists(path)) return false;
+            File.Delete(path);
+            return true;
+        }
+
+        string previous = File.Exists(path) ? File.ReadAllText(path) : "";
+        if (Normalize(previous) == normalized) return false;
+
+        Directory.CreateDirectory(Path.GetDirectoryName(path));
+        File.WriteAllText(path, normalized + "\n", new UTF8Encoding(false));
+        return true;
+    }
+
+    public static Dictionary<string, CommentFetchResult> LoadCachedCommentsByPackage()
+    {
+        var result = new Dictionary<string, CommentFetchResult>(StringComparer.Ordinal);
+        string path = ProjectRelativeFullPath(CommentCachePath);
+        if (!File.Exists(path)) return result;
+
+        string localVoteId = GetOrCreateVoteId();
+        foreach (var row in ReadCsv(File.ReadAllText(path)))
+        {
+            if (IsTrue(Get(row, "hidden"))) continue;
+
+            string packageId = GetAny(row, "package_id", "packageId");
+            if (string.IsNullOrWhiteSpace(packageId)) continue;
+
+            if (!result.TryGetValue(packageId, out var packageComments))
+            {
+                packageComments = new CommentFetchResult();
+                result[packageId] = packageComments;
+            }
+
+            string voteId = GetAny(row, "vote_id", "voteId");
+            packageComments.Comments.Add(new Comment
+            {
+                comment_id = FirstNonEmpty(GetAny(row, "comment_id", "commentId"), $"{packageId}:{voteId}"),
+                package_id = packageId,
+                title = Get(row, "title"),
+                body = Get(row, "body"),
+                created_at = GetAny(row, "created_at", "createdAt"),
+                updated_at = GetAny(row, "updated_at", "updatedAt"),
+                is_mine = string.Equals(voteId, localVoteId, StringComparison.Ordinal)
+            });
+        }
+
+        foreach (var pair in result)
+        {
+            pair.Value.Comments = pair.Value.Comments
+                .OrderByDescending(c => FirstNonEmpty(c.updated_at, c.created_at))
+                .ToList();
+            pair.Value.MyComment = pair.Value.Comments.Find(c => c.is_mine);
+            pair.Value.Summary = new Summary(0, 0, pair.Value.Comments.Count);
+        }
+
+        return result;
+    }
 
     public static string GetLocalVote(string packageId)
     {
@@ -74,43 +138,6 @@ public static class ActionFitPackageCommunityClient
 
         summary = new Summary(response.likes, response.dislikes, response.comment_count);
         message = $"Vote saved: {packageId}";
-        return true;
-    }
-
-    public static bool FetchComments(ActionFitPackageCatalogSettings_SO settings, string packageId, out CommentFetchResult result, out string message)
-    {
-        result = new CommentFetchResult();
-        message = "";
-
-        if (!ValidateSettings(settings, out message)) return false;
-
-        string body =
-            "{" +
-            $"\"token\":\"{EscapeJson(settings.FetchToken)}\"," +
-            $"\"action\":\"{FetchCommentsAction}\"," +
-            $"\"ssId\":\"{EscapeJson(ExtractSpreadsheetId(settings.SpreadSheetUrl))}\"," +
-            $"\"package_id\":\"{EscapeJson(packageId)}\"," +
-            $"\"vote_id\":\"{EscapeJson(GetOrCreateVoteId())}\"," +
-            $"\"limit\":{CommentFetchLimit}" +
-            "}";
-
-        if (!TryPost(settings, body, out string responseText, out message)) return false;
-
-        var response = JsonUtility.FromJson<CommentFetchResponse>(responseText);
-        if (response == null || !response.success)
-        {
-            message = $"Comment fetch failed. Update the Apps Script Web App deployment and try again.\n{responseText}";
-            return false;
-        }
-
-        result = new CommentFetchResult
-        {
-            Summary = new Summary(response.likes, response.dislikes, response.comment_count),
-            Comments = response.comments != null ? new List<Comment>(response.comments) : new List<Comment>()
-        };
-
-        result.MyComment = result.Comments.Find(c => c.is_mine);
-        message = $"Comments loaded: {packageId}";
         return true;
     }
 
@@ -308,6 +335,141 @@ public static class ActionFitPackageCommunityClient
         File.WriteAllText(path, sb.ToString(), new UTF8Encoding(false));
     }
 
+    private static List<Dictionary<string, string>> ReadCsv(string csv)
+    {
+        var lines = ReadCsvRecords(Normalize(csv));
+        var result = new List<Dictionary<string, string>>();
+        if (lines.Count == 0 || string.IsNullOrWhiteSpace(lines[0])) return result;
+
+        string[] headers = SplitCsvLine(lines[0]).Select(h => h.Trim()).ToArray();
+        for (int i = 1; i < lines.Count; i++)
+        {
+            if (string.IsNullOrWhiteSpace(lines[i])) continue;
+            if (lines[i].Contains("(string)", StringComparison.OrdinalIgnoreCase)) continue;
+
+            string[] values = SplitCsvLine(lines[i]);
+            var row = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            for (int j = 0; j < headers.Length && j < values.Length; j++)
+                row[headers[j]] = values[j].Trim();
+            result.Add(row);
+        }
+
+        return result;
+    }
+
+    private static List<string> ReadCsvRecords(string text)
+    {
+        var records = new List<string>();
+        var sb = new StringBuilder();
+        bool inQuotes = false;
+
+        for (int i = 0; i < text.Length; i++)
+        {
+            char c = text[i];
+            if (c == '"')
+            {
+                if (inQuotes && i + 1 < text.Length && text[i + 1] == '"')
+                {
+                    sb.Append(c);
+                    sb.Append(text[i + 1]);
+                    i++;
+                    continue;
+                }
+
+                inQuotes = !inQuotes;
+            }
+
+            if ((c == '\n' || c == '\r') && !inQuotes)
+            {
+                if (c == '\r' && i + 1 < text.Length && text[i + 1] == '\n')
+                    i++;
+
+                records.Add(sb.ToString());
+                sb.Clear();
+                continue;
+            }
+
+            sb.Append(c);
+        }
+
+        if (sb.Length > 0)
+            records.Add(sb.ToString());
+
+        return records;
+    }
+
+    private static string[] SplitCsvLine(string line)
+    {
+        var result = new List<string>();
+        var sb = new StringBuilder();
+        bool inQuotes = false;
+
+        for (int i = 0; i < line.Length; i++)
+        {
+            char c = line[i];
+            if (c == '"')
+            {
+                if (inQuotes && i + 1 < line.Length && line[i + 1] == '"')
+                {
+                    sb.Append('"');
+                    i++;
+                    continue;
+                }
+
+                inQuotes = !inQuotes;
+                continue;
+            }
+
+            if (c == ',' && !inQuotes)
+            {
+                result.Add(sb.ToString());
+                sb.Clear();
+                continue;
+            }
+
+            sb.Append(c);
+        }
+
+        result.Add(sb.ToString());
+        return result.ToArray();
+    }
+
+    private static string Get(Dictionary<string, string> row, string key)
+    {
+        return row != null && row.TryGetValue(key, out string value) ? value : "";
+    }
+
+    private static string GetAny(Dictionary<string, string> row, params string[] keys)
+    {
+        foreach (string key in keys)
+        {
+            string value = Get(row, key);
+            if (!string.IsNullOrWhiteSpace(value)) return value;
+        }
+
+        return "";
+    }
+
+    private static string FirstNonEmpty(params string[] values)
+    {
+        foreach (string value in values)
+            if (!string.IsNullOrWhiteSpace(value))
+                return value.Trim();
+        return "";
+    }
+
+    private static bool IsTrue(string value)
+    {
+        return string.Equals(value, "true", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(value, "1", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(value, "yes", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string Normalize(string text)
+    {
+        return (text ?? "").TrimStart('\uFEFF').Replace("\r\n", "\n").Replace("\r", "\n").TrimEnd('\n');
+    }
+
     private static string ProjectRelativeFullPath(string relativePath)
     {
         string root = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
@@ -341,17 +503,6 @@ public static class ActionFitPackageCommunityClient
         public int likes;
         public int dislikes;
         public int comment_count;
-    }
-
-    [Serializable]
-    private sealed class CommentFetchResponse
-    {
-        public bool success;
-        public string package_id;
-        public int likes;
-        public int dislikes;
-        public int comment_count;
-        public Comment[] comments;
     }
 
     [Serializable]

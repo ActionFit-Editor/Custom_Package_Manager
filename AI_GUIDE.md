@@ -7,7 +7,7 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.custompackagemanager`
 - Display name: Custom Package Manager
 - Repository: `https://github.com/ActionFit-Editor/Custom_Package_Manager.git`
-- Current package version at generation time: `1.1.42`
+- Current package version at generation time: `1.1.43`
 - Unity version: `6000.2`
 
 ## Purpose
@@ -77,11 +77,12 @@ Read this file when:
 - Downloaded packages may be converted to editable embedded packages through `Embed for Edit`. The conversion should copy the resolved package source into a temporary folder, validate that the copied `package.json` exists and has the expected package `name`, move it into `Packages/<packageId>/`, write `file:<packageId>` in `Packages/manifest.json`, refresh package AI routing, and run Package Manager resolve without requiring publish credentials. Do not write a local `file:` dependency unless the target local package folder has a valid `package.json`; Unity Package Manager will fail project resolve when manifest points at a missing local package.
 - If `Packages/<packageId>/` already exists during `Embed for Edit`, validate its `package.json` name and let the user use that existing folder by writing the local `file:<packageId>` dependency. Do not overwrite the local folder.
 - Embedded packages may be returned to the downloaded flow through `Use Downloaded`, which writes the selected catalog Git UPM dependency, removes the local package folder, and runs Package Manager resolve.
+- Catalog `dependencies` are applied through the same manifest-writing path for install/apply, selected updates, and `Use Downloaded`. `com.actionfit.*` dependencies must resolve to catalog rows so the manager writes Git UPM URLs; registry dependencies outside ActionFit may fall back to their raw version string.
 - `Embed for Edit` does not publish by itself. After editing, the package `package.json` version must be bumped above the catalog latest version before `Publish Changed` will pick it up.
 - Package sections should sort by community score (`likes - dislikes`) descending, then likes, comments, and display name. Keep `Package Manager` separate from normal catalog sections.
 - Package community feedback uses an anonymous project ID stored under `UserSettings/ActionFitPackageManager/`, not a user identity. Do not move this ID into committed project settings.
 - Package community voting allows only one final `Like` or `Dislike` per anonymous project ID and package. Do not re-enable switching between vote types without updating the Web App contract.
-- The Web App must support `votePackage`, `getPackageComments`, and `upsertPackageComment` for community buttons to persist. When editing this feature, keep `Editor/Documentation/PackageCommunityWebAppContract.md` aligned with client requests and expected responses.
+- The Web App must support `votePackage`, `upsertPackageComment`, and returning `package_comments` during `Update Catalog` for community feedback to persist and display without per-package comment fetches. When editing this feature, keep `Editor/Documentation/PackageCommunityWebAppContract.md` aligned with client requests and expected responses.
 - `Update Catalog` should continue working if the Web App does not return `package_vote_summary`; community counts default to zero.
 
 ## Changelog And History Rules

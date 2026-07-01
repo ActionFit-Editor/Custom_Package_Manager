@@ -7,7 +7,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.42"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.43"
   }
 }
 ```
@@ -43,7 +43,7 @@ Each package detail view includes a `Community` foldout.
 - Comments use a `Title` and `Description`. Comment titles are shown as foldouts so users can scan titles first and open only the descriptions they want to read.
 - Each project can keep one editable comment per package.
 
-The configured catalog Web App must support `votePackage`, `getPackageComments`, and `upsertPackageComment`. See `Editor/Documentation/PackageCommunityWebAppContract.md` for the required sheet and response contract.
+The configured catalog Web App must support `votePackage`, `upsertPackageComment`, and returning the `package_comments` sheet during `Update Catalog`. See `Editor/Documentation/PackageCommunityWebAppContract.md` for the required sheet and response contract.
 
 ## Updates
 
@@ -97,7 +97,9 @@ If an AI assistant reads this package documentation before the automatic router 
 - Local catalog path: `Assets/_Data/_CustomPackageManager/package_catalog.csv`.
 - Fallback catalog path: `Packages/com.actionfit.custompackagemanager/Editor/Catalog/package_catalog.csv`.
 - Optional community summary sheet: `package_vote_summary`.
+- Optional community comments sheet: `package_comments`, cached under `UserSettings/ActionFitPackageManager/package_comments.csv` when `Update Catalog` runs.
 - Installing or applying a version updates `Packages/manifest.json` and runs Unity Package Manager resolve.
+- Catalog `dependencies` entries are applied before the selected package. ActionFit package dependencies must exist in the catalog so they can be written as Git UPM URLs; non-ActionFit registry dependencies fall back to their raw version string.
 - Manifest dependency formatting is normalized when written.
 
 ## Publish Notes

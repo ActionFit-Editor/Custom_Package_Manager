@@ -13,6 +13,7 @@ public static class ActionFitPackageCatalogUpdater
     private const string PackageSheetName = "package_catalog";
     private const string VersionSheetName = "package_versions";
     private const string VoteSummarySheetName = "package_vote_summary";
+    private const string CommentSheetName = "package_comments";
 
     private static string ProjectRootPath => Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
 
@@ -61,29 +62,34 @@ public static class ActionFitPackageCatalogUpdater
             EditorUtility.ClearProgressBar();
         }
 
-        if (!TryFindCatalogCsv(json, out string csv, out message)) return false;
+        if (!TryFindCatalogCsv(json, out string csv, out bool hasCommentCsv, out string commentCsv, out message)) return false;
 
         ActionFitPackageCatalogSettingsProvider.EnsureLocalCatalogFolder();
         string path = ActionFitPackageCatalogSettingsProvider.LocalCatalogPath;
         string fullPath = ProjectRelativeFullPath(path);
         string previous = File.Exists(fullPath) ? File.ReadAllText(fullPath) : "";
+        bool commentsChanged = hasCommentCsv && ActionFitPackageCommunityClient.SaveCommentCache(commentCsv);
 
         if (Normalize(previous) == Normalize(csv))
         {
-            message = $"Catalog is already up to date: {path}";
+            message = commentsChanged
+                ? $"Catalog is already up to date and comments cache updated: {path}"
+                : $"Catalog is already up to date: {path}";
             return true;
         }
 
         File.WriteAllText(fullPath, csv, new UTF8Encoding(true));
         AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
         AssetDatabase.SaveAssets();
-        message = $"Catalog updated: {path}";
+        message = commentsChanged ? $"Catalog and comments cache updated: {path}" : $"Catalog updated: {path}";
         return true;
     }
 
-    private static bool TryFindCatalogCsv(string json, out string csv, out string message)
+    private static bool TryFindCatalogCsv(string json, out string csv, out bool hasCommentCsv, out string commentCsv, out string message)
     {
         csv = "";
+        hasCommentCsv = false;
+        commentCsv = "";
         message = "";
 
         if (string.IsNullOrWhiteSpace(json))
@@ -123,6 +129,9 @@ public static class ActionFitPackageCatalogUpdater
             var voteSummarySheet = response.sheets.FirstOrDefault(s =>
                 string.Equals(s.name, VoteSummarySheetName, StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(s.name, VoteSummarySheetName + ".csv", StringComparison.OrdinalIgnoreCase));
+            var commentSheet = response.sheets.FirstOrDefault(s =>
+                string.Equals(s.name, CommentSheetName, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(s.name, CommentSheetName + ".csv", StringComparison.OrdinalIgnoreCase));
 
             if (packageSheet == null || versionSheet == null)
             {
@@ -131,6 +140,8 @@ public static class ActionFitPackageCatalogUpdater
             }
 
             csv = BuildCatalogCsv(packageSheet.csv, versionSheet.csv, voteSummarySheet?.csv);
+            hasCommentCsv = commentSheet != null;
+            commentCsv = commentSheet?.csv ?? "";
             return true;
         }
         catch (Exception ex)
