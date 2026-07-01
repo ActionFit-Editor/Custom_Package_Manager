@@ -60,13 +60,10 @@ public static class ActionFitPackagePublisher
             EditorUtility.DisplayProgressBar("ActionFit Package Publish", "Checking GitHub repository...", 0.1f);
             EnsureRepository(github, info.RepoName);
 
-            EditorUtility.DisplayProgressBar("ActionFit Package Publish", "Publishing package repository...", 0.45f);
+            EditorUtility.DisplayProgressBar("ActionFit Package Publish", "Preparing package repository...", 0.45f);
             PublishGitRepository(settings, github, packageRoot, info.RepoName, manifest);
 
-            EditorUtility.DisplayProgressBar("ActionFit Package Publish", "Appending catalog row...", 0.8f);
-            AppendCatalog(settings, github, info, manifest);
-
-            message = $"{manifest.Name}@{manifest.Version} published and catalog append requested.";
+            message = $"{manifest.Name}@{manifest.Version} prepared locally. Git push, tag push, and catalog append are disabled.";
             return true;
         }
         catch (Exception ex)
@@ -157,9 +154,9 @@ public static class ActionFitPackagePublisher
             RunGit(dest, $"tag {Quote(manifest.Version)}", github.Token);
         }
 
-        RunGit(dest, "push -u origin main", github.Token);
-        if (!remoteTagExists)
-            RunGit(dest, $"push origin {Quote(manifest.Version)}", github.Token);
+        Debug.Log(
+            $"[ActionFitPackageManager] Prepared local package publish clone without remote push: " +
+            $"{dest} ({manifest.Name}@{manifest.Version})");
     }
 
     private static void AppendCatalog(ActionFitPackageCatalogSettings_SO settings, ActionFitPackageGitHubProfile github, ActionFitPackageInfo_SO info, ActionFitPackageManifest manifest)

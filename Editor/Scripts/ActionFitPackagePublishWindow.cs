@@ -199,7 +199,7 @@ public class ActionFitPackagePublishWindow : EditorWindow
             : "";
         if (!EditorUtility.DisplayDialog(
                 "ActionFit Package Manager",
-                $"{action}: {entry.PackageId}@{version}?{visibilityLine}\n\nThis will create/check the GitHub repository, push package contents and tag, then append the catalog spreadsheet.",
+                $"{action}: {entry.PackageId}@{version}?{visibilityLine}\n\nThis will create/check the GitHub repository and prepare the local publish clone. It will not push package contents, push tags, or append the catalog spreadsheet.",
                 _mode == Mode.Create ? "2. Create Repo" : "Publish",
                 "Cancel"))
             return;
@@ -216,7 +216,7 @@ public class ActionFitPackagePublishWindow : EditorWindow
         string list = string.Join("\n", targets.Select(e => $"- {e.PackageId}: {e.CatalogLatestVersion} -> {e.Version}"));
         if (!EditorUtility.DisplayDialog(
                 "ActionFit Package Manager",
-                $"Publish all changed packages?\n\n{list}\n\nThis will push package contents and tags, then append catalog rows.",
+                $"Publish all changed packages?\n\n{list}\n\nThis will prepare local publish clones only. It will not push package contents, push tags, or append catalog rows.",
                 "Publish All Changed",
                 "Cancel"))
             return;
@@ -242,7 +242,7 @@ public class ActionFitPackagePublishWindow : EditorWindow
         else
             Debug.LogWarning($"[ActionFitPackageManager] Catalog refresh failed after bulk publish: {updateMessage}");
 
-        Debug.Log($"[ActionFitPackageManager] Bulk publish complete:\n{string.Join("\n", succeeded)}");
+        Debug.Log($"[ActionFitPackageManager] Bulk publish preparation complete:\n{string.Join("\n", succeeded)}");
         ScheduleReload();
     }
 
