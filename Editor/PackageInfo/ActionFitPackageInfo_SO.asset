@@ -20,19 +20,18 @@ MonoBehaviour:
   _description: "ActionFit UPM \uD328\uD0A4\uC9C0 \uCE74\uD0C8\uB85C\uADF8\uB97C
     \uBCF4\uACE0 Git URL \uAE30\uBC18 \uC124\uCE58\uC640 \uBC84\uC804 \uC801\uC6A9\uC744
     \uB3C4\uC640\uC8FC\uB294 Unity \uC5D0\uB514\uD130 \uD234."
-  _releaseNote: "- `3. Publish Package`\uC640 `Publish Changed`\uC5D0\uC11C
-    \uC6D0\uACA9 `git push -u origin main`\uACFC version tag push\uB97C \uB2E4\uC2DC
-    \uC2E4\uD589\uD558\uB3C4\uB85D \uBCF5\uAD6C\uD588\uC2B5\uB2C8\uB2E4.\n-
-    publish \uC131\uACF5 \uD6C4 catalog append \uC694\uCCAD\uB3C4 \uB2E4\uC2DC
-    \uC2E4\uD589\uD558\uC5EC Package Manager catalog/version row\uAC00 \uAC31\uC2E0\uB429\uB2C8\uB2E4.\n-
-    repo \uD655\uC778, publish clone \uACBD\uB85C, \uD30C\uC77C \uBCF5\uC0AC,
-    commit/tag, main push, tag push, catalog append \uB2E8\uACC4\uB9C8\uB2E4
-    `[ActionFitPackageManager]` \uB85C\uADF8\uB97C \uB0A8\uAE41\uB2C8\uB2E4.\n-
-    publish \uBC84\uD2BC \uC2E4\uD589\uC744 `EditorApplication.delayCall`\uB85C
-    \uBBF8\uB904 `EndLayoutGroup: BeginLayoutGroup must be called first` IMGUI
-    \uC624\uB958\uAC00 \uBC18\uBCF5\uB418\uC9C0 \uC54A\uAC8C \uD588\uC2B5\uB2C8\uB2E4.\n-
-    Caution: push \uB300\uC0C1 package history\uC5D0 \uC2E4\uC81C token
-    \uD328\uD134\uC774 \uC788\uC73C\uBA74 GitHub Push Protection\uC774 \uB9C9\uC744
-    \uC218 \uC788\uC73C\uBA70, \uC774 \uACBD\uC6B0 \uC2E4\uD328\uD55C git \uB2E8\uACC4\uAC00
-    \uB85C\uADF8\uC5D0 \uD45C\uC2DC\uB429\uB2C8\uB2E4."
+  _releaseNote: "- `3. Publish Package`\uC640 `Publish Changed`\uC5D0\uC11C \uC6D0\uACA9
+    `git push -u origin main`\uACFC version tag push\uB97C \uB2E4\uC2DC \uC2E4\uD589\uD558\uB3C4\uB85D
+    \uBCF5\uAD6C\uD588\uC2B5\uB2C8\uB2E4.\n- publish \uC131\uACF5 \uD6C4 catalog
+    append \uC694\uCCAD\uB3C4 \uB2E4\uC2DC \uC2E4\uD589\uD558\uC5EC Package Manager
+    catalog/version row\uAC00 \uAC31\uC2E0\uB429\uB2C8\uB2E4.\n- repo \uD655\uC778,
+    publish clone \uACBD\uB85C, \uD30C\uC77C \uBCF5\uC0AC, commit/tag, main push,
+    tag push, catalog append \uB2E8\uACC4\uB9C8\uB2E4 `[ActionFitPackageManager]`
+    \uB85C\uADF8\uB97C \uB0A8\uAE41\uB2C8\uB2E4.\n- publish \uBC84\uD2BC \uC2E4\uD589\uC744
+    `EditorApplication.delayCall`\uB85C \uBBF8\uB904 `EndLayoutGroup: BeginLayoutGroup
+    must be called first` IMGUI \uC624\uB958\uAC00 \uBC18\uBCF5\uB418\uC9C0 \uC54A\uAC8C
+    \uD588\uC2B5\uB2C8\uB2E4.\n- Caution: push \uB300\uC0C1 package history\uC5D0
+    \uC2E4\uC81C token \uD328\uD134\uC774 \uC788\uC73C\uBA74 GitHub Push Protection\uC774
+    \uB9C9\uC744 \uC218 \uC788\uC73C\uBA70, \uC774 \uACBD\uC6B0 \uC2E4\uD328\uD55C
+    git \uB2E8\uACC4\uAC00 \uB85C\uADF8\uC5D0 \uD45C\uC2DC\uB429\uB2C8\uB2E4."
   _dependenciesOverride: 
