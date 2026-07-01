@@ -1,5 +1,6 @@
 #if UNITY_EDITOR
 using UnityEngine;
+using UnityEngine.Serialization;
 
 public enum ActionFitPackageRepositoryVisibility
 {
@@ -33,16 +34,16 @@ public class ActionFitPackageCatalogSettings_SO : ScriptableObject
 
     [Header("GitHub Publish Default")]
     [SerializeField] private string _githubOrg = "ActionFit-Editor";
+    [FormerlySerializedAs("_publicGitHubToken")]
+    [FormerlySerializedAs("_privateGitHubToken")]
     [SerializeField] private string _githubToken = "";
     [SerializeField] private string _publishRoot = "~/upm-publish";
 
     [Header("Repo Creation - Public")]
     [SerializeField] private string _publicGitHubOrg = "ActionFit-Editor";
-    [SerializeField] private string _publicGitHubToken = "";
 
     [Header("Repo Creation - Private")]
     [SerializeField] private string _privateGitHubOrg = "ActionFit-Editor";
-    [SerializeField] private string _privateGitHubToken = "";
 
     public string SpreadSheetUrl => _spreadSheetUrl;
     public string WebAppUrl => _webAppUrl;
@@ -64,12 +65,9 @@ public class ActionFitPackageCatalogSettings_SO : ScriptableObject
         string organization = isPrivate
             ? FirstNonEmpty(_privateGitHubOrg, _githubOrg, "ActionFit-Editor")
             : FirstNonEmpty(_publicGitHubOrg, _githubOrg, "ActionFit-Editor");
-        string token = isPrivate
-            ? FirstNonEmpty(_privateGitHubToken, _githubToken)
-            : FirstNonEmpty(_publicGitHubToken, _githubToken);
         string label = isPrivate ? "Private Repo Creation" : "Public Repo Creation";
 
-        return new ActionFitPackageGitHubProfile(organization, token, visibility, label);
+        return new ActionFitPackageGitHubProfile(organization, _githubToken, visibility, label);
     }
 
     private static string FirstNonEmpty(params string[] values)

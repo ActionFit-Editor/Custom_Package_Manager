@@ -7,7 +7,7 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.custompackagemanager`
 - Display name: Custom Package Manager
 - Repository: `https://github.com/ActionFit-Editor/Custom_Package_Manager.git`
-- Current package version at generation time: `1.1.41`
+- Current package version at generation time: `1.1.42`
 - Unity version: `6000.2`
 
 ## Purpose
@@ -35,7 +35,7 @@ Read this file when:
 
 - `Editor/Scripts/ActionFitPackageManagerWindow.cs`: package list, install/apply/remove/update/history UI.
 - `Editor/Scripts/ActionFitPackageManagerConsoleWindow.cs`: operational console for create/repo/publish/readme/catalog/manifest/settings actions.
-- `Editor/Scripts/ActionFitPackageCatalogSettings_SO.cs`: spreadsheet config, GitHub publish default credentials, public repo creation profile, private repo creation profile, and publish cache root.
+- `Editor/Scripts/ActionFitPackageCatalogSettings_SO.cs`: spreadsheet config, one GitHub publish token, public/private repo creation org profiles, and publish cache root.
 - `Editor/Scripts/ActionFitPackageInfoUtility.cs`: package skeleton creation and PackageInfo/README/AI_GUIDE generation.
 - `Editor/Scripts/ActionFitPackagePublishWindow.cs`: publish target scan and publish UI.
 - `Editor/Scripts/ActionFitPackagePublisher.cs`: GitHub repository check, local publish clone preparation, remote `git push`, tag push, catalog upsert, and publish step logging.
@@ -70,7 +70,7 @@ Read this file when:
 - Fallback catalog path: `Packages/com.actionfit.custompackagemanager/Editor/Catalog/package_catalog.csv`.
 - Package Manager reads the local catalog when present, otherwise the embedded package catalog.
 - It manages internal UPM package install/update/remove, repository creation, changelog/history display, AI guide routing, and manual publish flows.
-- `2. Create Repo` has a `Public` / `Private` selector. Public creation uses `Repo Creation - Public`; private creation uses `Repo Creation - Private`; profile-specific org/token values may fall back to `GitHub Publish Default` for older settings assets.
+- `2. Create Repo` has a `Public` / `Private` selector. Public creation uses `Repo Creation - Public`; private creation uses `Repo Creation - Private`; both profiles share the single `GitHub Publish Default` token and only keep separate org values.
 - Package section classification should treat Git/registry dependencies in `Packages/manifest.json` as Downloaded Packages. Only local `file:` dependencies or package folders under `Packages/` without a manifest dependency should be treated as Embedded Packages.
 - The `Updates` panel must include only installed packages whose catalog latest version is higher than the installed version. Do not treat any version difference as an update, because that can downgrade packages such as `1.0.30 -> 1.0.29`.
 - `Latest Git` buttons in package details and the `Updates` panel should open the catalog latest version's GitHub tag URL in the browser without modifying `Packages/manifest.json`.

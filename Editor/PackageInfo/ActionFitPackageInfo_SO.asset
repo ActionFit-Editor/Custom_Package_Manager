@@ -20,18 +20,18 @@ MonoBehaviour:
   _description: "ActionFit UPM \uD328\uD0A4\uC9C0 \uCE74\uD0C8\uB85C\uADF8\uB97C
     \uBCF4\uACE0 Git URL \uAE30\uBC18 \uC124\uCE58\uC640 \uBC84\uC804 \uC801\uC6A9\uC744
     \uB3C4\uC640\uC8FC\uB294 Unity \uC5D0\uB514\uD130 \uD234."
-  _releaseNote: "- `3. Publish Package`\uC640 `Publish Changed`\uC5D0\uC11C \uC6D0\uACA9
-    `git push -u origin main`\uACFC version tag push\uB97C \uB2E4\uC2DC \uC2E4\uD589\uD558\uB3C4\uB85D
-    \uBCF5\uAD6C\uD588\uC2B5\uB2C8\uB2E4.\n- publish \uC131\uACF5 \uD6C4 catalog
-    append \uC694\uCCAD\uB3C4 \uB2E4\uC2DC \uC2E4\uD589\uD558\uC5EC Package Manager
-    catalog/version row\uAC00 \uAC31\uC2E0\uB429\uB2C8\uB2E4.\n- repo \uD655\uC778,
-    publish clone \uACBD\uB85C, \uD30C\uC77C \uBCF5\uC0AC, commit/tag, main push,
-    tag push, catalog append \uB2E8\uACC4\uB9C8\uB2E4 `[ActionFitPackageManager]`
-    \uB85C\uADF8\uB97C \uB0A8\uAE41\uB2C8\uB2E4.\n- publish \uBC84\uD2BC \uC2E4\uD589\uC744
-    `EditorApplication.delayCall`\uB85C \uBBF8\uB904 `EndLayoutGroup: BeginLayoutGroup
-    must be called first` IMGUI \uC624\uB958\uAC00 \uBC18\uBCF5\uB418\uC9C0 \uC54A\uAC8C
-    \uD588\uC2B5\uB2C8\uB2E4.\n- Caution: push \uB300\uC0C1 package history\uC5D0
-    \uC2E4\uC81C token \uD328\uD134\uC774 \uC788\uC73C\uBA74 GitHub Push Protection\uC774
-    \uB9C9\uC744 \uC218 \uC788\uC73C\uBA70, \uC774 \uACBD\uC6B0 \uC2E4\uD328\uD55C
-    git \uB2E8\uACC4\uAC00 \uB85C\uADF8\uC5D0 \uD45C\uC2DC\uB429\uB2C8\uB2E4."
+  _releaseNote: "- `ActionFitPackageCatalogSettings_SO`\uC5D0\uC11C public/private
+    \uC804\uC6A9 GitHub token \uC9C1\uB82C\uD654 \uD544\uB4DC\uB97C \uC81C\uAC70\uD558\uACE0
+    `_githubToken` \uD558\uB098\uB9CC \uBCF4\uC774\uB3C4\uB85D \uC815\uB9AC\uD588\uC2B5\uB2C8\uB2E4.\n-
+    `2. Create Repo`\uC758 Public/Private \uC120\uD0DD\uC740 \uAC01\uAC01\uC758 GitHub
+    org\uB9CC \uBD84\uB9AC\uD574\uC11C \uC0AC\uC6A9\uD558\uACE0, \uC778\uC99D token\uC740
+    \uACF5\uD1B5 `_githubToken`\uC744 \uC0AC\uC6A9\uD569\uB2C8\uB2E4.\n- \uAE30\uC874
+    \uC124\uC815 \uC5D0\uC14B\uC5D0 `_publicGitHubToken` \uB610\uB294 `_privateGitHubToken`\uB9CC
+    \uB0A8\uC544 \uC788\uB358 \uACBD\uC6B0\uB97C \uC704\uD574 `FormerlySerializedAs`\uB85C
+    `_githubToken` \uB9C8\uC774\uADF8\uB808\uC774\uC158\uC744 \uC9C0\uC6D0\uD569\uB2C8\uB2E4.\n-
+    README\uC640 AI guide\uC758 \uC124\uC815 \uC124\uBA85\uC744 \uB2E8\uC77C GitHub
+    token \uAD6C\uC870\uC5D0 \uB9DE\uCDB0 \uAC31\uC2E0\uD588\uC2B5\uB2C8\uB2E4.\n-
+    Caution: \uBCC4\uB3C4 public/private GitHub token\uC744 \uC0AC\uC6A9\uD558\uB358
+    \uD504\uB85C\uC81D\uD2B8\uB294 `ACTIONFIT_CPM_GITHUB_TOKEN` \uB610\uB294 `_githubToken`
+    \uD558\uB098\uB85C \uC778\uC99D \uAD8C\uD55C\uC744 \uD1B5\uD569\uD574\uC57C \uD569\uB2C8\uB2E4."
   _dependenciesOverride: 
