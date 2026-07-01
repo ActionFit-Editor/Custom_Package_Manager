@@ -1058,14 +1058,32 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
         string manifest = File.ReadAllText(manifestPath);
         string updatedManifest = SetDependency(manifest, package.Id, LocalPackageDependencyValue(package.Id));
+        string tempPackageRoot = Path.Combine(ProjectRootPath, "Temp", "ActionFitPackageManager", package.Id);
 
         try
         {
-            CopyDirectoryForEmbeddedPackage(sourcePath, fullPackageRoot);
+            if (Directory.Exists(tempPackageRoot))
+                Directory.Delete(tempPackageRoot, true);
+
+            CopyDirectoryForEmbeddedPackage(sourcePath, tempPackageRoot);
+            if (!TryValidateLocalPackageFolder(package.Id, tempPackageRoot, out _, out string tempValidationError))
+                throw new InvalidOperationException(tempValidationError);
+
+            if (Directory.Exists(fullPackageRoot))
+                throw new InvalidOperationException($"Destination package folder already exists: {packageRoot}");
+
+            Directory.CreateDirectory(Path.GetDirectoryName(fullPackageRoot));
+            Directory.Move(tempPackageRoot, fullPackageRoot);
+            if (!TryValidateLocalPackageFolder(package.Id, fullPackageRoot, out _, out string embeddedValidationError))
+                throw new InvalidOperationException(embeddedValidationError);
+
             File.WriteAllText(manifestPath, updatedManifest, new UTF8Encoding(false));
         }
         catch (Exception ex)
         {
+            if (Directory.Exists(tempPackageRoot))
+                Directory.Delete(tempPackageRoot, true);
+
             if (Directory.Exists(fullPackageRoot))
                 Directory.Delete(fullPackageRoot, true);
 
@@ -1093,25 +1111,12 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
     private void UseExistingLocalFolderForEdit(PackageGroup package, string packageRoot, string fullPackageRoot)
     {
-        string packageJsonPath = Path.Combine(fullPackageRoot, "package.json");
-        if (!File.Exists(packageJsonPath))
+        if (!TryValidateLocalPackageFolder(package.Id, fullPackageRoot, out string localVersion, out string validationError))
         {
-            EditorUtility.DisplayDialog("ActionFit Package Manager", $"Local package folder already exists without package.json:\n{packageRoot}", "OK");
+            EditorUtility.DisplayDialog("ActionFit Package Manager", $"{validationError}\n\nFolder: {packageRoot}", "OK");
             return;
         }
 
-        string packageJson = File.ReadAllText(packageJsonPath);
-        string localPackageId = ExtractJsonString(packageJson, "name");
-        if (!string.Equals(localPackageId, package.Id, StringComparison.Ordinal))
-        {
-            EditorUtility.DisplayDialog(
-                "ActionFit Package Manager",
-                $"Local package folder package ID does not match.\n\nExpected: {package.Id}\nFound: {localPackageId}\nFolder: {packageRoot}",
-                "OK");
-            return;
-        }
-
-        string localVersion = ExtractJsonString(packageJson, "version");
         if (!EditorUtility.DisplayDialog(
                 "ActionFit Package Manager",
                 $"Use existing local package folder for edit?\n\n{package.Id}: {localVersion}\n\nFolder: {packageRoot}\n\nThis will replace the Git UPM dependency with a local file dependency without copying or overwriting the local folder.",
@@ -1147,6 +1152,41 @@ public class ActionFitPackageManagerWindow : EditorWindow
         AssetDatabase.Refresh();
         Client.Resolve();
         QueueReload();
+    }
+
+    private static bool TryValidateLocalPackageFolder(string expectedPackageId, string fullPackageRoot, out string version, out string error)
+    {
+        version = "";
+        error = "";
+
+        if (string.IsNullOrWhiteSpace(fullPackageRoot) || !Directory.Exists(fullPackageRoot))
+        {
+            string displayPath = string.IsNullOrWhiteSpace(fullPackageRoot) ? "<empty>" : ToProjectRelativePath(fullPackageRoot);
+            error = $"Local package folder does not exist: {displayPath}";
+            return false;
+        }
+
+        string packageJsonPath = Path.Combine(fullPackageRoot, "package.json");
+        if (!File.Exists(packageJsonPath))
+        {
+            error = $"Local package folder is missing package.json: {ToProjectRelativePath(packageJsonPath)}";
+            return false;
+        }
+
+        string packageJson = File.ReadAllText(packageJsonPath);
+        string localPackageId = ExtractJsonString(packageJson, "name");
+        if (!string.Equals(localPackageId, expectedPackageId, StringComparison.Ordinal))
+        {
+            error =
+                "Local package folder package ID does not match.\n\n" +
+                $"Expected: {expectedPackageId}\n" +
+                $"Found: {localPackageId}\n" +
+                $"Folder: {ToProjectRelativePath(fullPackageRoot)}";
+            return false;
+        }
+
+        version = ExtractJsonString(packageJson, "version");
+        return true;
     }
 
     private void ConvertEmbeddedToDownloaded(PackageGroup package, PackageVersion version)

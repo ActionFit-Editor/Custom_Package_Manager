@@ -7,7 +7,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.37"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.38"
   }
 }
 ```
@@ -29,7 +29,7 @@ Package sections are grouped as Package Manager, Embedded Packages, Downloaded P
 
 Package sections are sorted by package community score, `likes - dislikes`, highest first. When the catalog spreadsheet Web App exposes `package_vote_summary`, `Update Catalog` imports `likes`, `dislikes`, `vote_score`, and `comment_count` into the local catalog CSV.
 
-Downloaded packages include `Embed for Edit`. This copies the resolved package source from Unity's package cache into `Packages/<packageId>/`, writes `file:<packageId>` to `Packages/manifest.json`, and runs Package Manager resolve so the package becomes editable as a local embedded package. If the local package folder already exists and its `package.json` name matches, the tool can use that existing folder instead of copying over it. Embedded packages include `Use Downloaded`, which writes the selected catalog Git UPM version back to `Packages/manifest.json`, removes the local folder, and returns the package to the downloaded flow.
+Downloaded packages include `Embed for Edit`. This copies the resolved package source from Unity's package cache into a temporary folder, validates the copied `package.json`, moves it into `Packages/<packageId>/`, writes `file:<packageId>` to `Packages/manifest.json`, and runs Package Manager resolve so the package becomes editable as a local embedded package. If the copy or validation fails, the manifest is left unchanged so Unity does not resolve a `file:` dependency whose local `package.json` is missing. If the local package folder already exists and its `package.json` name matches, the tool can use that existing folder instead of copying over it. Embedded packages include `Use Downloaded`, which writes the selected catalog Git UPM version back to `Packages/manifest.json`, removes the local folder, and returns the package to the downloaded flow.
 
 After editing an embedded package, bump its `package.json` version above the catalog latest version before using `Publish Changed`.
 
