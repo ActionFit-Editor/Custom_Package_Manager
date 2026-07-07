@@ -9,6 +9,7 @@ public class ActionFitPackageCreateWindow : EditorWindow
     private string _packageId = "com.actionfit.";
     private string _displayName = "";
     private string _repoName = "";
+    private ActionFitPackageRepositoryVisibility _repositoryVisibility = ActionFitPackageRepositoryVisibility.Public;
     private string _version = "1.0.0";
     private string _unityVersion = "6000.2";
     private string _owner = "ActionFit";
@@ -31,6 +32,7 @@ public class ActionFitPackageCreateWindow : EditorWindow
         _packageId = EditorGUILayout.TextField("Package Id", _packageId);
         _displayName = EditorGUILayout.TextField("Display Name", _displayName);
         _repoName = EditorGUILayout.TextField("Repo Name", _repoName);
+        _repositoryVisibility = (ActionFitPackageRepositoryVisibility)EditorGUILayout.EnumPopup("Repository Visibility", _repositoryVisibility);
         _version = EditorGUILayout.TextField("Version", _version);
         _unityVersion = EditorGUILayout.TextField("Unity", _unityVersion);
 
@@ -76,6 +78,7 @@ public class ActionFitPackageCreateWindow : EditorWindow
                 PackageId = _packageId,
                 DisplayName = _displayName,
                 RepoName = _repoName,
+                RepositoryVisibility = _repositoryVisibility,
                 Version = _version,
                 UnityVersion = _unityVersion,
                 Owner = _owner,

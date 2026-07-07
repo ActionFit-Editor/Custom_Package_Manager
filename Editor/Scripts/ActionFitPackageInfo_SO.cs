@@ -7,6 +7,7 @@ public class ActionFitPackageInfo_SO : ScriptableObject
     [SerializeField] private string _packageId = "";
     [SerializeField] private string _displayName = "";
     [SerializeField] private string _repoName = "";
+    [SerializeField] private ActionFitPackageRepositoryVisibility _repositoryVisibility = ActionFitPackageRepositoryVisibility.Public;
     [SerializeField] private string _owner = "";
     [SerializeField] private string _status = "verified";
 
@@ -20,6 +21,7 @@ public class ActionFitPackageInfo_SO : ScriptableObject
     public string PackageId => _packageId;
     public string DisplayName => _displayName;
     public string RepoName => _repoName;
+    public ActionFitPackageRepositoryVisibility RepositoryVisibility => _repositoryVisibility;
     public string Owner => _owner;
     public string Status => _status;
     public string Description => _description;

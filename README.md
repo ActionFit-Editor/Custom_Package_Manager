@@ -7,7 +7,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.43"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.45"
   }
 }
 ```
@@ -15,7 +15,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ## Menu
 
 - `Tools > ActionFit > Package Manager > Package Manager`: install, apply versions, remove packages, and inspect updates.
-- `Tools > ActionFit > Package Manager > Manager Console`: create packages, create repositories, publish packages, open README/catalog/manifest/settings.
+- `Tools > ActionFit > Package Manager > Manager Console`: create packages, publish changed package versions, publish selected package versions, open README/catalog/manifest/settings.
 
 ## Package Manager
 
@@ -83,9 +83,8 @@ If an AI assistant reads this package documentation before the automatic router 
 ## Manager Console
 
 - `1. Create Package`: creates the `Packages/com.actionfit.*` package skeleton, README, AI guide, asmdef, and PackageInfo SO.
-- `2. Create Repo`: creates/checks the GitHub repository and first catalog row for packages not yet registered. The create window has a `Public` / `Private` selector.
-- `3. Publish Package`: prepares the local publish clone for an already registered package version.
-- `Publish Changed`: finds packages whose local `package.json` version is higher than the catalog latest version, prepares their local publish clones, pushes package contents/tags, and appends catalog rows.
+- `2. Publish Changed`: normal publish path. It finds packages whose local `package.json` version is higher than the catalog latest version, includes newly created packages that are not yet registered, prepares local publish clones, creates missing repositories, pushes package contents/tags, and appends catalog rows. Each package's `Repository Visibility` in `ActionFitPackageInfo_SO` is used when a missing repository must be created.
+- `Publish Package`: manual publish path for an already registered package version when you need to type a specific version before publishing.
 - `README`: opens this README in a dedicated window.
 - `Open Catalog`: selects the local or fallback catalog CSV.
 - `Open Manifest`: opens the project `Packages/manifest.json`.
@@ -104,7 +103,7 @@ If an AI assistant reads this package documentation before the automatic router 
 
 ## Publish Notes
 
-`3. Publish Package` and `Publish Changed` create or refresh the local publish clone, commit copied package files, push `main`, push the version tag when needed, and append the catalog row. The Unity Console prints `[ActionFitPackageManager]` logs for repository check, clone path, file copy, commit/tag, branch push, tag push, and catalog append steps.
+`Publish Package` and `Publish Changed` create or refresh the local publish clone, commit copied package files, push `main`, push the version tag when needed, and append the catalog row. The Unity Console prints `[ActionFitPackageManager]` logs for repository check, clone path, file copy, commit/tag, branch push, tag push, and catalog append steps.
 
 `Settings` stores one GitHub token in `GitHub Publish Default` and separate repository creation organizations for public and private repositories. Fill `_githubToken` once, then set `Repo Creation - Public` and `Repo Creation - Private` org values when the repository owners differ. Private catalog entries can point at private GitHub repositories, so consuming projects still need GitHub access to install them.
 

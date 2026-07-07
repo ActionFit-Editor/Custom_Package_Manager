@@ -23,14 +23,11 @@ public class ActionFitPackageManagerConsoleWindow : EditorWindow
             if (GUILayout.Button("1. Create Package"))
                 ActionFitPackageCreateWindow.Open();
 
-            if (GUILayout.Button("2. Create Repo"))
-                ActionFitPackagePublishWindow.OpenCreate();
-
-            if (GUILayout.Button("3. Publish Package"))
-                ActionFitPackagePublishWindow.OpenUpdate();
-
-            if (GUILayout.Button("Publish Changed"))
+            if (GUILayout.Button("2. Publish Changed"))
                 ActionFitPackagePublishWindow.OpenChanged();
+
+            if (GUILayout.Button("Publish Package"))
+                ActionFitPackagePublishWindow.OpenUpdate();
         }
 
         EditorGUILayout.Space(8);

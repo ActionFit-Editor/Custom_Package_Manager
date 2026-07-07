@@ -7,7 +7,7 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.custompackagemanager`
 - Display name: Custom Package Manager
 - Repository: `https://github.com/ActionFit-Editor/Custom_Package_Manager.git`
-- Current package version at generation time: `1.1.43`
+- Current package version at generation time: `1.1.45`
 - Unity version: `6000.2`
 
 ## Purpose
@@ -70,7 +70,8 @@ Read this file when:
 - Fallback catalog path: `Packages/com.actionfit.custompackagemanager/Editor/Catalog/package_catalog.csv`.
 - Package Manager reads the local catalog when present, otherwise the embedded package catalog.
 - It manages internal UPM package install/update/remove, repository creation, changelog/history display, AI guide routing, and manual publish flows.
-- `2. Create Repo` has a `Public` / `Private` selector. Public creation uses `Repo Creation - Public`; private creation uses `Repo Creation - Private`; both profiles share the single `GitHub Publish Default` token and only keep separate org values.
+- Manager Console exposes `1. Create Package`, `2. Publish Changed`, and `Publish Package`. `Publish Changed` is the normal publish path for changed versions and newly created packages.
+- Each package's `ActionFitPackageInfo_SO` stores `Repository Visibility`. Newly registered packages use that package-local value for GitHub repository creation, so `Publish All Changed` can safely publish mixed public/private packages in one run.
 - Package section classification should treat Git/registry dependencies in `Packages/manifest.json` as Downloaded Packages. Only local `file:` dependencies or package folders under `Packages/` without a manifest dependency should be treated as Embedded Packages.
 - The `Updates` panel must include only installed packages whose catalog latest version is higher than the installed version. Do not treat any version difference as an update, because that can downgrade packages such as `1.0.30 -> 1.0.29`.
 - `Latest Git` buttons in package details and the `Updates` panel should open the catalog latest version's GitHub tag URL in the browser without modifying `Packages/manifest.json`.
@@ -121,7 +122,7 @@ When files under `Packages/com.actionfit.*/` embedded packages are modified, pre
 7. Treat each package's `Editor/PackageInfo/ActionFitPackageInfo_SO.asset` as the source of package metadata, repository name, description, and release note.
 8. Before publish, check the package `README.md` that will be pushed to Git. Update it when version, usage, menu paths, settings, cautions, or behavior no longer match.
 9. Update the package root `AI_GUIDE.md` whenever behavior, workflow, migration, public menu paths, serialized data, release process, or AI-facing rules change.
-10. Unless the user explicitly asks, do not run `publish_upm.sh`, `3. Publish Package`, GitHub push/tag, or catalog upsert.
+10. Unless the user explicitly asks, do not run `publish_upm.sh`, `Publish Changed`, `Publish Package`, GitHub push/tag, or catalog upsert.
 
 In the final report, state which remote tag check was performed and which version is the next unpublished release candidate.
 
@@ -144,13 +145,14 @@ When updating a package version, write PackageInfo release notes using these sta
 ## ActionFit Package Catalog Rules
 
 - The `description` and `changelog` fields in `Packages/com.actionfit.custompackagemanager/Editor/Catalog/package_catalog.csv` and the linked Google Spreadsheet tabs `package_catalog` / `package_versions` must be written in Korean so planners and developers can read them directly.
+- Do not manually add a new package version row to `Assets/_Data/_CustomPackageManager/package_catalog.csv`, the embedded catalog CSV, or the linked Google Spreadsheet before the user has actually published that version. Keep the catalog latest row at the latest already-published version so `Publish Changed` can detect the new local `package.json` version. The new version row must be created by the user's manual Custom Package Manager publish/catalog append flow after the package repository push and tag succeed.
 - When adding a new package version row, write the package role in `description` and write Korean bullet changelog entries in `changelog` using the Package Changelog Rules above. Code identifiers, package IDs, and menu paths may remain unchanged.
 - When registering or updating a package through Custom Package Manager, use `1. Create Package` to create the base `Packages/com.actionfit.*` structure and PackageInfo SO.
 - `package.json` is the source for `name`, `version`, `unity`, and `dependencies`.
-- PackageInfo SO is the source for `repoName`, description, owner, status, and release notes.
+- PackageInfo SO is the source for `repoName`, repository visibility, description, owner, status, and release notes.
 - Before package publish, treat that package's `README.md` as user-facing documentation that will be uploaded to GitHub and keep it up to date.
-- `2. Create Repo` handles first registration and repo creation for PackageInfo SOs not yet in the catalog. The selected repository visibility controls the GitHub API `private` value, the org/token profile used for the first push, and the catalog `repo_url` org.
-- `3. Publish Package` prepares the local publish clone for already registered PackageInfo SOs, pushes package contents/tags, and appends catalog rows.
+- `2. Publish Changed` handles the normal changed-version publish path and also handles first registration for PackageInfo SOs not yet in the catalog. Each package's `Repository Visibility` controls the GitHub API `private` value and repo-creation org only when that package is not yet registered.
+- `Publish Package` prepares the local publish clone for already registered PackageInfo SOs when a manual version field is needed, pushes package contents/tags, and appends catalog rows.
 - Creation and publish flow guidance should stay based on this package's README and Manager Console UI.
 - For real publishing, use the configured ActionFit GitHub authentication and SSH/HTTPS settings in the local environment. AI may run real publish, push, tag, or catalog upsert only when the user explicitly asks.
 

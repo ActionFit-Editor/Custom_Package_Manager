@@ -18,7 +18,6 @@ public class ActionFitPackagePublishWindow : EditorWindow
     }
 
     private const string PackageCatalogPath = "Packages/com.actionfit.custompackagemanager/Editor/Catalog/package_catalog.csv";
-    private static readonly string[] RepositoryVisibilityLabels = { "Public", "Private" };
     private static string ProjectRootPath => Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
     private static string ProjectRootNormalized => ProjectRootPath.Replace("\\", "/").TrimEnd('/');
 
@@ -31,7 +30,6 @@ public class ActionFitPackagePublishWindow : EditorWindow
     private readonly HashSet<string> _expandedPackageIds = new();
     private readonly List<Entry> _entries = new();
     private Mode _mode;
-    private ActionFitPackageRepositoryVisibility _createRepoVisibility = ActionFitPackageRepositoryVisibility.Public;
     private Vector2 _scroll;
     private bool _delayedGuiActionQueued;
 
@@ -54,9 +52,9 @@ public class ActionFitPackagePublishWindow : EditorWindow
     {
         string title = mode switch
         {
-            Mode.Create => "2. Create Repo",
+            Mode.Create => "Initial Publish",
             Mode.Changed => "Publish Changed",
-            _ => "3. Publish Package"
+            _ => "Publish Package"
         };
         var window = GetWindow<ActionFitPackagePublishWindow>(title);
         window.minSize = new Vector2(720, 520);
@@ -97,17 +95,6 @@ public class ActionFitPackagePublishWindow : EditorWindow
         using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
         {
             if (GUILayout.Button("Reload", EditorStyles.toolbarButton, GUILayout.Width(70))) Reload();
-            if (_mode == Mode.Create)
-            {
-                GUILayout.Space(8);
-                EditorGUILayout.LabelField("Repo", EditorStyles.miniLabel, GUILayout.Width(34));
-                _createRepoVisibility = (ActionFitPackageRepositoryVisibility)GUILayout.Toolbar(
-                    (int)_createRepoVisibility,
-                    RepositoryVisibilityLabels,
-                    EditorStyles.toolbarButton,
-                    GUILayout.Width(150));
-            }
-
             if (_mode == Mode.Changed)
             {
                 EditorGUI.BeginDisabledGroup(_entries.Count == 0);
@@ -145,6 +132,7 @@ public class ActionFitPackagePublishWindow : EditorWindow
             serialized.Update();
             EditorGUILayout.PropertyField(serialized.FindProperty("_displayName"));
             EditorGUILayout.PropertyField(serialized.FindProperty("_repoName"));
+            EditorGUILayout.PropertyField(serialized.FindProperty("_repositoryVisibility"));
             EditorGUILayout.PropertyField(serialized.FindProperty("_description"));
             EditorGUILayout.PropertyField(serialized.FindProperty("_releaseNote"));
             EditorGUILayout.PropertyField(serialized.FindProperty("_dependenciesOverride"));
@@ -162,7 +150,9 @@ public class ActionFitPackagePublishWindow : EditorWindow
                 else
                 {
                     string label = _mode == Mode.Changed
-                        ? $"Publish Version: {entry.Version} (catalog latest: {entry.CatalogLatestVersion})"
+                        ? entry.IsRegistered
+                            ? $"Publish Version: {entry.Version} (catalog latest: {entry.CatalogLatestVersion})"
+                            : $"Publish Version: {entry.Version} (new package)"
                         : $"Initial Version: {entry.Version}";
                     EditorGUILayout.LabelField(label, EditorStyles.miniLabel);
                 }
@@ -176,9 +166,9 @@ public class ActionFitPackagePublishWindow : EditorWindow
 
                 string button = _mode switch
                 {
-                    Mode.Create => "2. Create Repo",
+                    Mode.Create => "Initial Publish",
                     Mode.Changed => "Publish Changed",
-                    _ => "3. Publish Package"
+                    _ => "Publish Package"
                 };
                 if (GUILayout.Button(button, GUILayout.Width(140)))
                     ScheduleGuiAction(() => Publish(entry));
@@ -209,13 +199,13 @@ public class ActionFitPackagePublishWindow : EditorWindow
         }
 
         string action = _mode == Mode.Create ? "Create repo" : "Publish package";
-        string visibilityLine = _mode == Mode.Create
-            ? $"\nRepository visibility: {GetRepositoryVisibilityLabel(_createRepoVisibility)}"
+        string visibilityLine = _mode == Mode.Create || (_mode == Mode.Changed && !entry.IsRegistered)
+            ? $"\nNew repository visibility: {GetRepositoryVisibilityLabel(entry.Info.RepositoryVisibility)}"
             : "";
         if (!EditorUtility.DisplayDialog(
                 "ActionFit Package Manager",
                 $"{action}: {entry.PackageId}@{version}?{visibilityLine}\n\nThis will create/check the GitHub repository, prepare the local publish clone, push package contents, push the version tag, and append the catalog spreadsheet.",
-                _mode == Mode.Create ? "2. Create Repo" : "Publish",
+                _mode == Mode.Create ? "Initial Publish" : "Publish",
                 "Cancel"))
             return;
 
@@ -229,9 +219,10 @@ public class ActionFitPackagePublishWindow : EditorWindow
         if (targets.Length == 0) return;
 
         string list = string.Join("\n", targets.Select(e => $"- {e.PackageId}: {e.CatalogLatestVersion} -> {e.Version}"));
+        string visibilityLine = BuildNewRepositoryVisibilitySummary(targets);
         if (!EditorUtility.DisplayDialog(
                 "ActionFit Package Manager",
-                $"Publish all changed packages?\n\n{list}\n\nThis will prepare local publish clones, push package contents, push missing version tags, and append catalog rows.",
+                $"Publish all changed packages?\n\n{list}{visibilityLine}\n\nThis will prepare local publish clones, push package contents, push missing version tags, and append catalog rows.",
                 "Publish All Changed",
                 "Cancel"))
             return;
@@ -273,8 +264,8 @@ public class ActionFitPackagePublishWindow : EditorWindow
         var settings = ActionFitPackageCatalogSettingsProvider.FindOrCreate();
         bool ok;
         string message;
-        if (_mode == Mode.Create)
-            ok = ActionFitPackagePublisher.Publish(settings, entry.Info, _createRepoVisibility, out message);
+        if (_mode == Mode.Create || (_mode == Mode.Changed && !entry.IsRegistered))
+            ok = ActionFitPackagePublisher.Publish(settings, entry.Info, entry.Info.RepositoryVisibility, out message);
         else
             ok = ActionFitPackagePublisher.Publish(settings, entry.Info, out message);
         if (ok)
@@ -300,6 +291,15 @@ public class ActionFitPackagePublishWindow : EditorWindow
 
     private static string GetRepositoryVisibilityLabel(ActionFitPackageRepositoryVisibility visibility)
         => visibility == ActionFitPackageRepositoryVisibility.Private ? "Private" : "Public";
+
+    private static string BuildNewRepositoryVisibilitySummary(IEnumerable<Entry> entries)
+    {
+        var lines = entries
+            .Where(e => !e.IsRegistered)
+            .Select(e => $"- {e.PackageId}: {GetRepositoryVisibilityLabel(e.Info.RepositoryVisibility)}")
+            .ToList();
+        return lines.Count == 0 ? "" : $"\n\nNew repository visibility:\n{string.Join("\n", lines)}";
+    }
 
     private string GetVersion(Entry entry)
     {
@@ -355,6 +355,7 @@ public class ActionFitPackagePublishWindow : EditorWindow
                 DisplayName = string.IsNullOrWhiteSpace(manifest.DisplayName) ? info.DisplayName : manifest.DisplayName,
                 Version = manifest.Version,
                 CatalogLatestVersion = isRegistered ? catalogLatestVersion : "not registered",
+                IsRegistered = isRegistered,
             });
         }
 
@@ -513,6 +514,7 @@ public class ActionFitPackagePublishWindow : EditorWindow
         public string DisplayName;
         public string Version;
         public string CatalogLatestVersion;
+        public bool IsRegistered;
     }
 }
 #endif

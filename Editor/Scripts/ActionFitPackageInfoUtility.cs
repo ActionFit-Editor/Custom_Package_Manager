@@ -11,6 +11,7 @@ public sealed class ActionFitPackageCreateRequest
     public string PackageId;
     public string DisplayName;
     public string RepoName;
+    public ActionFitPackageRepositoryVisibility RepositoryVisibility;
     public string Version;
     public string UnityVersion;
     public string Description;
@@ -130,6 +131,7 @@ public static class ActionFitPackageInfoUtility
         SetString(serialized, "_packageId", request.PackageId);
         SetString(serialized, "_displayName", request.DisplayName);
         SetString(serialized, "_repoName", request.RepoName);
+        SetRepositoryVisibility(serialized, request.RepositoryVisibility);
         SetString(serialized, "_owner", request.Owner);
         SetString(serialized, "_status", request.Status);
         SetString(serialized, "_description", request.Description);
@@ -232,6 +234,12 @@ public static class ActionFitPackageInfoUtility
     {
         var prop = serialized.FindProperty(propertyName);
         if (prop != null) prop.stringValue = value ?? "";
+    }
+
+    private static void SetRepositoryVisibility(SerializedObject serialized, ActionFitPackageRepositoryVisibility visibility)
+    {
+        var prop = serialized.FindProperty("_repositoryVisibility");
+        if (prop != null) prop.enumValueIndex = (int)visibility;
     }
 
     private static void ValidateCreateRequest(ActionFitPackageCreateRequest request)
@@ -386,6 +394,7 @@ public static class ActionFitPackageInfoUtility
                $"  _packageId: {EscapeYaml(request?.PackageId)}\n" +
                $"  _displayName: {EscapeYaml(request?.DisplayName)}\n" +
                $"  _repoName: {EscapeYaml(request?.RepoName)}\n" +
+               $"  _repositoryVisibility: {(int)(request?.RepositoryVisibility ?? ActionFitPackageRepositoryVisibility.Public)}\n" +
                $"  _owner: {EscapeYaml(request?.Owner)}\n" +
                $"  _status: {EscapeYaml(request?.Status ?? "verified")}\n" +
                $"  _description: {EscapeYaml(request?.Description)}\n" +
