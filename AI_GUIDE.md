@@ -7,7 +7,7 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.custompackagemanager`
 - Display name: Custom Package Manager
 - Repository: `https://github.com/ActionFit-Editor/Custom_Package_Manager.git`
-- Current package version at generation time: `1.1.49`
+- Current package version at generation time: `1.1.50`
 - Unity version: `6000.2`
 
 ## Purpose
@@ -71,7 +71,7 @@ Read this file when:
 - Package Manager reads the local catalog when present, otherwise the embedded package catalog.
 - It manages internal UPM package install/update/remove, repository creation, changelog/history display, AI guide routing, and manual publish flows.
 - Manager Console exposes `1. Create Package`, `2. Publish Changed`, and `Publish Package`. `Publish Changed` is the normal publish path for changed versions and newly created packages.
-- Each package's `ActionFitPackageInfo_SO` stores `Repository Visibility`. Newly registered packages use that package-local value for GitHub repository creation, so `Publish All Changed` can safely publish mixed public/private packages in one run.
+- Each package's `ActionFitPackageInfo_SO` stores `Repository Visibility`. Publish flows use that package-local value to choose the public/private GitHub profile for both new and already registered packages, so `Publish All Changed` can safely publish mixed public/private packages in one run.
 - Package section classification should treat Git/registry dependencies in `Packages/manifest.json` as Downloaded Packages. Only local `file:` dependencies or package folders under `Packages/` without a manifest dependency should be treated as Embedded Packages.
 - The `Updates` panel must include only installed packages whose catalog latest version is higher than the installed version. Do not treat any version difference as an update, because that can downgrade packages such as `1.0.30 -> 1.0.29`.
 - `Latest Git` buttons in package details and the `Updates` panel should open the catalog latest version's GitHub tag URL in the browser without modifying `Packages/manifest.json`.
@@ -154,7 +154,7 @@ When updating a package version, write PackageInfo release notes using these sta
 - `package.json` is the source for `name`, `version`, `unity`, and `dependencies`.
 - PackageInfo SO is the source for `repoName`, repository visibility, description, owner, status, and release notes.
 - Before package publish, treat that package's `README.md` as user-facing documentation that will be uploaded to GitHub and keep it up to date.
-- `2. Publish Changed` handles the normal changed-version publish path and also handles first registration for PackageInfo SOs not yet in the catalog. Each package's `Repository Visibility` controls the GitHub API `private` value and repo-creation org only when that package is not yet registered.
+- `2. Publish Changed` handles the normal changed-version publish path and also handles first registration for PackageInfo SOs not yet in the catalog. Each package's `Repository Visibility` controls the selected public/private GitHub profile for both existing and newly registered package publishes.
 - `Publish Package` prepares the local publish clone for already registered PackageInfo SOs when a manual version field is needed, pushes package contents/tags, and appends catalog rows.
 - Creation and publish flow guidance should stay based on this package's README and Manager Console UI.
 - For real publishing, use the configured ActionFit GitHub authentication and SSH/HTTPS settings in the local environment. AI may run real publish, push, tag, or catalog upsert only when the user explicitly asks.

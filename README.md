@@ -7,7 +7,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.49"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.50"
   }
 }
 ```
@@ -85,7 +85,7 @@ If an AI assistant reads this package documentation before the automatic router 
 ## Manager Console
 
 - `1. Create Package`: creates the `Packages/com.actionfit.*` package skeleton, README, AI guide, asmdef, and PackageInfo SO.
-- `2. Publish Changed`: normal publish path. It finds packages whose local `package.json` version is higher than the catalog latest version, includes newly created packages that are not yet registered, prepares local publish clones, creates missing repositories, pushes package contents/tags, and appends catalog rows. Each package's `Repository Visibility` in `ActionFitPackageInfo_SO` is used when a missing repository must be created.
+- `2. Publish Changed`: normal publish path. It finds packages whose local `package.json` version is higher than the catalog latest version, includes newly created packages that are not yet registered, prepares local publish clones, creates missing repositories, pushes package contents/tags, and appends catalog rows. Each package's `Repository Visibility` in `ActionFitPackageInfo_SO` selects the public/private GitHub profile for both new and already registered package publishes.
 - `Publish Package`: manual publish path for an already registered package version when you need to type a specific version before publishing.
 - `README`: opens this README in a dedicated window.
 - `Open Catalog`: selects the local or fallback catalog CSV.

@@ -296,11 +296,7 @@ public class ActionFitPackagePublishWindow : EditorWindow
         AssetDatabase.ImportAsset(entry.PackageJsonPath, ImportAssetOptions.ForceUpdate);
         bool ok;
         string message;
-        bool isRegisteredNow = catalog.IsRegistered(entry.PackageId);
-        if (_mode == Mode.Create || (_mode == Mode.Changed && !isRegisteredNow))
-            ok = ActionFitPackagePublisher.Publish(settings, entry.Info, entry.Info.RepositoryVisibility, out message);
-        else
-            ok = ActionFitPackagePublisher.Publish(settings, entry.Info, out message);
+        ok = ActionFitPackagePublisher.Publish(settings, entry.Info, entry.Info.RepositoryVisibility, out message);
         if (ok)
         {
             Debug.Log($"[ActionFitPackageManager] {message}");
