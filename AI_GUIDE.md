@@ -7,7 +7,7 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.custompackagemanager`
 - Display name: Custom Package Manager
 - Repository: `https://github.com/ActionFit-Editor/Custom_Package_Manager.git`
-- Current package version at generation time: `1.1.50`
+- Current package version at generation time: `1.1.51`
 - Unity version: `6000.2`
 
 ## Purpose
@@ -81,6 +81,7 @@ Read this file when:
 - Embedded packages may be returned to the downloaded flow through `Use Downloaded`, which writes the selected catalog Git UPM dependency, removes the local package folder, and runs Package Manager resolve.
 - Catalog `dependencies` are applied through the same manifest-writing path for install/apply, selected updates, and `Use Downloaded`. `com.actionfit.*` dependencies must resolve to catalog rows so the manager writes Git UPM URLs; registry dependencies outside ActionFit may fall back to their raw version string.
 - Expanded package rows should show dependency details for the selected version, including resolved catalog Git URLs for ActionFit dependencies and raw registry version values for non-ActionFit dependencies.
+- `ActionFitPackageCatalogUpdater` must parse CSV by records, not by raw lines, because release notes can contain quoted newlines. Otherwise `dependencies` and later columns shift and package details incorrectly show `None`.
 - `Embed for Edit` does not publish by itself. After editing, the package `package.json` version must be bumped above the catalog latest version before `Publish Changed` will pick it up.
 - Publish flows must refresh the catalog immediately before uploading and block when the refreshed catalog already contains the same `package_id@version`. The default policy is never to overwrite an existing Git tag or catalog version row. Tell users to bump `package.json`/`Publish Version`, or use `Fork as New` when they need a separate package/repository.
 - Package sections should sort by community score (`likes - dislikes`) descending, then likes, comments, and display name. Keep `Package Manager` separate from normal catalog sections.

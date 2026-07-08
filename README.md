@@ -7,7 +7,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.50"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.51"
   }
 }
 ```
@@ -102,6 +102,7 @@ If an AI assistant reads this package documentation before the automatic router 
 - Installing or applying a version updates `Packages/manifest.json` and runs Unity Package Manager resolve.
 - Catalog `dependencies` entries are applied before the selected package. ActionFit package dependencies must exist in the catalog so they can be written as Git UPM URLs; non-ActionFit registry dependencies fall back to their raw version string.
 - Expanded package rows show the selected version's dependencies. ActionFit dependencies show the resolved catalog Git URL when available; registry/raw dependencies show the raw version value.
+- `Update Catalog` preserves quoted multi-line CSV cells such as release notes, so later columns like `dependencies` stay aligned and show correctly in package details.
 - Manifest dependency formatting is normalized when written.
 
 ## Publish Notes

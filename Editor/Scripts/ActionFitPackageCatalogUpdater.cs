@@ -218,17 +218,17 @@ public static class ActionFitPackageCatalogUpdater
 
     private static System.Collections.Generic.List<System.Collections.Generic.Dictionary<string, string>> ReadCsv(string csv)
     {
-        string[] lines = StripBom(csv ?? "").Replace("\r\n", "\n").Replace("\r", "\n").Split('\n');
+        var records = ReadCsvRecords(StripBom(csv ?? ""));
         var result = new System.Collections.Generic.List<System.Collections.Generic.Dictionary<string, string>>();
-        if (lines.Length == 0 || string.IsNullOrWhiteSpace(lines[0])) return result;
+        if (records.Count == 0 || string.IsNullOrWhiteSpace(records[0])) return result;
 
-        string[] headers = SplitCsvLine(lines[0]).Select(h => h.Trim()).ToArray();
-        for (int i = 1; i < lines.Length; i++)
+        string[] headers = SplitCsvLine(records[0]).Select(h => h.Trim()).ToArray();
+        for (int i = 1; i < records.Count; i++)
         {
-            if (string.IsNullOrWhiteSpace(lines[i])) continue;
-            if (lines[i].Contains("(string)", StringComparison.OrdinalIgnoreCase)) continue;
+            if (string.IsNullOrWhiteSpace(records[i])) continue;
+            if (records[i].Contains("(string)", StringComparison.OrdinalIgnoreCase)) continue;
 
-            string[] values = SplitCsvLine(lines[i]);
+            string[] values = SplitCsvLine(records[i]);
             var row = new System.Collections.Generic.Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             for (int j = 0; j < headers.Length && j < values.Length; j++)
                 row[headers[j]] = values[j].Trim();
@@ -236,6 +236,45 @@ public static class ActionFitPackageCatalogUpdater
         }
 
         return result;
+    }
+
+    private static System.Collections.Generic.List<string> ReadCsvRecords(string text)
+    {
+        text = (text ?? "").Replace("\r\n", "\n").Replace('\r', '\n');
+        var records = new System.Collections.Generic.List<string>();
+        var sb = new StringBuilder();
+        bool inQuotes = false;
+
+        for (int i = 0; i < text.Length; i++)
+        {
+            char c = text[i];
+            if (c == '"')
+            {
+                if (inQuotes && i + 1 < text.Length && text[i + 1] == '"')
+                {
+                    sb.Append(c);
+                    sb.Append(text[i + 1]);
+                    i++;
+                    continue;
+                }
+
+                inQuotes = !inQuotes;
+            }
+
+            if (c == '\n' && !inQuotes)
+            {
+                records.Add(sb.ToString());
+                sb.Clear();
+                continue;
+            }
+
+            sb.Append(c);
+        }
+
+        if (sb.Length > 0)
+            records.Add(sb.ToString());
+
+        return records;
     }
 
     private static string[] SplitCsvLine(string line)
