@@ -7,7 +7,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.46"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.48"
   }
 }
 ```
@@ -106,7 +106,7 @@ If an AI assistant reads this package documentation before the automatic router 
 
 ## Publish Notes
 
-`Publish Package` and `Publish Changed` create or refresh the local publish clone, commit copied package files, push `main`, push the version tag when needed, and append the catalog row. The Unity Console prints `[ActionFitPackageManager]` logs for repository check, clone path, file copy, commit/tag, branch push, tag push, and catalog append steps.
+`Publish Package` and `Publish Changed` refresh the catalog before uploading, block publishing when the refreshed catalog already contains the same `package_id@version`, create or refresh the local publish clone, commit copied package files, push `main`, push the version tag when needed, and append the catalog row. When a duplicate version is found, the default policy is to stop instead of overwriting the existing Git tag/catalog row; change `package.json` or `Publish Version`, or use `Fork as New` when the package should become a separate package/repository. The Unity Console prints `[ActionFitPackageManager]` logs for repository check, clone path, file copy, commit/tag, branch push, tag push, and catalog append steps.
 
 `Settings` stores one GitHub token in `GitHub Publish Default` and separate repository creation organizations for public and private repositories. Fill `_githubToken` once, then set `Repo Creation - Public` and `Repo Creation - Private` org values when the repository owners differ. Private catalog entries can point at private GitHub repositories, so consuming projects still need GitHub access to install them.
 

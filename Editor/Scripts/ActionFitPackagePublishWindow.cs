@@ -198,18 +198,33 @@ public class ActionFitPackagePublishWindow : EditorWindow
             return;
         }
 
+        if (!TryRefreshCatalogBeforePublish(out var settings, out var catalog, out string preflightError))
+        {
+            EditorUtility.DisplayDialog("ActionFit Package Manager", preflightError, "OK");
+            ScheduleReload();
+            return;
+        }
+
+        if (!ValidateVersionAgainstCatalog(entry, version, catalog, out string versionError))
+        {
+            EditorUtility.DisplayDialog("ActionFit Package Manager", versionError, "OK");
+            ScheduleReload();
+            return;
+        }
+
         string action = _mode == Mode.Create ? "Create repo" : "Publish package";
-        string visibilityLine = _mode == Mode.Create || (_mode == Mode.Changed && !entry.IsRegistered)
+        bool isRegisteredNow = catalog.IsRegistered(entry.PackageId);
+        string visibilityLine = _mode == Mode.Create || (_mode == Mode.Changed && !isRegisteredNow)
             ? $"\nNew repository visibility: {GetRepositoryVisibilityLabel(entry.Info.RepositoryVisibility)}"
             : "";
         if (!EditorUtility.DisplayDialog(
                 "ActionFit Package Manager",
-                $"{action}: {entry.PackageId}@{version}?{visibilityLine}\n\nThis will create/check the GitHub repository, prepare the local publish clone, push package contents, push the version tag, and append the catalog spreadsheet.",
+                $"{action}: {entry.PackageId}@{version}?{visibilityLine}\n\nThe catalog was refreshed before this check. This will create/check the GitHub repository, prepare the local publish clone, push package contents, push the version tag, and append the catalog spreadsheet.",
                 _mode == Mode.Create ? "Initial Publish" : "Publish",
                 "Cancel"))
             return;
 
-        if (!PublishInternal(entry, version, true, out string error))
+        if (!PublishInternal(entry, version, true, settings, catalog, out string error))
             EditorUtility.DisplayDialog("ActionFit Package Manager", error, "OK");
     }
 
@@ -218,11 +233,30 @@ public class ActionFitPackagePublishWindow : EditorWindow
         var targets = _entries.ToArray();
         if (targets.Length == 0) return;
 
-        string list = string.Join("\n", targets.Select(e => $"- {e.PackageId}: {e.CatalogLatestVersion} -> {e.Version}"));
-        string visibilityLine = BuildNewRepositoryVisibilitySummary(targets);
+        if (!TryRefreshCatalogBeforePublish(out var settings, out var catalog, out string preflightError))
+        {
+            EditorUtility.DisplayDialog("ActionFit Package Manager", preflightError, "OK");
+            ScheduleReload();
+            return;
+        }
+
+        foreach (var entry in targets)
+        {
+            if (!ValidateVersionAgainstCatalog(entry, entry.Version, catalog, out string versionError))
+            {
+                string message = $"Bulk publish stopped before uploading any package.\n\n{versionError}";
+                Debug.LogWarning($"[ActionFitPackageManager] {message}");
+                EditorUtility.DisplayDialog("ActionFit Package Manager", message, "OK");
+                ScheduleReload();
+                return;
+            }
+        }
+
+        string list = string.Join("\n", targets.Select(e => $"- {e.PackageId}: {GetCatalogVersionLabel(e, catalog)} -> {e.Version}"));
+        string visibilityLine = BuildNewRepositoryVisibilitySummary(targets, catalog);
         if (!EditorUtility.DisplayDialog(
                 "ActionFit Package Manager",
-                $"Publish all changed packages?\n\n{list}{visibilityLine}\n\nThis will prepare local publish clones, push package contents, push missing version tags, and append catalog rows.",
+                $"Publish all changed packages?\n\n{list}{visibilityLine}\n\nThe catalog was refreshed before this check. This will prepare local publish clones, push package contents, push missing version tags, and append catalog rows.",
                 "Publish All Changed",
                 "Cancel"))
             return;
@@ -230,7 +264,7 @@ public class ActionFitPackagePublishWindow : EditorWindow
         var succeeded = new List<string>();
         foreach (var entry in targets)
         {
-            if (!PublishInternal(entry, entry.Version, false, out string error))
+            if (!PublishInternal(entry, entry.Version, false, settings, catalog, out string error))
             {
                 string message = $"Bulk publish stopped.\n\nSucceeded:\n{string.Join("\n", succeeded)}\n\nFailed:\n{entry.PackageId}@{entry.Version}\n{error}";
                 Debug.LogError($"[ActionFitPackageManager] {message}");
@@ -242,7 +276,6 @@ public class ActionFitPackagePublishWindow : EditorWindow
             succeeded.Add($"{entry.PackageId}@{entry.Version}");
         }
 
-        var settings = ActionFitPackageCatalogSettingsProvider.FindOrCreate();
         if (ActionFitPackageCatalogUpdater.UpdateCatalog(settings, out string updateMessage))
             Debug.Log($"[ActionFitPackageManager] {updateMessage}");
         else
@@ -252,7 +285,7 @@ public class ActionFitPackagePublishWindow : EditorWindow
         ScheduleReload();
     }
 
-    private bool PublishInternal(Entry entry, string version, bool refreshCatalog, out string error)
+    private bool PublishInternal(Entry entry, string version, bool refreshCatalog, ActionFitPackageCatalogSettings_SO settings, CatalogSnapshot catalog, out string error)
     {
         error = "";
         if (_mode == Mode.Update && !SetPackageJsonVersion(entry.PackageJsonPath, version, out error))
@@ -261,10 +294,10 @@ public class ActionFitPackagePublishWindow : EditorWindow
         }
 
         AssetDatabase.ImportAsset(entry.PackageJsonPath, ImportAssetOptions.ForceUpdate);
-        var settings = ActionFitPackageCatalogSettingsProvider.FindOrCreate();
         bool ok;
         string message;
-        if (_mode == Mode.Create || (_mode == Mode.Changed && !entry.IsRegistered))
+        bool isRegisteredNow = catalog.IsRegistered(entry.PackageId);
+        if (_mode == Mode.Create || (_mode == Mode.Changed && !isRegisteredNow))
             ok = ActionFitPackagePublisher.Publish(settings, entry.Info, entry.Info.RepositoryVisibility, out message);
         else
             ok = ActionFitPackagePublisher.Publish(settings, entry.Info, out message);
@@ -289,16 +322,93 @@ public class ActionFitPackagePublishWindow : EditorWindow
         return false;
     }
 
+    private static bool TryRefreshCatalogBeforePublish(out ActionFitPackageCatalogSettings_SO settings, out CatalogSnapshot catalog, out string error)
+    {
+        settings = ActionFitPackageCatalogSettingsProvider.FindOrCreate();
+        catalog = CatalogSnapshot.Empty;
+        error = "";
+
+        if (!ActionFitPackageCatalogUpdater.UpdateCatalog(settings, out string message))
+        {
+            error =
+                "Catalog refresh failed before publish.\n\n" +
+                "Publishing was stopped so the version check does not use stale catalog data.\n\n" +
+                message;
+            Debug.LogWarning($"[ActionFitPackageManager] {error}");
+            return false;
+        }
+
+        Debug.Log($"[ActionFitPackageManager] Catalog refreshed before publish: {message}");
+        catalog = ReadCatalogSnapshot();
+        return true;
+    }
+
+    private bool ValidateVersionAgainstCatalog(Entry entry, string version, CatalogSnapshot catalog, out string error)
+    {
+        error = "";
+
+        bool isRegisteredNow = catalog.IsRegistered(entry.PackageId);
+        if (_mode == Mode.Create && isRegisteredNow)
+        {
+            error =
+                $"Package is already registered in the refreshed catalog: {entry.PackageId}\n\n" +
+                "Reload the publish window and use Publish Changed or Publish Package for this package.";
+            return false;
+        }
+
+        if (_mode == Mode.Update && !isRegisteredNow)
+        {
+            error =
+                $"Package is not registered in the refreshed catalog: {entry.PackageId}\n\n" +
+                "Reload the publish window and use Initial Publish if this is a new package.";
+            return false;
+        }
+
+        bool versionAlreadyPublished = catalog.ContainsVersion(entry.PackageId, version);
+        string latest = catalog.GetLatestVersion(entry.PackageId);
+        if (!versionAlreadyPublished && _mode == Mode.Changed && isRegisteredNow && CompareVersions(version, latest) <= 0)
+        {
+            error =
+                $"Publish Changed target is no longer newer than the refreshed catalog latest version: {entry.PackageId}\n\n" +
+                $"Publish version: {version}\n" +
+                $"Catalog latest: {latest}\n\n" +
+                "Reload the publish window and bump package.json to a newer version before publishing.";
+            return false;
+        }
+
+        if (!versionAlreadyPublished)
+            return true;
+
+        error =
+            $"이미 업로드되어 있는 버전입니다: {entry.PackageId}@{version}\n\n" +
+            "기본 정책상 기존 Git tag와 catalog version row를 덮어쓰지 않습니다.\n\n" +
+            "진행 방법:\n" +
+            "- package.json version 또는 Publish Version을 새 값으로 변경한 뒤 다시 publish합니다.\n" +
+            "- 기존 패키지와 분리해야 한다면 Package Manager에서 Fork as New로 새 package/repo를 만든 뒤 publish합니다.";
+        if (!string.IsNullOrWhiteSpace(latest))
+            error += $"\n\nCatalog latest: {latest}";
+
+        Debug.LogWarning($"[ActionFitPackageManager] Publish blocked because catalog already contains {entry.PackageId}@{version}");
+        return false;
+    }
+
     private static string GetRepositoryVisibilityLabel(ActionFitPackageRepositoryVisibility visibility)
         => visibility == ActionFitPackageRepositoryVisibility.Private ? "Private" : "Public";
 
-    private static string BuildNewRepositoryVisibilitySummary(IEnumerable<Entry> entries)
+    private static string BuildNewRepositoryVisibilitySummary(IEnumerable<Entry> entries, CatalogSnapshot catalog)
     {
         var lines = entries
-            .Where(e => !e.IsRegistered)
+            .Where(e => !catalog.IsRegistered(e.PackageId))
             .Select(e => $"- {e.PackageId}: {GetRepositoryVisibilityLabel(e.Info.RepositoryVisibility)}")
             .ToList();
         return lines.Count == 0 ? "" : $"\n\nNew repository visibility:\n{string.Join("\n", lines)}";
+    }
+
+    private static string GetCatalogVersionLabel(Entry entry, CatalogSnapshot catalog)
+    {
+        string latest = catalog.GetLatestVersion(entry.PackageId);
+        if (!string.IsNullOrWhiteSpace(latest)) return latest;
+        return entry.IsRegistered ? entry.CatalogLatestVersion : "not registered";
     }
 
     private string GetVersion(Entry entry)
@@ -323,7 +433,8 @@ public class ActionFitPackagePublishWindow : EditorWindow
     private void Reload()
     {
         _entries.Clear();
-        var registered = ReadRegisteredPackageVersions();
+        var catalog = ReadCatalogSnapshot();
+        var registered = catalog.LatestVersions;
         foreach (string packageJsonPath in Directory.GetFiles(ProjectRelativeFullPath("Packages"), "package.json", SearchOption.AllDirectories))
         {
             string packageRoot = ToProjectRelativePath(Path.GetDirectoryName(packageJsonPath));
@@ -370,40 +481,52 @@ public class ActionFitPackagePublishWindow : EditorWindow
             : normalized;
     }
 
-    private static Dictionary<string, string> ReadRegisteredPackageVersions()
+    private static CatalogSnapshot ReadCatalogSnapshot()
     {
-        var versions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var latestVersions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var versionsByPackageId = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
         string local = ActionFitPackageCatalogSettingsProvider.LocalCatalogPath;
         string catalogPath = File.Exists(ProjectRelativeFullPath(local)) ? local : PackageCatalogPath;
         string path = ProjectRelativeFullPath(catalogPath);
-        if (!File.Exists(path)) return versions;
+        if (!File.Exists(path)) return new CatalogSnapshot(latestVersions, versionsByPackageId);
 
-        string[] lines = File.ReadAllLines(path);
-        if (lines.Length < 2) return versions;
+        var rows = ReadCsvRows(path).ToList();
+        if (rows.Count < 2) return new CatalogSnapshot(latestVersions, versionsByPackageId);
 
-        var header = SplitCsvLine(lines[0]).Select(h => h.Trim()).ToArray();
+        var header = rows[0].Select(h => h.Trim()).ToArray();
         int packageIdIndex = Array.FindIndex(header, h => string.Equals(h, "package_id", StringComparison.OrdinalIgnoreCase));
         int versionIndex = Array.FindIndex(header, h => string.Equals(h, "version", StringComparison.OrdinalIgnoreCase));
         int isLatestIndex = Array.FindIndex(header, h => string.Equals(h, "is_latest", StringComparison.OrdinalIgnoreCase));
-        if (packageIdIndex < 0) return versions;
+        if (packageIdIndex < 0) return new CatalogSnapshot(latestVersions, versionsByPackageId);
 
-        for (int i = 1; i < lines.Length; i++)
+        for (int i = 1; i < rows.Count; i++)
         {
-            if (string.IsNullOrWhiteSpace(lines[i])) continue;
-            if (lines[i].Contains("(string)", StringComparison.OrdinalIgnoreCase)) continue;
-            string[] cols = SplitCsvLine(lines[i]);
+            string[] cols = rows[i];
+            if (cols.Length == 0 || cols.All(string.IsNullOrWhiteSpace)) continue;
+            if (cols.Any(c => c.Contains("(string)", StringComparison.OrdinalIgnoreCase))) continue;
             if (packageIdIndex >= cols.Length || string.IsNullOrWhiteSpace(cols[packageIdIndex])) continue;
 
             string packageId = cols[packageIdIndex].Trim();
             string version = versionIndex >= 0 && versionIndex < cols.Length ? cols[versionIndex].Trim() : "";
             bool isLatest = isLatestIndex >= 0 && isLatestIndex < cols.Length && IsTrue(cols[isLatestIndex].Trim());
-            if (!versions.TryGetValue(packageId, out string current) ||
+            if (!string.IsNullOrWhiteSpace(version))
+            {
+                if (!versionsByPackageId.TryGetValue(packageId, out var packageVersions))
+                {
+                    packageVersions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                    versionsByPackageId[packageId] = packageVersions;
+                }
+
+                packageVersions.Add(version);
+            }
+
+            if (!latestVersions.TryGetValue(packageId, out string current) ||
                 isLatest ||
                 CompareVersions(version, current) > 0)
-                versions[packageId] = version;
+                latestVersions[packageId] = version;
         }
 
-        return versions;
+        return new CatalogSnapshot(latestVersions, versionsByPackageId);
     }
 
     private static int CompareVersions(string left, string right)
@@ -502,6 +625,72 @@ public class ActionFitPackagePublishWindow : EditorWindow
 
         result.Add(sb.ToString());
         return result.ToArray();
+    }
+
+    private static IEnumerable<string[]> ReadCsvRows(string path)
+    {
+        var record = new StringBuilder();
+        foreach (string line in File.ReadLines(path))
+        {
+            if (record.Length > 0) record.Append('\n');
+            record.Append(line);
+
+            if (HasOpenCsvQuote(record.ToString()))
+                continue;
+
+            yield return SplitCsvLine(record.ToString());
+            record.Clear();
+        }
+
+        if (record.Length > 0)
+            yield return SplitCsvLine(record.ToString());
+    }
+
+    private static bool HasOpenCsvQuote(string value)
+    {
+        bool inQuotes = false;
+        for (int i = 0; i < value.Length; i++)
+        {
+            if (value[i] != '"') continue;
+            if (inQuotes && i + 1 < value.Length && value[i + 1] == '"')
+            {
+                i++;
+                continue;
+            }
+
+            inQuotes = !inQuotes;
+        }
+
+        return inQuotes;
+    }
+
+    private sealed class CatalogSnapshot
+    {
+        public static readonly CatalogSnapshot Empty = new(new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase), new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase));
+
+        public CatalogSnapshot(Dictionary<string, string> latestVersions, Dictionary<string, HashSet<string>> versionsByPackageId)
+        {
+            LatestVersions = latestVersions;
+            VersionsByPackageId = versionsByPackageId;
+        }
+
+        public Dictionary<string, string> LatestVersions { get; }
+        private Dictionary<string, HashSet<string>> VersionsByPackageId { get; }
+
+        public bool IsRegistered(string packageId)
+        {
+            return LatestVersions.ContainsKey(packageId) || VersionsByPackageId.ContainsKey(packageId);
+        }
+
+        public bool ContainsVersion(string packageId, string version)
+        {
+            return VersionsByPackageId.TryGetValue(packageId, out var versions) && versions.Contains(version);
+        }
+
+        public string GetLatestVersion(string packageId)
+        {
+            return LatestVersions.TryGetValue(packageId, out string version) ? version : "";
+        }
     }
 
     private sealed class Entry

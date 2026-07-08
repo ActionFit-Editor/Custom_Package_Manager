@@ -27,7 +27,6 @@ Do not silently create `Docs/AI/PROJECT.md` or any other AI entry point in a pro
 
 - `Packages/com.actionfit.actionfitpackagemanager/AI_GUIDE.md` - ActionFitPackageManager provides an ActionFit Unity editor workflow. Read when changing `ActionFitPackageManager` package behavior, settings, metadata, or release flow.
 - `Packages/com.actionfit.ai-jira/AI_GUIDE.md` - AI Jira defines ActionFit Jira automation rules. Read when creating Jira issues, discovering Jira tasks, changing Jira lifecycle/status behavior, editing Jira REST scripts, or handling Jira local config.
-- `Packages/com.actionfit.ai_guide_jira/AI_GUIDE.md` - AI Guide Jira provides an ActionFit Unity editor workflow. Read when changing `AI Guide Jira` package behavior, settings, metadata, or release flow.
 - `Packages/com.actionfit.atlassuspender/AI_GUIDE.md` - Atlas Suspender manages SpriteAtlas suspend/restore workflows. Read when changing atlas packable-reference handling, sprite atlas move safety, or related editor tooling.
 - `Packages/com.actionfit.buildautomation/AI_GUIDE.md` - Build Automation manages BuildCommit requests, Git tag CI triggers, GitHub Actions mobile build workflows, and macOS self-hosted runner guidance. Read when changing automatic build request behavior, `.build/build_request.json`, workflow templates, or CI batchmode entry points.
 - `Packages/com.actionfit.buildsetting/AI_GUIDE.md` - Build Setting manages ActionFit build/player settings. Read when changing Android/iOS build setup, versioning, signing, Addressables prebuild, or build menu behavior.
