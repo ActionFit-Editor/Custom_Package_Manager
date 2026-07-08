@@ -7,7 +7,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.45"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.46"
   }
 }
 ```
@@ -29,7 +29,9 @@ Package sections are grouped as Package Manager, Embedded Packages, Downloaded P
 
 Package sections are sorted by package community score, `likes - dislikes`, highest first. When the catalog spreadsheet Web App exposes `package_vote_summary`, `Update Catalog` imports `likes`, `dislikes`, `vote_score`, and `comment_count` into the local catalog CSV.
 
-Downloaded packages include `Embed for Edit`. This copies the resolved package source from Unity's package cache into a temporary folder, validates the copied `package.json`, moves it into `Packages/<packageId>/`, writes `file:<packageId>` to `Packages/manifest.json`, and runs Package Manager resolve so the package becomes editable as a local embedded package. If the copy or validation fails, the manifest is left unchanged so Unity does not resolve a `file:` dependency whose local `package.json` is missing. If the local package folder already exists and its `package.json` name matches, the tool can use that existing folder instead of copying over it. Embedded packages include `Use Downloaded`, which writes the selected catalog Git UPM version back to `Packages/manifest.json`, removes the local folder, and returns the package to the downloaded flow.
+Downloaded packages include `Embed for Edit` and `Fork as New`. `Embed for Edit` copies the resolved package source from Unity's package cache into a temporary folder, validates the copied `package.json`, moves it into `Packages/<packageId>/`, writes `file:<packageId>` to `Packages/manifest.json`, and preserves catalog repository metadata so edits can be published back to the existing package repository. If the local package folder already exists and its `package.json` name matches, the tool can use that existing folder instead of copying over it.
+
+`Fork as New` copies the downloaded package into a new `Packages/<newPackageId>/` folder, rewrites package metadata for the new `com.actionfit.*` package ID, creates PackageInfo metadata for a new repository, removes the original manifest dependency, and writes the new local `file:` dependency. This prevents the source package and the fork from compiling duplicate assemblies at the same time. If the copy or validation fails, the manifest is left unchanged so Unity does not resolve a broken `file:` dependency. Embedded packages include `Use Downloaded`, which writes the selected catalog Git UPM version back to `Packages/manifest.json`, removes the local folder, and returns the package to the downloaded flow.
 
 After editing an embedded package, bump its `package.json` version above the catalog latest version before using `Publish Changed`.
 
@@ -99,6 +101,7 @@ If an AI assistant reads this package documentation before the automatic router 
 - Optional community comments sheet: `package_comments`, cached under `UserSettings/ActionFitPackageManager/package_comments.csv` when `Update Catalog` runs.
 - Installing or applying a version updates `Packages/manifest.json` and runs Unity Package Manager resolve.
 - Catalog `dependencies` entries are applied before the selected package. ActionFit package dependencies must exist in the catalog so they can be written as Git UPM URLs; non-ActionFit registry dependencies fall back to their raw version string.
+- Expanded package rows show the selected version's dependencies. ActionFit dependencies show the resolved catalog Git URL when available; registry/raw dependencies show the raw version value.
 - Manifest dependency formatting is normalized when written.
 
 ## Publish Notes

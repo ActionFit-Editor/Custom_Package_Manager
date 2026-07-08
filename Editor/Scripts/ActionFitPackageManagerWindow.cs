@@ -228,7 +228,10 @@ public class ActionFitPackageManagerWindow : EditorWindow
                 else if (installed.IsInstalled)
                 {
                     if (GUILayout.Button("Embed for Edit", GUILayout.Width(120)))
-                        ConvertDownloadedToEmbedded(package, installed);
+                        ConvertDownloadedToEmbedded(package, installed, selectedVersion);
+
+                    if (GUILayout.Button("Fork as New", GUILayout.Width(110)))
+                        OpenForkDownloadedPackageWindow(package, installed, selectedVersion);
                 }
 
                 if (GUILayout.Button("History", GUILayout.Width(90)))
@@ -247,8 +250,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
             if (installed.IsEmbedded)
                 EditorGUILayout.HelpBox("Embedded package is present under Packages/. Applying a different version will write the Git UPM dependency, remove the embedded folder, and run Package Manager resolve.", MessageType.Info);
 
-            if (!string.IsNullOrWhiteSpace(selectedVersion.Dependencies))
-                EditorGUILayout.LabelField("Dependencies", selectedVersion.Dependencies, EditorStyles.miniLabel);
+            DrawDependencyDetails(selectedVersion);
 
             string updateStatus = GetUpdateStatus(package, installed);
             if (!string.IsNullOrWhiteSpace(updateStatus))
@@ -355,6 +357,41 @@ public class ActionFitPackageManagerWindow : EditorWindow
                 SaveComment(package);
             EditorGUI.EndDisabledGroup();
         }
+    }
+
+    private void DrawDependencyDetails(PackageVersion selectedVersion)
+    {
+        EditorGUILayout.LabelField("Dependencies", EditorStyles.boldLabel);
+
+        var dependencies = ParseDependencies(selectedVersion.Dependencies);
+        if (dependencies.Count == 0)
+        {
+            EditorGUILayout.LabelField("None", EditorStyles.miniLabel);
+            return;
+        }
+
+        foreach (var dependency in dependencies)
+        {
+            string label = string.IsNullOrWhiteSpace(dependency.Version)
+                ? dependency.Id
+                : $"{dependency.Id}@{dependency.Version}";
+            EditorGUILayout.LabelField(label, GetDependencyResolutionLabel(dependency), EditorStyles.miniLabel);
+        }
+    }
+
+    private string GetDependencyResolutionLabel((string Id, string Version) dependency)
+    {
+        var catalogVersion = FindVersion(dependency.Id, dependency.Version);
+        if (catalogVersion != null)
+            return catalogVersion.PackageUrl;
+
+        if (IsActionFitPackageId(dependency.Id))
+            return "Missing from catalog";
+
+        if (!string.IsNullOrWhiteSpace(dependency.Version))
+            return $"Registry/raw: {dependency.Version}";
+
+        return "Unresolved";
     }
 
     private void DrawComment(PackageGroup package, ActionFitPackageCommunityClient.Comment comment, int index)
@@ -1008,7 +1045,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
         RemoveManifestPackage(package);
     }
 
-    private void ConvertDownloadedToEmbedded(PackageGroup package, InstalledPackage installed)
+    private void ConvertDownloadedToEmbedded(PackageGroup package, InstalledPackage installed, PackageVersion selectedVersion)
     {
         if (!installed.IsInstalled || installed.IsEmbedded)
         {
@@ -1097,7 +1134,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
         try
         {
-            ActionFitPackageInfoUtility.CreateOrUpdate(packageRoot);
+            RefreshEmbeddedPackageInfoFromCatalog(packageRoot, package, selectedVersion, sourcePackageJson);
         }
         catch (Exception ex)
         {
@@ -1105,6 +1142,141 @@ public class ActionFitPackageManagerWindow : EditorWindow
         }
 
         AssetDatabase.Refresh();
+        Client.Resolve();
+        QueueReload();
+    }
+
+    private void OpenForkDownloadedPackageWindow(PackageGroup package, InstalledPackage installed, PackageVersion selectedVersion)
+    {
+        if (!installed.IsInstalled || installed.IsEmbedded)
+        {
+            EditorUtility.DisplayDialog("ActionFit Package Manager", "Only downloaded packages can be forked as a new local package.", "OK");
+            return;
+        }
+
+        if (!TryFindDownloadedPackageSource(package.Id, out string sourcePath, out string sourceError))
+        {
+            EditorUtility.DisplayDialog("ActionFit Package Manager", sourceError, "OK");
+            return;
+        }
+
+        string sourcePackageJson = Path.Combine(sourcePath, "package.json");
+        string sourcePackageId = ExtractJsonString(File.ReadAllText(sourcePackageJson), "name");
+        if (!string.Equals(sourcePackageId, package.Id, StringComparison.Ordinal))
+        {
+            EditorUtility.DisplayDialog(
+                "ActionFit Package Manager",
+                $"Resolved package source does not match.\n\nExpected: {package.Id}\nFound: {sourcePackageId}\nSource: {ToProjectRelativePath(sourcePath)}",
+                "OK");
+            return;
+        }
+
+        ForkDownloadedPackageWindow.Open(this, package, installed, selectedVersion, sourcePath);
+    }
+
+    private void ForkDownloadedToNewPackage(PackageGroup package, InstalledPackage installed, PackageVersion selectedVersion, string sourcePath, ActionFitPackageCreateRequest request)
+    {
+        if (!installed.IsInstalled || installed.IsEmbedded)
+        {
+            EditorUtility.DisplayDialog("ActionFit Package Manager", "Only downloaded packages can be forked as a new local package.", "OK");
+            return;
+        }
+
+        request.PackageId = NormalizePackageIdForFork(request.PackageId);
+        request.DisplayName = NormalizeRequiredForFork(request.DisplayName, "Display Name");
+        request.RepoName = NormalizeRepoNameForFork(request.RepoName);
+        request.Version = string.IsNullOrWhiteSpace(request.Version) ? "1.0.0" : request.Version.Trim();
+        request.UnityVersion = string.IsNullOrWhiteSpace(request.UnityVersion) ? "6000.2" : request.UnityVersion.Trim();
+        request.Owner = string.IsNullOrWhiteSpace(request.Owner) ? "ActionFit" : request.Owner.Trim();
+        request.Status = string.IsNullOrWhiteSpace(request.Status) ? "verified" : request.Status.Trim();
+        request.Description = request.Description?.Trim() ?? "";
+        request.ReleaseNote = string.IsNullOrWhiteSpace(request.ReleaseNote) ? "기존 패키지를 새 ActionFit 패키지로 포크한 최초 버전입니다." : request.ReleaseNote.Trim();
+
+        if (string.Equals(request.PackageId, package.Id, StringComparison.Ordinal))
+        {
+            EditorUtility.DisplayDialog("ActionFit Package Manager", "New package ID must be different from the source package ID.", "OK");
+            return;
+        }
+
+        string packageRoot = $"Packages/{request.PackageId}";
+        string fullPackageRoot = Path.Combine(ProjectRootPath, "Packages", request.PackageId);
+        if (Directory.Exists(fullPackageRoot))
+        {
+            EditorUtility.DisplayDialog("ActionFit Package Manager", $"Destination package folder already exists:\n{packageRoot}", "OK");
+            return;
+        }
+
+        string sourcePackageJson = Path.Combine(sourcePath, "package.json");
+        string sourcePackageId = ExtractJsonString(File.ReadAllText(sourcePackageJson), "name");
+        if (!string.Equals(sourcePackageId, package.Id, StringComparison.Ordinal))
+        {
+            EditorUtility.DisplayDialog(
+                "ActionFit Package Manager",
+                $"Resolved package source does not match.\n\nExpected: {package.Id}\nFound: {sourcePackageId}\nSource: {ToProjectRelativePath(sourcePath)}",
+                "OK");
+            return;
+        }
+
+        string manifestPath = ManifestFullPath;
+        if (!File.Exists(manifestPath))
+        {
+            EditorUtility.DisplayDialog("ActionFit Package Manager", "Packages/manifest.json not found.", "OK");
+            return;
+        }
+
+        string manifest = File.ReadAllText(manifestPath);
+        manifest = RemoveDependency(manifest, package.Id, out _);
+        manifest = SetDependency(manifest, request.PackageId, LocalPackageDependencyValue(request.PackageId));
+
+        string tempPackageRoot = Path.Combine(ProjectRootPath, "Temp", "ActionFitPackageManager", request.PackageId);
+
+        try
+        {
+            if (Directory.Exists(tempPackageRoot))
+                Directory.Delete(tempPackageRoot, true);
+
+            CopyDirectoryForEmbeddedPackage(sourcePath, tempPackageRoot);
+            RewritePackageJsonForFork(Path.Combine(tempPackageRoot, "package.json"), request);
+
+            if (!TryValidateLocalPackageFolder(request.PackageId, tempPackageRoot, out _, out string tempValidationError))
+                throw new InvalidOperationException(tempValidationError);
+
+            Directory.CreateDirectory(Path.GetDirectoryName(fullPackageRoot));
+            Directory.Move(tempPackageRoot, fullPackageRoot);
+
+            if (!TryValidateLocalPackageFolder(request.PackageId, fullPackageRoot, out _, out string embeddedValidationError))
+                throw new InvalidOperationException(embeddedValidationError);
+
+            ActionFitPackageInfoUtility.CreatePackage(request);
+            File.WriteAllText(manifestPath, manifest, new UTF8Encoding(false));
+        }
+        catch (Exception ex)
+        {
+            if (Directory.Exists(tempPackageRoot))
+                Directory.Delete(tempPackageRoot, true);
+
+            if (Directory.Exists(fullPackageRoot))
+                Directory.Delete(fullPackageRoot, true);
+
+            EditorUtility.DisplayDialog("ActionFit Package Manager", $"Fork as new package failed:\n{ex.Message}", "OK");
+            return;
+        }
+
+        UnityEngine.Debug.Log(
+            $"[ActionFitPackageManager] Forked downloaded package as new local package:\n" +
+            $"Source: {package.Id}\nNew: {request.PackageId}\nFolder: {packageRoot}\nRepo: {request.RepoName}");
+
+        ActionFitPackageAiGuideRouter.EnsureProjectRouter();
+        AssetDatabase.Refresh();
+
+        var info = AssetDatabase.LoadAssetAtPath<ActionFitPackageInfo_SO>(
+            Path.Combine(packageRoot, ActionFitPackageInfoUtility.PackageInfoFolder, ActionFitPackageInfoUtility.PackageInfoAssetName).Replace("\\", "/"));
+        if (info != null)
+        {
+            Selection.activeObject = info;
+            EditorGUIUtility.PingObject(info);
+        }
+
         Client.Resolve();
         QueueReload();
     }
@@ -1142,7 +1314,8 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
         try
         {
-            ActionFitPackageInfoUtility.CreateOrUpdate(packageRoot);
+            PackageVersion catalogVersion = FindVersion(package.Id, localVersion) ?? package.LatestVersion;
+            RefreshEmbeddedPackageInfoFromCatalog(packageRoot, package, catalogVersion, Path.Combine(fullPackageRoot, "package.json"));
         }
         catch (Exception ex)
         {
@@ -1152,6 +1325,35 @@ public class ActionFitPackageManagerWindow : EditorWindow
         AssetDatabase.Refresh();
         Client.Resolve();
         QueueReload();
+    }
+
+    private void RefreshEmbeddedPackageInfoFromCatalog(string packageRoot, PackageGroup package, PackageVersion selectedVersion, string sourcePackageJson)
+    {
+        if (!IsActionFitPackageId(package.Id))
+        {
+            ActionFitPackageInfoUtility.CreateOrUpdate(packageRoot);
+            return;
+        }
+
+        ActionFitPackageManifest manifest = ActionFitPackageManifest.Read(sourcePackageJson);
+        PackageVersion catalogVersion = FindVersion(package.Id, manifest.Version) ?? selectedVersion ?? package.LatestVersion;
+        string repoName = ExtractRepoName(catalogVersion?.RepoUrl);
+        if (string.IsNullOrWhiteSpace(repoName))
+            repoName = BuildRepoName(manifest.DisplayName, manifest.Name);
+
+        ActionFitPackageInfoUtility.CreatePackage(new ActionFitPackageCreateRequest
+        {
+            PackageId = manifest.Name,
+            DisplayName = FirstNonEmpty(manifest.DisplayName, package.DisplayName, manifest.Name),
+            RepoName = repoName,
+            RepositoryVisibility = ActionFitPackageRepositoryVisibility.Public,
+            Version = manifest.Version,
+            UnityVersion = FirstNonEmpty(manifest.Unity, "6000.2"),
+            Owner = FirstNonEmpty(catalogVersion?.Owner, package.Owner, "ActionFit"),
+            Status = FirstNonEmpty(catalogVersion?.Status, "verified"),
+            Description = FirstNonEmpty(catalogVersion?.Description, manifest.Description),
+            ReleaseNote = FirstNonEmpty(catalogVersion?.Changelog, "카탈로그 메타데이터 갱신 릴리즈.")
+        });
     }
 
     private static bool TryValidateLocalPackageFolder(string expectedPackageId, string fullPackageRoot, out string version, out string error)
@@ -1566,6 +1768,120 @@ public class ActionFitPackageManagerWindow : EditorWindow
         return manifest.Substring(0, openBrace) + sb + manifest[(closeBrace + 1)..];
     }
 
+    private static void RewritePackageJsonForFork(string packageJsonPath, ActionFitPackageCreateRequest request)
+    {
+        string json = File.ReadAllText(packageJsonPath);
+        json = SetJsonStringProperty(json, "name", request.PackageId);
+        json = SetJsonStringProperty(json, "version", request.Version);
+        json = SetJsonStringProperty(json, "displayName", request.DisplayName);
+        json = SetJsonStringProperty(json, "description", request.Description);
+        json = SetJsonStringProperty(json, "unity", request.UnityVersion);
+        File.WriteAllText(packageJsonPath, json, new UTF8Encoding(false));
+    }
+
+    private static string SetJsonStringProperty(string json, string key, string value)
+    {
+        string replacement = $"\"{key}\": \"{EscapeJson(value)}\"";
+        var regex = new Regex($"\"{Regex.Escape(key)}\"\\s*:\\s*\"[^\"]*\"");
+        if (regex.IsMatch(json))
+            return regex.Replace(json, replacement, 1);
+
+        int openBrace = json.IndexOf('{');
+        if (openBrace < 0)
+            return "{\n  " + replacement + "\n}\n";
+
+        string newline = json.Contains("\r\n") ? "\r\n" : "\n";
+        return json.Insert(openBrace + 1, $"{newline}  {replacement},");
+    }
+
+    private static string NormalizePackageIdForFork(string value)
+    {
+        value = (value ?? "").Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(value))
+            throw new InvalidOperationException("Package Id is required.");
+        if (!value.StartsWith("com.actionfit.", StringComparison.Ordinal))
+            value = "com.actionfit." + value.TrimStart('.');
+
+        if (!Regex.IsMatch(value, @"^com\.actionfit\.[a-z0-9][a-z0-9._-]*$"))
+            throw new InvalidOperationException("Package Id must look like com.actionfit.mytool.");
+
+        return value;
+    }
+
+    private static string NormalizeRequiredForFork(string value, string label)
+    {
+        value = (value ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(value))
+            throw new InvalidOperationException($"{label} is required.");
+        return value;
+    }
+
+    private static string NormalizeRepoNameForFork(string value)
+    {
+        value = NormalizeRequiredForFork(value, "Repo Name");
+        value = Regex.Replace(value, @"[^A-Za-z0-9._-]+", "_").Trim('_', '.', '-');
+        if (string.IsNullOrWhiteSpace(value))
+            throw new InvalidOperationException("Repo Name is invalid.");
+        return value;
+    }
+
+    private static string BuildForkPackageId(string sourcePackageId, string displayName)
+    {
+        string source = sourcePackageId ?? "";
+        if (source.StartsWith("com.actionfit.", StringComparison.OrdinalIgnoreCase))
+            source = source["com.actionfit.".Length..];
+        if (string.IsNullOrWhiteSpace(source))
+            source = displayName ?? "";
+
+        string suffix = Regex.Replace(source.Trim().ToLowerInvariant(), @"[^a-z0-9._-]+", ".");
+        suffix = Regex.Replace(suffix, @"[._-]+", ".").Trim('.', '_', '-');
+        if (string.IsNullOrWhiteSpace(suffix))
+            suffix = "package";
+        if (!suffix.EndsWith(".fork", StringComparison.OrdinalIgnoreCase))
+            suffix += ".fork";
+
+        return $"com.actionfit.{suffix}";
+    }
+
+    private static string BuildForkDisplayName(string displayName)
+    {
+        string value = string.IsNullOrWhiteSpace(displayName) ? "ActionFit Package" : displayName.Trim();
+        return value.EndsWith("Fork", StringComparison.OrdinalIgnoreCase) ? value : $"{value} Fork";
+    }
+
+    private static string BuildRepoName(string displayName, string packageId)
+    {
+        string source = !string.IsNullOrWhiteSpace(displayName)
+            ? displayName
+            : Regex.Replace(packageId ?? "", @"^com\.actionfit\.", "", RegexOptions.IgnoreCase);
+
+        string repo = Regex.Replace(source.Trim(), @"[^A-Za-z0-9]+", "_").Trim('_');
+        return string.IsNullOrWhiteSpace(repo) ? "ActionFit_Package" : repo;
+    }
+
+    private static string ExtractRepoName(string repoUrl)
+    {
+        if (string.IsNullOrWhiteSpace(repoUrl))
+            return "";
+
+        string value = repoUrl.Trim();
+        int hash = value.IndexOf('#');
+        if (hash >= 0)
+            value = value[..hash];
+
+        value = value.TrimEnd('/');
+        int slash = value.LastIndexOf('/');
+        if (slash >= 0)
+            value = value[(slash + 1)..];
+        if (value.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
+            value = value[..^4];
+
+        return NormalizeRepoNameForFork(value);
+    }
+
+    private static string EscapeJson(string value)
+        => (value ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r");
+
     private InstalledPackage GetInstalledVersion(string packageId)
     {
         string manifestPath = ManifestFullPath;
@@ -1759,6 +2075,116 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
         result.Add(sb.ToString());
         return result.ToArray();
+    }
+
+    private sealed class ForkDownloadedPackageWindow : EditorWindow
+    {
+        private ActionFitPackageManagerWindow _owner;
+        private PackageGroup _package;
+        private InstalledPackage _installed;
+        private PackageVersion _selectedVersion;
+        private string _sourcePath;
+        private string _sourcePackageId;
+        private string _sourceVersion;
+        private ActionFitPackageCreateRequest _request;
+        private Vector2 _scroll;
+
+        public static void Open(
+            ActionFitPackageManagerWindow owner,
+            PackageGroup package,
+            InstalledPackage installed,
+            PackageVersion selectedVersion,
+            string sourcePath)
+        {
+            string sourcePackageJson = Path.Combine(sourcePath, "package.json");
+            ActionFitPackageManifest manifest = ActionFitPackageManifest.Read(sourcePackageJson);
+            string displayName = BuildForkDisplayName(FirstNonEmpty(manifest.DisplayName, package.DisplayName, manifest.Name));
+            string packageId = BuildForkPackageId(manifest.Name, displayName);
+
+            var window = CreateInstance<ForkDownloadedPackageWindow>();
+            window.titleContent = new GUIContent("Fork as New Package");
+            window.minSize = new Vector2(520, 520);
+            window._owner = owner;
+            window._package = package;
+            window._installed = installed;
+            window._selectedVersion = selectedVersion;
+            window._sourcePath = sourcePath;
+            window._sourcePackageId = manifest.Name;
+            window._sourceVersion = manifest.Version;
+            window._request = new ActionFitPackageCreateRequest
+            {
+                PackageId = packageId,
+                DisplayName = displayName,
+                RepoName = BuildRepoName(displayName, packageId),
+                RepositoryVisibility = ActionFitPackageRepositoryVisibility.Public,
+                Version = FirstNonEmpty(manifest.Version, "1.0.0"),
+                UnityVersion = FirstNonEmpty(manifest.Unity, "6000.2"),
+                Owner = FirstNonEmpty(selectedVersion?.Owner, package.Owner, "ActionFit"),
+                Status = FirstNonEmpty(selectedVersion?.Status, "verified"),
+                Description = FirstNonEmpty(selectedVersion?.Description, manifest.Description),
+                ReleaseNote = "기존 패키지를 새 ActionFit 패키지로 포크한 최초 버전입니다."
+            };
+            window.ShowUtility();
+        }
+
+        private void OnGUI()
+        {
+            _scroll = EditorGUILayout.BeginScrollView(_scroll);
+
+            EditorGUILayout.LabelField("Source", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("Package Id", _sourcePackageId);
+            EditorGUILayout.LabelField("Version", _sourceVersion);
+            EditorGUILayout.LabelField("Source Path", ToProjectRelativePath(_sourcePath), EditorStyles.wordWrappedMiniLabel);
+            EditorGUILayout.HelpBox(
+                "This copies the downloaded source into a new Packages/<packageId> folder, removes the original package dependency from Packages/manifest.json, and adds the new local file dependency to avoid duplicate assemblies.",
+                MessageType.Info);
+
+            EditorGUILayout.Space(8);
+            EditorGUILayout.LabelField("New Package", EditorStyles.boldLabel);
+            _request.PackageId = EditorGUILayout.TextField("Package Id", _request.PackageId);
+            _request.DisplayName = EditorGUILayout.TextField("Display Name", _request.DisplayName);
+            _request.RepoName = EditorGUILayout.TextField("Repo Name", _request.RepoName);
+            _request.RepositoryVisibility = (ActionFitPackageRepositoryVisibility)EditorGUILayout.EnumPopup("Repository Visibility", _request.RepositoryVisibility);
+            _request.Version = EditorGUILayout.TextField("Version", _request.Version);
+            _request.UnityVersion = EditorGUILayout.TextField("Unity", _request.UnityVersion);
+
+            EditorGUILayout.Space(8);
+            EditorGUILayout.LabelField("Catalog", EditorStyles.boldLabel);
+            _request.Owner = EditorGUILayout.TextField("Owner", _request.Owner);
+            _request.Status = EditorGUILayout.TextField("Status", _request.Status);
+            EditorGUILayout.LabelField("Description");
+            _request.Description = EditorGUILayout.TextArea(_request.Description ?? "", GUILayout.MinHeight(52));
+            EditorGUILayout.LabelField("Release Note");
+            _request.ReleaseNote = EditorGUILayout.TextArea(_request.ReleaseNote ?? "", GUILayout.MinHeight(52));
+
+            EditorGUILayout.Space(12);
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                if (GUILayout.Button("Fill Repo From Display Name", GUILayout.Width(190)))
+                    _request.RepoName = BuildRepoName(_request.DisplayName, _request.PackageId);
+
+                GUILayout.FlexibleSpace();
+
+                if (GUILayout.Button("Fork as New", GUILayout.Width(120)))
+                    Fork();
+            }
+
+            EditorGUILayout.EndScrollView();
+        }
+
+        private void Fork()
+        {
+            try
+            {
+                _owner.ForkDownloadedToNewPackage(_package, _installed, _selectedVersion, _sourcePath, _request);
+                Close();
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[ActionFitPackageManager] Fork as new package failed: {ex}");
+                EditorUtility.DisplayDialog("ActionFit Package Manager", ex.Message, "OK");
+            }
+        }
     }
 
     private sealed class CommentPanelState
