@@ -15,47 +15,6 @@ public class ActionFitPackageManagerWindow : EditorWindow
     private const string CatalogRelativePath = "Editor/Catalog/package_catalog.csv";
     private static readonly string PackageCatalogPath = Path.Combine("Packages", PackageName, CatalogRelativePath).Replace("\\", "/");
     private static readonly string PackageCachePath = Path.Combine("Library", "PackageCache").Replace("\\", "/");
-    private static readonly Dictionary<string, SettingSoLocator> SettingSoLocators = new(StringComparer.Ordinal)
-    {
-        ["com.actionfit.buildautomation"] = new SettingSoLocator(
-            new[] { "Assets/_Data/_BuildAutomation/BuildAutomationSettingsSO.asset" },
-            "BuildAutomationSettingsSO"),
-        ["com.actionfit.buildsetting"] = new SettingSoLocator(
-            new[]
-            {
-                "Assets/_Data/_BuildSetting/BuildSettingsSO.asset",
-                "Assets/_Project/Settings/BuildSetting/BuildSettingsSO.asset"
-            },
-            "BuildSettingsSO"),
-        ["com.actionfit.buildsetting_actionfit"] = new SettingSoLocator(
-            new[]
-            {
-                "Assets/_Data/_BuildSetting/BuildSettingsSO.asset",
-                "Assets/_Project/Settings/BuildSetting/BuildSettingsSO.asset"
-            },
-            "BuildSettingsSO"),
-        ["com.actionfit.csvimporter"] = new SettingSoLocator(
-            new[] { "Assets/_Data/_CsvImporter/CsvImportConfig_SO.asset" },
-            "CsvImportConfig_SO"),
-        ["com.actionfit.csvimporter_actionfit"] = new SettingSoLocator(
-            new[] { "Assets/_Data/_CsvImporter/CsvImportConfig_SO.asset" },
-            "CsvImportConfig_SO"),
-        ["com.actionfit.actionfitpackagemanager"] = new SettingSoLocator(
-            new[] { ActionFitPackageCatalogSettingsProvider.SettingsAssetPath },
-            nameof(ActionFitPackageCatalogSettings_SO)),
-        ["com.actionfit.custompackagemanager"] = new SettingSoLocator(
-            new[] { ActionFitPackageCatalogSettingsProvider.SettingsAssetPath },
-            nameof(ActionFitPackageCatalogSettings_SO)),
-        ["com.actionfit.customsymbols"] = new SettingSoLocator(
-            Array.Empty<string>(),
-            "CustomSymbolsSO"),
-        ["com.actionfit.findfolder"] = new SettingSoLocator(
-            new[] { "Packages/com.actionfit.findfolder/Editor/FindFolderSettings.asset" },
-            "FindFolderSO"),
-        ["com.actionfit.playmodelogsaver"] = new SettingSoLocator(
-            new[] { "Assets/Editor/PlayModeLogSaver/PlayModeLogSettings.asset" },
-            "PlayModeLogSettings"),
-    };
     private static string ProjectRootPath => Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
     private static string ManifestFullPath => Path.Combine(ProjectRootPath, "Packages", "manifest.json");
     private static string ProjectRelativeFullPath(string relativePath)
@@ -90,7 +49,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
     private string _historyFromVersion = "";
     private string _historyToVersion = "";
 
-    [MenuItem("Tools/ActionFit/Package Manager/Package Manager", false, 0)]
+    [MenuItem("Tools/Package/Custom Package Manager/Package Manager", false, 0)]
     public static void Open()
     {
         GetWindow<ActionFitPackageManagerWindow>("ActionFit Packages");
@@ -297,7 +256,6 @@ public class ActionFitPackageManagerWindow : EditorWindow
                 EditorGUILayout.LabelField("Update", updateStatus, EditorStyles.miniLabel);
 
             DrawCommunity(package);
-            DrawPackageTools(package);
         }
     }
 
@@ -331,29 +289,6 @@ public class ActionFitPackageManagerWindow : EditorWindow
             {
                 EditorGUILayout.HelpBox(message, IsCommunityFailureMessage(message) ? MessageType.Warning : MessageType.Info);
             }
-        }
-    }
-
-    private void DrawPackageTools(PackageGroup package)
-    {
-        EditorGUILayout.Space(6);
-        EditorGUILayout.LabelField("", GUI.skin.horizontalSlider);
-        EditorGUILayout.LabelField("Tools", EditorStyles.boldLabel);
-
-        using (new EditorGUILayout.HorizontalScope())
-        {
-            if (HasSettingSoLocator(package.Id))
-            {
-                if (GUILayout.Button("Setting SO", GUILayout.Width(110)))
-                    FocusSettingSo(package.Id);
-            }
-
-            EditorGUI.BeginDisabledGroup(!CanOpenReadme(package));
-            if (GUILayout.Button("README", GUILayout.Width(110)))
-                OpenPackageReadme(package);
-            EditorGUI.EndDisabledGroup();
-
-            GUILayout.FlexibleSpace();
         }
     }
 
@@ -709,109 +644,6 @@ public class ActionFitPackageManagerWindow : EditorWindow
         Application.OpenURL(url);
     }
 
-    private static bool HasSettingSoLocator(string packageId)
-    {
-        return SettingSoLocators.ContainsKey(packageId);
-    }
-
-    private static void FocusSettingSo(string packageId)
-    {
-        UnityEngine.Object settings = UsesCatalogSettings(packageId)
-            ? ActionFitPackageCatalogSettingsProvider.FindOrCreate()
-            : FindSettingSo(packageId);
-
-        if (settings == null)
-        {
-            EditorUtility.DisplayDialog(
-                "ActionFit Package Manager",
-                $"Setting SO was not found for {packageId}.\n\nOpen that package's setup window or create its settings asset first.",
-                "OK");
-            return;
-        }
-
-        Selection.activeObject = settings;
-        EditorGUIUtility.PingObject(settings);
-    }
-
-    private static bool UsesCatalogSettings(string packageId)
-    {
-        return string.Equals(packageId, PackageName, StringComparison.Ordinal) ||
-               string.Equals(packageId, "com.actionfit.actionfitpackagemanager", StringComparison.Ordinal);
-    }
-
-    private static UnityEngine.Object FindSettingSo(string packageId)
-    {
-        if (!SettingSoLocators.TryGetValue(packageId, out var locator))
-            return null;
-
-        foreach (string assetPath in locator.AssetPaths)
-        {
-            var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
-            if (asset != null) return asset;
-        }
-
-        if (string.IsNullOrWhiteSpace(locator.TypeName))
-            return null;
-
-        string[] guids = AssetDatabase.FindAssets($"t:{locator.TypeName}");
-        if (guids.Length == 0) return null;
-
-        string foundPath = guids
-            .Select(AssetDatabase.GUIDToAssetPath)
-            .OrderBy(p => p.StartsWith("Assets/", StringComparison.Ordinal) ? 0 : 1)
-            .ThenBy(p => p, StringComparer.Ordinal)
-            .FirstOrDefault();
-        return string.IsNullOrWhiteSpace(foundPath) ? null : AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(foundPath);
-    }
-
-    private static bool CanOpenReadme(PackageGroup package)
-    {
-        return TryResolveLocalReadmePath(package, out _) ||
-               !string.IsNullOrWhiteSpace(BuildReadmeBrowserUrl(package.LatestVersion?.RepoUrl, package.LatestVersion?.Version));
-    }
-
-    private static void OpenPackageReadme(PackageGroup package)
-    {
-        if (TryResolveLocalReadmePath(package, out string readmePath))
-        {
-            ActionFitPackageReadmeWindow.Open(readmePath);
-            return;
-        }
-
-        string url = BuildReadmeBrowserUrl(package.LatestVersion?.RepoUrl, package.LatestVersion?.Version);
-        if (string.IsNullOrWhiteSpace(url))
-        {
-            EditorUtility.DisplayDialog("ActionFit Package Manager", $"README URL not found for {package.DisplayName}.", "OK");
-            return;
-        }
-
-        Application.OpenURL(url);
-    }
-
-    private static bool TryResolveLocalReadmePath(PackageGroup package, out string readmePath)
-    {
-        readmePath = "";
-
-        string embeddedReadmePath = $"Packages/{package.Id}/README.md";
-        if (File.Exists(ProjectRelativeFullPath(embeddedReadmePath)))
-        {
-            readmePath = embeddedReadmePath;
-            return true;
-        }
-
-        if (TryFindDownloadedPackageSource(package.Id, out string sourcePath, out _))
-        {
-            string fullReadmePath = Path.Combine(sourcePath, "README.md");
-            if (File.Exists(fullReadmePath))
-            {
-                readmePath = ToProjectRelativePath(fullReadmePath);
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     private static string BuildLatestGitBrowserUrl(string repoUrl, string version)
     {
         string url = (repoUrl ?? "").Trim();
@@ -842,38 +674,6 @@ public class ActionFitPackageManagerWindow : EditorWindow
             ? ""
             : $"/tree/{Uri.EscapeDataString(version)}";
         return $"https://github.com/{path}{versionPath}";
-    }
-
-    private static string BuildReadmeBrowserUrl(string repoUrl, string version)
-    {
-        string url = (repoUrl ?? "").Trim();
-        if (string.IsNullOrWhiteSpace(url)) return "";
-
-        int hashIndex = url.IndexOf('#');
-        if (hashIndex >= 0)
-            url = url[..hashIndex];
-
-        if (url.StartsWith("git@github.com:", StringComparison.OrdinalIgnoreCase))
-            url = "https://github.com/" + url["git@github.com:".Length..];
-
-        url = url.Replace("\\", "/");
-        if (url.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
-            url = url[..^4];
-
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri) ||
-            !string.Equals(uri.Host, "github.com", StringComparison.OrdinalIgnoreCase))
-            return url;
-
-        string path = uri.AbsolutePath.Trim('/');
-        if (path.EndsWith(".git", StringComparison.OrdinalIgnoreCase))
-            path = path[..^4];
-
-        if (string.IsNullOrWhiteSpace(path)) return url;
-
-        string versionPath = string.IsNullOrWhiteSpace(version)
-            ? "main"
-            : Uri.EscapeDataString(version);
-        return $"https://github.com/{path}/blob/{versionPath}/README.md";
     }
 
     private void DrawHistoryPanel()
@@ -2545,18 +2345,6 @@ public class ActionFitPackageManagerWindow : EditorWindow
         public int CommentCount;
         public string PackageUrl => $"{RepoUrl}#{Version}";
         public string VersionLabel => IsLatest ? $"{Version} ({Status}, latest)" : $"{Version} ({Status})";
-    }
-
-    private readonly struct SettingSoLocator
-    {
-        public SettingSoLocator(string[] assetPaths, string typeName)
-        {
-            AssetPaths = assetPaths ?? Array.Empty<string>();
-            TypeName = typeName ?? "";
-        }
-
-        public string[] AssetPaths { get; }
-        public string TypeName { get; }
     }
 
     private readonly struct UpdateCandidate

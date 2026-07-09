@@ -7,15 +7,17 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.53"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.54"
   }
 }
 ```
 
 ## Menu
 
-- `Tools > ActionFit > Package Manager > Package Manager`: install, apply versions, remove packages, inspect README/settings links, and check updates.
-- `Tools > ActionFit > Package Manager > Manager Console`: create packages, publish changed package versions, publish selected package versions, open catalog/manifest files, and refresh the AI guide router.
+- `Tools > Package > Custom Package Manager > Package Manager`: install, apply versions, remove packages, inspect package details, and check updates.
+- `Tools > Package > Custom Package Manager > Manager Console`: create packages, publish changed package versions, publish selected package versions, open catalog/manifest files, and refresh the AI guide router.
+- `Tools > Package > <Package Name> > README`: opens that package's README in an editor window.
+- `Tools > Package > <Package Name> > Setting SO`: focuses that package's settings ScriptableObject when the package has one.
 
 ## Package Manager
 
@@ -29,7 +31,7 @@ Package sections are grouped as Package Manager, Embedded Packages, Downloaded P
 
 Package sections are sorted by package community score, `likes - dislikes`, highest first. When the catalog spreadsheet Web App exposes `package_vote_summary`, `Update Catalog` imports `likes`, `dislikes`, `vote_score`, and `comment_count` into the local catalog CSV.
 
-Expanded package rows include a separated `Tools` area at the bottom. `README` opens the installed package README from `Packages/` or `Library/PackageCache`, and falls back to the catalog GitHub README URL for packages that are not installed locally. Packages that own or bootstrap a shared settings ScriptableObject show a `Setting SO` button that selects and pings the relevant settings asset.
+Package README and settings access live in the Unity top menu, not inside the Package Manager package rows. Each package gets `Tools > Package > <Package Name> > README`; packages that own or bootstrap a shared settings ScriptableObject also get `Setting SO` in the same separated lower menu group. Each package owns its own menu file and uses its package-specific asset path or safe factory method for `Setting SO`.
 
 Downloaded packages include `Embed for Edit` and `Fork as New`. `Embed for Edit` copies the resolved package source from Unity's package cache into a temporary folder, validates the copied `package.json`, moves it into `Packages/<packageId>/`, writes `file:<packageId>` to `Packages/manifest.json`, and preserves catalog repository metadata so edits can be published back to the existing package repository. If the local package folder already exists and its `package.json` name matches, the tool can use that existing folder instead of copying over it.
 
@@ -69,6 +71,13 @@ For example, updating from `1.0.1` to `1.0.4` shows the changelog rows for `1.0.
 Each package's `ActionFitPackageInfo_SO.ReleaseNote` must contain only the single version being prepared. Do not accumulate old changelog entries in the newest release note.
 
 Package Manager composes `History` and `Changes` from separate catalog version rows. Release notes do not need headings such as `## 1.1.28`; the UI already displays the version label.
+
+## Unity Menu
+
+- Package root: `Tools > Package > Custom Package Manager`.
+- README: `Tools > Package > Custom Package Manager > README`.
+- Setting SO: `Tools > Package > Custom Package Manager > Setting SO`.
+- Package commands stay under the same package root and appear above the separated README/Setting SO entries when those entries exist.
 
 ## AI Guide
 

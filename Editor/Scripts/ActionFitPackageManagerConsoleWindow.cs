@@ -8,7 +8,7 @@ public class ActionFitPackageManagerConsoleWindow : EditorWindow
     private const string ManifestPath = "Packages/manifest.json";
     private const string FallbackCatalogPath = "Packages/com.actionfit.custompackagemanager/Editor/Catalog/package_catalog.csv";
 
-    [MenuItem("Tools/ActionFit/Package Manager/Manager Console", false, 1)]
+    [MenuItem("Tools/Package/Custom Package Manager/Manager Console", false, 1)]
     public static void Open()
     {
         GetWindow<ActionFitPackageManagerConsoleWindow>("Package Manager Console");
