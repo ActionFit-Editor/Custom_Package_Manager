@@ -101,6 +101,10 @@ public static class ActionFitPackageInfoUtility
         File.WriteAllText(Path.Combine(fullPackageRoot, "package.json"), BuildPackageJson(request), new UTF8Encoding(false));
         File.WriteAllText(Path.Combine(fullPackageRoot, "README.md"), BuildReadme(request), new UTF8Encoding(false));
         File.WriteAllText(Path.Combine(fullPackageRoot, AiGuideFileName), BuildAiGuide(request), new UTF8Encoding(false));
+        File.WriteAllText(
+            Path.Combine(fullPackageRoot, "Editor", "Scripts", $"{ToPascalIdentifier(request.DisplayName, request.PackageId)}PackageMenu.cs"),
+            BuildPackageMenu(request),
+            new UTF8Encoding(false));
         WritePackageInfoAssetFile(GetPackageInfoAssetPath(packageRoot), request);
         AssetDatabase.Refresh();
 
@@ -309,6 +313,9 @@ public static class ActionFitPackageInfoUtility
                "  }\n" +
                "}\n" +
                "```\n\n" +
+               "## Unity Menu\n\n" +
+               $"- README: `Tools > Package > {request.DisplayName} > README`.\n" +
+               "- If this package later owns or bootstraps a settings ScriptableObject, add `Setting SO` under the same package root.\n\n" +
                "## AI Guide\n\n" +
                $"- Read `{AiGuideFileName}` before modifying or diagnosing this package in a consuming project.\n\n" +
                "## Assembly\n\n" +
@@ -344,6 +351,13 @@ public static class ActionFitPackageInfoUtility
                "- Keep `README.md` focused on human usage and setup.\n" +
                "- Keep this `AI_GUIDE.md` focused on AI-facing architecture, constraints, migration notes, and package-specific editing rules.\n" +
                "- When behavior changes, update `AI_GUIDE.md` in the same package before publishing so consuming projects receive the latest AI context.\n\n" +
+               "## Package Tools Menu\n\n" +
+               $"- Unity menu root: `Tools/Package/{request.DisplayName}/`.\n" +
+               "- Keep package commands under this package root.\n" +
+               "- `README`: required for every ActionFit package; opens this package README.\n" +
+               "- `Setting SO`: required when this package owns or bootstraps a settings ScriptableObject.\n" +
+               "- Keep README-only packages in the README-only priority band unless this package adds executable commands or settings access.\n" +
+               "- Do not add README or Setting SO access back to Custom Package Manager package rows or Project Files.\n\n" +
                "## Release Note Rules\n\n" +
                "- `ActionFitPackageInfo_SO.ReleaseNote` must be written in Korean so planners and developers can read package patch notes directly. Keep code identifiers, package IDs, menu paths, config keys, and file paths in their original spelling.\n" +
                "- `ActionFitPackageInfo_SO.ReleaseNote` must contain only the single version being prepared.\n" +
@@ -355,6 +369,37 @@ public static class ActionFitPackageInfoUtility
                "- Before reusing a version, check the remote Git tags. Published tags are immutable.\n" +
                "- If this package is modified after a version was tagged, bump to the next unused patch version before publishing.\n";
     }
+
+    private static string BuildPackageMenu(ActionFitPackageCreateRequest request)
+    {
+        string className = $"{ToPascalIdentifier(request.DisplayName, request.PackageId)}PackageMenu";
+        string packageId = EscapeJson(request.PackageId);
+        string displayName = EscapeJson(request.DisplayName);
+
+        return "#if UNITY_EDITOR\n" +
+               "using UnityEditor;\n" +
+               "using UnityEngine;\n\n" +
+               $"public static class {className}\n" +
+               "{\n" +
+               $"    private const string MenuRoot = \"Tools/Package/{displayName}/\";\n" +
+               $"    private const string ReadmePath = \"Packages/{packageId}/README.md\";\n" +
+               "    private const int ReadmePriority = 901;\n\n" +
+               "    [MenuItem(MenuRoot + \"README\", false, ReadmePriority)]\n" +
+               "    private static void OpenReadme()\n" +
+               "    {\n" +
+               "        var readme = AssetDatabase.LoadAssetAtPath<TextAsset>(ReadmePath);\n" +
+               "        if (readme == null)\n" +
+               "        {\n" +
+               "            EditorUtility.DisplayDialog(\"Package README\", $\"README was not found.\\n{ReadmePath}\", \"OK\");\n" +
+               "            return;\n" +
+               "        }\n\n" +
+               "        Selection.activeObject = readme;\n" +
+               "        AssetDatabase.OpenAsset(readme);\n" +
+               "    }\n" +
+               "}\n" +
+               "#endif\n";
+    }
+
     private static string BuildEditorAsmdef(string packageId)
     {
         return "{\n" +
@@ -416,6 +461,29 @@ public static class ActionFitPackageInfoUtility
 
         string repo = Regex.Replace(source.Trim(), @"[^A-Za-z0-9]+", "_").Trim('_');
         return string.IsNullOrWhiteSpace(repo) ? "ActionFit_Package" : repo;
+    }
+
+    private static string ToPascalIdentifier(string displayName, string packageId)
+    {
+        string source = !string.IsNullOrWhiteSpace(displayName)
+            ? displayName
+            : Regex.Replace(packageId ?? "", @"^com\.actionfit\.", "", RegexOptions.IgnoreCase);
+        var matches = Regex.Matches(source, @"[A-Za-z0-9]+");
+        var builder = new StringBuilder();
+
+        foreach (Match match in matches)
+        {
+            string token = match.Value;
+            if (token.Length == 0) continue;
+            if (builder.Length == 0 && char.IsDigit(token[0]))
+                builder.Append('_');
+
+            builder.Append(char.ToUpperInvariant(token[0]));
+            if (token.Length > 1)
+                builder.Append(token[1..]);
+        }
+
+        return builder.Length == 0 ? "ActionFitPackage" : builder.ToString();
     }
 
     private static void EnsureFolder(string folder)

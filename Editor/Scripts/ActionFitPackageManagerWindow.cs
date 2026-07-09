@@ -48,6 +48,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
     private bool _historyRangeOnly;
     private string _historyFromVersion = "";
     private string _historyToVersion = "";
+    private bool _historyInUpdateManager;
 
     [MenuItem("Tools/Package/Custom Package Manager/Package Manager", false, 0)]
     public static void Open()
@@ -234,7 +235,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
                 }
 
                 if (GUILayout.Button("History", GUILayout.Width(90)))
-                    ShowHistory(package, false, installed.Version, selectedVersion.Version);
+                    ShowHistory(package, false, installed.Version, selectedVersion.Version, false);
 
                 if (GUILayout.Button("Latest Git", GUILayout.Width(90)))
                     OpenLatestGit(package);
@@ -242,7 +243,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
                 if (installed.IsInstalled && !IsSameVersion(selectedVersion.Version, installed.Version))
                 {
                     if (GUILayout.Button("Changes", GUILayout.Width(90)))
-                        ShowHistory(package, true, installed.Version, selectedVersion.Version);
+                        ShowHistory(package, true, installed.Version, selectedVersion.Version, false);
                 }
             }
 
@@ -256,6 +257,8 @@ public class ActionFitPackageManagerWindow : EditorWindow
                 EditorGUILayout.LabelField("Update", updateStatus, EditorStyles.miniLabel);
 
             DrawCommunity(package);
+
+            DrawHistoryPanel(false, package.Id);
         }
     }
 
@@ -563,7 +566,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
             if (candidates.Count == 0)
             {
                 EditorGUILayout.HelpBox("No installed packages have a newer catalog latest version.", MessageType.None);
-                DrawHistoryPanel();
+                DrawHistoryPanel(true);
                 return;
             }
 
@@ -583,10 +586,10 @@ public class ActionFitPackageManagerWindow : EditorWindow
                     EditorGUILayout.LabelField(candidate.Installed.IsEmbedded ? "embedded" : candidate.Package.Id, EditorStyles.miniLabel, GUILayout.MinWidth(180));
 
                     if (GUILayout.Button("Changes", GUILayout.Width(80)))
-                        ShowHistory(candidate.Package, true, candidate.Installed.Version, candidate.Latest.Version);
+                        ShowHistory(candidate.Package, true, candidate.Installed.Version, candidate.Latest.Version, true);
 
                     if (GUILayout.Button("History", GUILayout.Width(80)))
-                        ShowHistory(candidate.Package, false, candidate.Installed.Version, candidate.Latest.Version);
+                        ShowHistory(candidate.Package, false, candidate.Installed.Version, candidate.Latest.Version, true);
 
                     if (GUILayout.Button("Latest Git", GUILayout.Width(90)))
                         OpenLatestGit(candidate.Package);
@@ -601,7 +604,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
                     EditorGUILayout.HelpBox($"{candidate.Package.Id} is embedded under Packages/. Updating will convert it to a Git UPM dependency and remove the embedded folder.", MessageType.Info);
             }
 
-            DrawHistoryPanel();
+            DrawHistoryPanel(true);
         }
     }
 
@@ -623,12 +626,13 @@ public class ActionFitPackageManagerWindow : EditorWindow
             .ToList();
     }
 
-    private void ShowHistory(PackageGroup package, bool rangeOnly, string fromVersion, string toVersion)
+    private void ShowHistory(PackageGroup package, bool rangeOnly, string fromVersion, string toVersion, bool inUpdateManager)
     {
         _historyPackageId = package.Id;
         _historyRangeOnly = rangeOnly;
         _historyFromVersion = fromVersion;
         _historyToVersion = toVersion;
+        _historyInUpdateManager = inUpdateManager;
     }
 
     private static void OpenLatestGit(PackageGroup package)
@@ -676,9 +680,13 @@ public class ActionFitPackageManagerWindow : EditorWindow
         return $"https://github.com/{path}{versionPath}";
     }
 
-    private void DrawHistoryPanel()
+    private void DrawHistoryPanel(bool inUpdateManager, string packageIdFilter = "")
     {
         if (string.IsNullOrWhiteSpace(_historyPackageId)) return;
+        if (_historyInUpdateManager != inUpdateManager) return;
+        if (!string.IsNullOrWhiteSpace(packageIdFilter) &&
+            !string.Equals(_historyPackageId, packageIdFilter, StringComparison.Ordinal))
+            return;
 
         var package = _packages.FirstOrDefault(p => p.Id == _historyPackageId);
         if (package == null) return;

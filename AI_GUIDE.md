@@ -7,7 +7,7 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.custompackagemanager`
 - Display name: Custom Package Manager
 - Repository: `https://github.com/ActionFit-Editor/Custom_Package_Manager.git`
-- Current package version at generation time: `1.1.55`
+- Current package version at generation time: `1.1.56`
 - Unity version: `6000.2`
 
 ## Purpose
@@ -34,10 +34,10 @@ Read this file when:
 ## Main Files
 
 - `Editor/Scripts/ActionFitPackageManagerWindow.cs`: package list, install/apply/remove/check-update/force-update/history UI.
-- `Editor/Scripts/*PackageMenu.cs`: package-owned Unity top-menu `README` and optional `Setting SO` entries. These entries live in each package, not in Custom Package Manager.
+- `Editor/Scripts/*PackageMenu.cs`: package-owned Unity top-menu `README` and required `Setting SO` entries when a package owns or bootstraps settings. These entries live in each package, not in Custom Package Manager.
 - `Editor/Scripts/ActionFitPackageManagerConsoleWindow.cs`: operational console for create/repo/publish/catalog/manifest/router actions.
 - `Editor/Scripts/ActionFitPackageCatalogSettings_SO.cs`: spreadsheet config, one GitHub publish token, public/private repo creation org profiles, and publish cache root.
-- `Editor/Scripts/ActionFitPackageInfoUtility.cs`: package skeleton creation and PackageInfo/README/AI_GUIDE generation.
+- `Editor/Scripts/ActionFitPackageInfoUtility.cs`: package skeleton creation and PackageInfo/README/AI_GUIDE/README-only package menu generation.
 - `Editor/Scripts/ActionFitPackagePublishWindow.cs`: publish target scan and publish UI.
 - `Editor/Scripts/ActionFitPackagePublisher.cs`: GitHub repository check, local publish clone preparation, remote `git push`, tag push, single/batch catalog upsert, and publish step logging.
 - `Editor/Scripts/ActionFitPackageCatalogUpdater.cs`: spreadsheet/web-app catalog download.
@@ -71,7 +71,7 @@ Read this file when:
 - Fallback catalog path: `Packages/com.actionfit.custompackagemanager/Editor/Catalog/package_catalog.csv`.
 - Package Manager reads the local catalog when present, otherwise the embedded package catalog.
 - It manages internal UPM package install/update/remove, repository creation, changelog/history display, AI guide routing, and manual publish flows.
-- Manager Console exposes `1. Create Package`, `2. Publish Changed`, `Publish Package`, catalog/manifest access, and AI guide router refresh. Package README and settings SO access should stay in Unity top-menu package entries such as `Tools/Package/<Package Name>/README` and `Tools/Package/<Package Name>/Setting SO`, not in `Project Files` or Package Manager package rows.
+- Manager Console exposes `1. Create Package`, `2. Publish Changed`, `Publish Package`, catalog/manifest access, and AI guide router refresh. Package README and settings SO access must stay in Unity top-menu package entries such as `Tools/Package/<Package Name>/README` and `Tools/Package/<Package Name>/Setting SO`, not in `Project Files` or Package Manager package rows.
 - Each package's `ActionFitPackageInfo_SO` stores `Repository Visibility`. Publish flows use that package-local value to choose the public/private GitHub profile for both new and already registered packages, so `Publish All Changed` can safely publish mixed public/private packages in one run.
 - `Publish All Changed` must create publish request snapshots on the Unity main thread, run only repository publish work in parallel with `ActionFitPackagePublisher.DefaultMaxParallelPublishes`, and append catalog rows only after all repository publishes succeed.
 - Bulk catalog append should call Web App action `upsertPackageVersions` first. The Web App must return either `count == item count` or per-item confirmations; otherwise the client treats batch append as unsupported and falls back to serial `upsertPackageVersion`.
@@ -80,7 +80,9 @@ Read this file when:
 - The `Check Update` panel must include only installed packages whose catalog latest version is higher than the installed version. Do not treat any version difference as an update, because that can downgrade packages such as `1.0.30 -> 1.0.29`.
 - `Force Update` must run catalog refresh first, show a confirmation list of downloaded packages, and then re-apply catalog latest Git UPM URLs/dependencies for downloaded packages only. Embedded packages are skipped so local edits are not deleted.
 - `Latest Git` buttons in package details and the `Check Update` panel should open the catalog latest version's GitHub tag URL in the browser without modifying `Packages/manifest.json`.
-- Each ActionFit package should be reachable from Unity's top `Tools/Package` menu for docs/config access. `README` menu items should open the installed package README from `Packages/` or `Library/PackageCache`. Packages with shared settings SOs should expose a `Setting SO` menu item that selects and pings the known settings asset. Keep this code in each package's own `Editor/Scripts/*PackageMenu.cs`, using that package's known asset path or safe factory method.
+- Each ActionFit package must be reachable from Unity's top `Tools/Package` menu for docs/config access. `README` menu items must open the installed package README from `Packages/` or `Library/PackageCache`. Packages with shared settings SOs must expose a `Setting SO` menu item that selects and pings the known settings asset. Keep this code in each package's own `Editor/Scripts/*PackageMenu.cs`, using that package's known asset path or safe factory method.
+- `Tools/Package` must stay grouped by `MenuItem` priority: package-wide manager first, packages with executable tool commands next, packages with only `Setting SO` + `README` after that, and README-only packages at the bottom. Leave separator gaps between those groups. Inside each package root, real tool commands stay above the separated lower `Setting SO` and `README` entries.
+- Use the established priority bands unless a package has a documented reason to differ: Package Manager `0-9`, executable tools `20-99`, `Setting SO` + `README` only packages `600-699`, and README-only packages `900-999`.
 - Downloaded packages may be converted to editable embedded packages through `Embed for Edit`. The conversion should copy the resolved package source into a temporary folder, validate that the copied `package.json` exists and has the expected package `name`, move it into `Packages/<packageId>/`, write `file:<packageId>` in `Packages/manifest.json`, preserve catalog repository metadata in PackageInfo for publishing back to the existing package repository, refresh package AI routing, and run Package Manager resolve without requiring publish credentials. Do not write a local `file:` dependency unless the target local package folder has a valid `package.json`; Unity Package Manager will fail project resolve when manifest points at a missing local package.
 - If `Packages/<packageId>/` already exists during `Embed for Edit`, validate its `package.json` name and let the user use that existing folder by writing the local `file:<packageId>` dependency. Do not overwrite the local folder.
 - Downloaded packages may also be copied through `Fork as New` when the user wants a new `com.actionfit.*` package ID and a new repository instead of publishing edits back to the source package repository. This flow must rewrite the copied package's `package.json` metadata, create PackageInfo metadata for the new repository, remove the original manifest dependency, and write the new local `file:<newPackageId>` dependency so duplicate source/fork assemblies are not compiled together.
@@ -101,6 +103,7 @@ Read this file when:
 - `ActionFitPackageInfo_SO.ReleaseNote` must contain only the single version being prepared.
 - Do not copy older changelog entries into the newest release note.
 - `History` and `Changes` compose multi-version update descriptions at display time from separate catalog version rows.
+- `History` and `Changes` must render from both `Check Update` rows and expanded package detail rows; package detail buttons should draw the panel inline under the selected package, not only inside the update manager panel.
 - Release notes do not need headings such as `## 1.1.29`; the UI already renders the version label.
 - Catalog CSV reading supports quoted multiline changelog fields. Do not rely on unquoted commas or raw newlines in catalog rows.
 
@@ -157,7 +160,7 @@ When updating a package version, write PackageInfo release notes using these sta
 - The `description` and `changelog` fields in `Packages/com.actionfit.custompackagemanager/Editor/Catalog/package_catalog.csv` and the linked Google Spreadsheet tabs `package_catalog` / `package_versions` must be written in Korean so planners and developers can read them directly.
 - Do not manually add a new package version row to `Assets/_Data/_CustomPackageManager/package_catalog.csv`, the embedded catalog CSV, or the linked Google Spreadsheet before the user has actually published that version. Keep the catalog latest row at the latest already-published version so `Publish Changed` can detect the new local `package.json` version. The new version row must be created by the user's manual Custom Package Manager publish/catalog append flow after the package repository push and tag succeed.
 - When adding a new package version row, write the package role in `description` and write Korean bullet changelog entries in `changelog` using the Package Changelog Rules above. Code identifiers, package IDs, and menu paths may remain unchanged.
-- When registering or updating a package through Custom Package Manager, use `1. Create Package` to create the base `Packages/com.actionfit.*` structure and PackageInfo SO.
+- When registering or updating a package through Custom Package Manager, use `1. Create Package` to create the base `Packages/com.actionfit.*` structure, README-only package menu, and PackageInfo SO.
 - `package.json` is the source for `name`, `version`, `unity`, and `dependencies`.
 - PackageInfo SO is the source for `repoName`, repository visibility, description, owner, status, and release notes.
 - Before package publish, treat that package's `README.md` as user-facing documentation that will be uploaded to GitHub and keep it up to date.
@@ -170,9 +173,16 @@ When updating a package version, write PackageInfo release notes using these sta
 
 - Unity menu root: `Tools/Package/Custom Package Manager/`.
 - Keep package commands under this package root.
-- Lower separated entries:
-- `Setting SO`: focuses this package's settings ScriptableObject.
-- `README`: opens this package README.
+- `Tools/Package` top-level grouping is mandatory:
+- Package-wide manager first, including `Tools/Package/Custom Package Manager/Package Manager`.
+- Packages with executable tool commands next.
+- Packages with only `Setting SO` + `README` next.
+- README-only packages at the bottom.
+- Priority bands: Package Manager `0-9`, executable tools `20-99`, `Setting SO` + `README` only `600-699`, README-only `900-999`.
+- Use separated priority gaps between those groups.
+- Lower separated package-root entries:
+- `Setting SO`: required when a package owns or bootstraps a settings ScriptableObject; focuses the settings asset.
+- `README`: required for every ActionFit package; opens this package README.
 - Do not add README or Setting SO access back to Custom Package Manager package rows or Project Files.
 
 ## Publish Notes

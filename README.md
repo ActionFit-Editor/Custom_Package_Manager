@@ -7,7 +7,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.55"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.56"
   }
 }
 ```
@@ -32,6 +32,10 @@ Package sections are grouped as Package Manager, Embedded Packages, Downloaded P
 Package sections are sorted by package community score, `likes - dislikes`, highest first. When the catalog spreadsheet Web App exposes `package_vote_summary`, `Update Catalog` imports `likes`, `dislikes`, `vote_score`, and `comment_count` into the local catalog CSV.
 
 Package README and settings access live in the Unity top menu, not inside the Package Manager package rows. Each package gets `Tools > Package > <Package Name> > README`; packages that own or bootstrap a shared settings ScriptableObject also get `Setting SO` in the same separated lower menu group. Each package owns its own menu file and uses its package-specific asset path or safe factory method for `Setting SO`.
+
+`Tools > Package` must stay grouped by menu priority: the package-wide Custom Package Manager entry is first, packages with executable tool commands come next, packages with only `Setting SO` + `README` come after that, and README-only packages are placed at the bottom. Keep separator gaps between those groups. Inside a package root, real tool commands stay above the separated lower `Setting SO` and `README` entries.
+
+Use the established priority bands unless a package has a documented reason to differ: Package Manager `0-9`, executable tools `20-99`, `Setting SO` + `README` only packages `600-699`, and README-only packages `900-999`. New packages created by `1. Create Package` include a README-only package menu file by default.
 
 Downloaded packages include `Embed for Edit` and `Fork as New`. `Embed for Edit` copies the resolved package source from Unity's package cache into a temporary folder, validates the copied `package.json`, moves it into `Packages/<packageId>/`, writes `file:<packageId>` to `Packages/manifest.json`, and preserves catalog repository metadata so edits can be published back to the existing package repository. If the local package folder already exists and its `package.json` name matches, the tool can use that existing folder instead of copying over it.
 
@@ -59,6 +63,7 @@ The `Check Update` panel shows installed packages only when the catalog latest v
 - Embedded packages are shown too. Selecting a different version converts them to Git UPM dependencies.
 - `Changes` shows changelog rows between the installed version and the selected target version.
 - `History` shows all catalog changelog rows for the package.
+- Package detail rows expose the same `Changes` and `History` behavior inline under the expanded package.
 - `Latest Git` opens the package's catalog latest GitHub repository tag in the default browser.
 - If the installed package is newer than the catalog latest version, it stays out of the `Check Update` panel to avoid accidental downgrade.
 
@@ -78,6 +83,8 @@ Package Manager composes `History` and `Changes` from separate catalog version r
 - README: `Tools > Package > Custom Package Manager > README`.
 - Setting SO: `Tools > Package > Custom Package Manager > Setting SO`.
 - Package commands stay under the same package root and appear above the separated README/Setting SO entries when those entries exist.
+- `Tools > Package` group order must remain: package-wide manager, executable tool packages, Setting SO + README-only packages, README-only packages.
+- Priority bands: Package Manager `0-9`, executable tools `20-99`, Setting SO + README-only `600-699`, README-only `900-999`.
 
 ## AI Guide
 
@@ -97,7 +104,7 @@ If an AI assistant reads this package documentation before the automatic router 
 
 ## Manager Console
 
-- `1. Create Package`: creates the `Packages/com.actionfit.*` package skeleton, README, AI guide, asmdef, and PackageInfo SO.
+- `1. Create Package`: creates the `Packages/com.actionfit.*` package skeleton, README, AI guide, README-only package menu file, asmdef, and PackageInfo SO.
 - `2. Publish Changed`: normal publish path. It finds packages whose local `package.json` version is higher than the catalog latest version, includes newly created packages that are not yet registered, prepares local publish clones, creates missing repositories, pushes package contents/tags, and appends catalog rows. `Publish All Changed` runs repository publishes up to 4 packages at once, then appends all catalog rows by one batch request when the Web App supports it. Each package's `Repository Visibility` in `ActionFitPackageInfo_SO` selects the public/private GitHub profile for both new and already registered package publishes.
 - `Publish Package`: manual publish path for an already registered package version when you need to type a specific version before publishing.
 - `Open Catalog`: selects the local or fallback catalog CSV.
