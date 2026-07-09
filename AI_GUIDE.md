@@ -7,7 +7,7 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.custompackagemanager`
 - Display name: Custom Package Manager
 - Repository: `https://github.com/ActionFit-Editor/Custom_Package_Manager.git`
-- Current package version at generation time: `1.1.51`
+- Current package version at generation time: `1.1.53`
 - Unity version: `6000.2`
 
 ## Purpose
@@ -33,8 +33,8 @@ Read this file when:
 
 ## Main Files
 
-- `Editor/Scripts/ActionFitPackageManagerWindow.cs`: package list, install/apply/remove/update/history UI.
-- `Editor/Scripts/ActionFitPackageManagerConsoleWindow.cs`: operational console for create/repo/publish/readme/catalog/manifest/settings actions.
+- `Editor/Scripts/ActionFitPackageManagerWindow.cs`: package list, install/apply/remove/check-update/force-update/history/tools UI.
+- `Editor/Scripts/ActionFitPackageManagerConsoleWindow.cs`: operational console for create/repo/publish/catalog/manifest/router actions.
 - `Editor/Scripts/ActionFitPackageCatalogSettings_SO.cs`: spreadsheet config, one GitHub publish token, public/private repo creation org profiles, and publish cache root.
 - `Editor/Scripts/ActionFitPackageInfoUtility.cs`: package skeleton creation and PackageInfo/README/AI_GUIDE generation.
 - `Editor/Scripts/ActionFitPackagePublishWindow.cs`: publish target scan and publish UI.
@@ -70,11 +70,13 @@ Read this file when:
 - Fallback catalog path: `Packages/com.actionfit.custompackagemanager/Editor/Catalog/package_catalog.csv`.
 - Package Manager reads the local catalog when present, otherwise the embedded package catalog.
 - It manages internal UPM package install/update/remove, repository creation, changelog/history display, AI guide routing, and manual publish flows.
-- Manager Console exposes `1. Create Package`, `2. Publish Changed`, and `Publish Package`. `Publish Changed` is the normal publish path for changed versions and newly created packages.
+- Manager Console exposes `1. Create Package`, `2. Publish Changed`, `Publish Package`, catalog/manifest access, and AI guide router refresh. Package README and settings SO access should stay in each expanded package row's separated `Tools` area, not in `Project Files`.
 - Each package's `ActionFitPackageInfo_SO` stores `Repository Visibility`. Publish flows use that package-local value to choose the public/private GitHub profile for both new and already registered packages, so `Publish All Changed` can safely publish mixed public/private packages in one run.
 - Package section classification should treat Git/registry dependencies in `Packages/manifest.json` as Downloaded Packages. Only local `file:` dependencies or package folders under `Packages/` without a manifest dependency should be treated as Embedded Packages.
-- The `Updates` panel must include only installed packages whose catalog latest version is higher than the installed version. Do not treat any version difference as an update, because that can downgrade packages such as `1.0.30 -> 1.0.29`.
-- `Latest Git` buttons in package details and the `Updates` panel should open the catalog latest version's GitHub tag URL in the browser without modifying `Packages/manifest.json`.
+- The `Check Update` panel must include only installed packages whose catalog latest version is higher than the installed version. Do not treat any version difference as an update, because that can downgrade packages such as `1.0.30 -> 1.0.29`.
+- `Force Update` must run catalog refresh first, show a confirmation list of downloaded packages, and then re-apply catalog latest Git UPM URLs/dependencies for downloaded packages only. Embedded packages are skipped so local edits are not deleted.
+- `Latest Git` buttons in package details and the `Check Update` panel should open the catalog latest version's GitHub tag URL in the browser without modifying `Packages/manifest.json`.
+- Expanded package rows should show a separated `Tools` area at the bottom. `README` should open the installed package README from `Packages/` or `Library/PackageCache` when available, and otherwise fall back to the catalog GitHub README URL. Packages with shared settings SOs should show a `Setting SO` button that selects and pings the known settings asset.
 - Downloaded packages may be converted to editable embedded packages through `Embed for Edit`. The conversion should copy the resolved package source into a temporary folder, validate that the copied `package.json` exists and has the expected package `name`, move it into `Packages/<packageId>/`, write `file:<packageId>` in `Packages/manifest.json`, preserve catalog repository metadata in PackageInfo for publishing back to the existing package repository, refresh package AI routing, and run Package Manager resolve without requiring publish credentials. Do not write a local `file:` dependency unless the target local package folder has a valid `package.json`; Unity Package Manager will fail project resolve when manifest points at a missing local package.
 - If `Packages/<packageId>/` already exists during `Embed for Edit`, validate its `package.json` name and let the user use that existing folder by writing the local `file:<packageId>` dependency. Do not overwrite the local folder.
 - Downloaded packages may also be copied through `Fork as New` when the user wants a new `com.actionfit.*` package ID and a new repository instead of publishing edits back to the source package repository. This flow must rewrite the copied package's `package.json` metadata, create PackageInfo metadata for the new repository, remove the original manifest dependency, and write the new local `file:<newPackageId>` dependency so duplicate source/fork assemblies are not compiled together.

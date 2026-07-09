@@ -1,4 +1,5 @@
 #if UNITY_EDITOR
+using System.IO;
 using UnityEditor;
 using UnityEngine;
 
@@ -11,7 +12,8 @@ public class ActionFitPackageReadmeWindow : EditorWindow
     public static void Open(string readmePath)
     {
         var readme = AssetDatabase.LoadAssetAtPath<TextAsset>(readmePath);
-        if (readme == null)
+        string content = readme != null ? readme.text : ReadFileContent(readmePath);
+        if (string.IsNullOrWhiteSpace(content))
         {
             EditorUtility.DisplayDialog("ActionFit Package Manager", $"README not found.\n{readmePath}", "OK");
             return;
@@ -20,7 +22,7 @@ public class ActionFitPackageReadmeWindow : EditorWindow
         var window = GetWindow<ActionFitPackageReadmeWindow>("ActionFit Package README");
         window.minSize = new Vector2(560, 520);
         window._readmePath = readmePath;
-        window._content = readme.text;
+        window._content = content;
         window.Show();
     }
 
@@ -47,6 +49,22 @@ public class ActionFitPackageReadmeWindow : EditorWindow
     {
         var readme = AssetDatabase.LoadAssetAtPath<TextAsset>(_readmePath);
         if (readme != null) _content = readme.text;
+        else _content = ReadFileContent(_readmePath);
+    }
+
+    private static string ReadFileContent(string readmePath)
+    {
+        string fullPath = ResolveProjectPath(readmePath);
+        return File.Exists(fullPath) ? File.ReadAllText(fullPath) : "";
+    }
+
+    private static string ResolveProjectPath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return "";
+        if (Path.IsPathRooted(path)) return path;
+
+        string projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+        return Path.Combine(projectRoot, path.Replace("/", Path.DirectorySeparatorChar.ToString()));
     }
 
     private static GUIStyle ReadmeStyle

@@ -7,27 +7,29 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.51"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.53"
   }
 }
 ```
 
 ## Menu
 
-- `Tools > ActionFit > Package Manager > Package Manager`: install, apply versions, remove packages, and inspect updates.
-- `Tools > ActionFit > Package Manager > Manager Console`: create packages, publish changed package versions, publish selected package versions, open README/catalog/manifest/settings.
+- `Tools > ActionFit > Package Manager > Package Manager`: install, apply versions, remove packages, inspect README/settings links, and check updates.
+- `Tools > ActionFit > Package Manager > Manager Console`: create packages, publish changed package versions, publish selected package versions, open catalog/manifest files, and refresh the AI guide router.
 
 ## Package Manager
 
 - `Reload`: reloads the active catalog and current package install state.
 - `Update Catalog`: downloads the local catalog CSV from the configured spreadsheet/web app.
-- `Settings`: selects `Assets/_Data/_CustomPackageManager/ActionFitPackageCatalogSettings_SO.asset`.
-- `Updates`: shows installed packages whose catalog latest version is higher than the current version.
+- `Force Update`: runs `Update Catalog`, lists downloaded packages, and re-applies their catalog latest Git UPM URLs to `Packages/manifest.json` after confirmation. Embedded packages are skipped.
+- `Check Update`: shows installed packages whose catalog latest version is higher than the current version.
 - `Console`: opens the Manager Console.
 
 Package sections are grouped as Package Manager, Embedded Packages, Downloaded Packages, and Available Packages. Git/registry dependencies in `Packages/manifest.json` are shown as Downloaded Packages. Local `file:` dependencies or package folders under `Packages/` without a manifest dependency are shown as Embedded Packages.
 
 Package sections are sorted by package community score, `likes - dislikes`, highest first. When the catalog spreadsheet Web App exposes `package_vote_summary`, `Update Catalog` imports `likes`, `dislikes`, `vote_score`, and `comment_count` into the local catalog CSV.
+
+Expanded package rows include a separated `Tools` area at the bottom. `README` opens the installed package README from `Packages/` or `Library/PackageCache`, and falls back to the catalog GitHub README URL for packages that are not installed locally. Packages that own or bootstrap a shared settings ScriptableObject show a `Setting SO` button that selects and pings the relevant settings asset.
 
 Downloaded packages include `Embed for Edit` and `Fork as New`. `Embed for Edit` copies the resolved package source from Unity's package cache into a temporary folder, validates the copied `package.json`, moves it into `Packages/<packageId>/`, writes `file:<packageId>` to `Packages/manifest.json`, and preserves catalog repository metadata so edits can be published back to the existing package repository. If the local package folder already exists and its `package.json` name matches, the tool can use that existing folder instead of copying over it.
 
@@ -47,16 +49,18 @@ Each package detail view includes a `Community` foldout.
 
 The configured catalog Web App must support `votePackage`, `upsertPackageComment`, and returning the `package_comments` sheet during `Update Catalog`. See `Editor/Documentation/PackageCommunityWebAppContract.md` for the required sheet and response contract.
 
-## Updates
+## Check Update
 
-The `Updates` panel shows installed packages only when the catalog latest version is higher than the current installed version.
+The `Check Update` panel shows installed packages only when the catalog latest version is higher than the current installed version.
 
 - Downloaded packages can be updated individually, by selection, or all at once.
 - Embedded packages are shown too. Selecting a different version converts them to Git UPM dependencies.
 - `Changes` shows changelog rows between the installed version and the selected target version.
 - `History` shows all catalog changelog rows for the package.
 - `Latest Git` opens the package's catalog latest GitHub repository tag in the default browser.
-- If the installed package is newer than the catalog latest version, it stays out of the `Updates` panel to avoid accidental downgrade.
+- If the installed package is newer than the catalog latest version, it stays out of the `Check Update` panel to avoid accidental downgrade.
+
+`Force Update` is separate from `Check Update`. It first refreshes the catalog, then shows a confirmation list of downloaded packages and writes the catalog latest URL for each listed package. This can refresh same-version manifest entries and dependency URLs without touching embedded packages.
 
 For example, updating from `1.0.1` to `1.0.4` shows the changelog rows for `1.0.2`, `1.0.3`, and `1.0.4` at display time. Those rows are not stored inside the newest release note.
 
@@ -87,10 +91,8 @@ If an AI assistant reads this package documentation before the automatic router 
 - `1. Create Package`: creates the `Packages/com.actionfit.*` package skeleton, README, AI guide, asmdef, and PackageInfo SO.
 - `2. Publish Changed`: normal publish path. It finds packages whose local `package.json` version is higher than the catalog latest version, includes newly created packages that are not yet registered, prepares local publish clones, creates missing repositories, pushes package contents/tags, and appends catalog rows. Each package's `Repository Visibility` in `ActionFitPackageInfo_SO` selects the public/private GitHub profile for both new and already registered package publishes.
 - `Publish Package`: manual publish path for an already registered package version when you need to type a specific version before publishing.
-- `README`: opens this README in a dedicated window.
 - `Open Catalog`: selects the local or fallback catalog CSV.
 - `Open Manifest`: opens the project `Packages/manifest.json`.
-- `Settings`: selects the catalog settings SO.
 - `Refresh AI Guide Router`: refreshes `PACKAGE_AI_GUIDE_ROUTER.md`, regenerates the local `packages/actionfit-packages.md` compatibility pointer next to the discovered AI entry point, and refreshes that entry point's auto-managed package guide section when one exists. The router code now keeps AI entry point registration behind adapter-style helpers so additional AI tools can be added without duplicating package guide scanning.
 
 ## Catalog And Manifest

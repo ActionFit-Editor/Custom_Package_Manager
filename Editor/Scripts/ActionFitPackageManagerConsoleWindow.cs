@@ -5,7 +5,6 @@ using UnityEngine;
 
 public class ActionFitPackageManagerConsoleWindow : EditorWindow
 {
-    private const string ReadmePath = "Packages/com.actionfit.custompackagemanager/README.md";
     private const string ManifestPath = "Packages/manifest.json";
     private const string FallbackCatalogPath = "Packages/com.actionfit.custompackagemanager/Editor/Catalog/package_catalog.csv";
 
@@ -34,9 +33,6 @@ public class ActionFitPackageManagerConsoleWindow : EditorWindow
         EditorGUILayout.LabelField("Project Files", EditorStyles.boldLabel);
         using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
         {
-            if (GUILayout.Button("README"))
-                ActionFitPackageReadmeWindow.Open(ReadmePath);
-
             if (GUILayout.Button("Open Catalog"))
             {
                 var catalog = AssetDatabase.LoadAssetAtPath<TextAsset>(ActionFitPackageCatalogSettingsProvider.LocalCatalogPath);
@@ -53,9 +49,6 @@ public class ActionFitPackageManagerConsoleWindow : EditorWindow
                 else if (File.Exists(ManifestPath))
                     EditorUtility.RevealInFinder(ManifestPath);
             }
-
-            if (GUILayout.Button("Settings"))
-                Selection.activeObject = ActionFitPackageCatalogSettingsProvider.FindOrCreate();
 
             if (GUILayout.Button("Refresh AI Guide Router"))
                 ActionFitPackageAiGuideRouter.EnsureProjectRouter();
