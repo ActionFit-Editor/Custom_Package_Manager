@@ -7,7 +7,7 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.custompackagemanager`
 - Display name: Custom Package Manager
 - Repository: `https://github.com/ActionFit-Editor/Custom_Package_Manager.git`
-- Current package version at generation time: `1.1.54`
+- Current package version at generation time: `1.1.55`
 - Unity version: `6000.2`
 
 ## Purpose
@@ -39,11 +39,11 @@ Read this file when:
 - `Editor/Scripts/ActionFitPackageCatalogSettings_SO.cs`: spreadsheet config, one GitHub publish token, public/private repo creation org profiles, and publish cache root.
 - `Editor/Scripts/ActionFitPackageInfoUtility.cs`: package skeleton creation and PackageInfo/README/AI_GUIDE generation.
 - `Editor/Scripts/ActionFitPackagePublishWindow.cs`: publish target scan and publish UI.
-- `Editor/Scripts/ActionFitPackagePublisher.cs`: GitHub repository check, local publish clone preparation, remote `git push`, tag push, catalog upsert, and publish step logging.
+- `Editor/Scripts/ActionFitPackagePublisher.cs`: GitHub repository check, local publish clone preparation, remote `git push`, tag push, single/batch catalog upsert, and publish step logging.
 - `Editor/Scripts/ActionFitPackageCatalogUpdater.cs`: spreadsheet/web-app catalog download.
 - `Editor/Scripts/ActionFitPackageCommunityClient.cs`: anonymous project vote ID, package vote/comment Web App requests, and local vote state.
 - `Editor/Scripts/ActionFitPackageAiGuideRouter.cs`: scans embedded and Git UPM package `AI_GUIDE.md` files, syncs `PACKAGE_AI_GUIDE_ROUTER.md`, and connects discovered AI entry points through adapter-style helpers.
-- `Editor/Documentation/PackageCommunityWebAppContract.md`: required spreadsheet sheets and Web App actions for package votes and comments.
+- `Editor/Documentation/PackageCommunityWebAppContract.md`: required spreadsheet sheets and Web App actions for package votes, comments, and batch catalog publish confirmation.
 - `Editor/PackageInfo/ActionFitPackageInfo_SO.asset`: catalog metadata source for this package.
 - `PACKAGE_AI_GUIDE_ROUTER.md`: package-shipped AI router for choosing which package `AI_GUIDE.md` to read for a task.
 
@@ -73,6 +73,9 @@ Read this file when:
 - It manages internal UPM package install/update/remove, repository creation, changelog/history display, AI guide routing, and manual publish flows.
 - Manager Console exposes `1. Create Package`, `2. Publish Changed`, `Publish Package`, catalog/manifest access, and AI guide router refresh. Package README and settings SO access should stay in Unity top-menu package entries such as `Tools/Package/<Package Name>/README` and `Tools/Package/<Package Name>/Setting SO`, not in `Project Files` or Package Manager package rows.
 - Each package's `ActionFitPackageInfo_SO` stores `Repository Visibility`. Publish flows use that package-local value to choose the public/private GitHub profile for both new and already registered packages, so `Publish All Changed` can safely publish mixed public/private packages in one run.
+- `Publish All Changed` must create publish request snapshots on the Unity main thread, run only repository publish work in parallel with `ActionFitPackagePublisher.DefaultMaxParallelPublishes`, and append catalog rows only after all repository publishes succeed.
+- Bulk catalog append should call Web App action `upsertPackageVersions` first. The Web App must return either `count == item count` or per-item confirmations; otherwise the client treats batch append as unsupported and falls back to serial `upsertPackageVersion`.
+- If repository publish succeeds but catalog append fails, keep the successful catalog append items in the publish window and expose `Retry Catalog Append` so the user can update the spreadsheet without pushing repositories again.
 - Package section classification should treat Git/registry dependencies in `Packages/manifest.json` as Downloaded Packages. Only local `file:` dependencies or package folders under `Packages/` without a manifest dependency should be treated as Embedded Packages.
 - The `Check Update` panel must include only installed packages whose catalog latest version is higher than the installed version. Do not treat any version difference as an update, because that can downgrade packages such as `1.0.30 -> 1.0.29`.
 - `Force Update` must run catalog refresh first, show a confirmation list of downloaded packages, and then re-apply catalog latest Git UPM URLs/dependencies for downloaded packages only. Embedded packages are skipped so local edits are not deleted.
@@ -90,7 +93,7 @@ Read this file when:
 - Package sections should sort by community score (`likes - dislikes`) descending, then likes, comments, and display name. Keep `Package Manager` separate from normal catalog sections.
 - Package community feedback uses an anonymous project ID stored under `UserSettings/ActionFitPackageManager/`, not a user identity. Do not move this ID into committed project settings.
 - Package community voting allows only one final `Like` or `Dislike` per anonymous project ID and package. Do not re-enable switching between vote types without updating the Web App contract.
-- The Web App must support `votePackage`, `upsertPackageComment`, and returning `package_comments` during `Update Catalog` for community feedback to persist and display without per-package comment fetches. When editing this feature, keep `Editor/Documentation/PackageCommunityWebAppContract.md` aligned with client requests and expected responses.
+- The Web App must support `votePackage`, `upsertPackageComment`, and returning `package_comments` during `Update Catalog` for community feedback to persist and display without per-package comment fetches. For faster bulk publish, it should also support `upsertPackageVersions`. When editing these features, keep `Editor/Documentation/PackageCommunityWebAppContract.md` aligned with client requests and expected responses.
 - `Update Catalog` should continue working if the Web App does not return `package_vote_summary`; community counts default to zero.
 
 ## Changelog And History Rules
@@ -158,7 +161,7 @@ When updating a package version, write PackageInfo release notes using these sta
 - `package.json` is the source for `name`, `version`, `unity`, and `dependencies`.
 - PackageInfo SO is the source for `repoName`, repository visibility, description, owner, status, and release notes.
 - Before package publish, treat that package's `README.md` as user-facing documentation that will be uploaded to GitHub and keep it up to date.
-- `2. Publish Changed` handles the normal changed-version publish path and also handles first registration for PackageInfo SOs not yet in the catalog. Each package's `Repository Visibility` controls the selected public/private GitHub profile for both existing and newly registered package publishes.
+- `2. Publish Changed` handles the normal changed-version publish path and also handles first registration for PackageInfo SOs not yet in the catalog. `Publish All Changed` publishes repositories in parallel and then batch-appends catalog rows, with serial append fallback when the Web App lacks `upsertPackageVersions`. Each package's `Repository Visibility` controls the selected public/private GitHub profile for both existing and newly registered package publishes.
 - `Publish Package` prepares the local publish clone for already registered PackageInfo SOs when a manual version field is needed, pushes package contents/tags, and appends catalog rows.
 - Creation and publish flow guidance should stay based on this package's README and Manager Console UI.
 - For real publishing, use the configured ActionFit GitHub authentication and SSH/HTTPS settings in the local environment. AI may run real publish, push, tag, or catalog upsert only when the user explicitly asks.
@@ -177,6 +180,7 @@ When updating a package version, write PackageInfo release notes using these sta
 - Publishing is manual through Custom Package Manager.
 - Before reusing a version, check the remote Git tags. Published tags are immutable.
 - If this package is modified after a version was tagged, bump to the next unused patch version before publishing.
-- The publisher fetches `origin/main`, resets the local publish clone, copies package files, creates a package commit/tag, pushes `main`, pushes the package version tag when it does not already exist remotely, then appends the catalog row.
+- The single-package publisher fetches `origin/main`, resets the local publish clone, copies package files, creates a package commit/tag, pushes `main`, pushes the package version tag when it does not already exist remotely, then appends the catalog row.
+- `Publish All Changed` uses snapshot-based publish requests so background tasks do not read Unity objects. It publishes repositories in parallel, appends catalog rows by `upsertPackageVersions` after all repository publishes succeed, falls back to serial `upsertPackageVersion` when batch append is unsupported, and keeps retryable catalog rows when append fails after successful repository publish.
 - Publish logs should identify each major step: repository check, publish clone path, file copy, commit/tag creation, `main` push, tag push, and catalog append.
 - The package repository should include this `AI_GUIDE.md` so other projects can load the AI package context after installing the package.

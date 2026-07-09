@@ -7,7 +7,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.54"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.55"
   }
 }
 ```
@@ -98,7 +98,7 @@ If an AI assistant reads this package documentation before the automatic router 
 ## Manager Console
 
 - `1. Create Package`: creates the `Packages/com.actionfit.*` package skeleton, README, AI guide, asmdef, and PackageInfo SO.
-- `2. Publish Changed`: normal publish path. It finds packages whose local `package.json` version is higher than the catalog latest version, includes newly created packages that are not yet registered, prepares local publish clones, creates missing repositories, pushes package contents/tags, and appends catalog rows. Each package's `Repository Visibility` in `ActionFitPackageInfo_SO` selects the public/private GitHub profile for both new and already registered package publishes.
+- `2. Publish Changed`: normal publish path. It finds packages whose local `package.json` version is higher than the catalog latest version, includes newly created packages that are not yet registered, prepares local publish clones, creates missing repositories, pushes package contents/tags, and appends catalog rows. `Publish All Changed` runs repository publishes up to 4 packages at once, then appends all catalog rows by one batch request when the Web App supports it. Each package's `Repository Visibility` in `ActionFitPackageInfo_SO` selects the public/private GitHub profile for both new and already registered package publishes.
 - `Publish Package`: manual publish path for an already registered package version when you need to type a specific version before publishing.
 - `Open Catalog`: selects the local or fallback catalog CSV.
 - `Open Manifest`: opens the project `Packages/manifest.json`.
@@ -119,6 +119,8 @@ If an AI assistant reads this package documentation before the automatic router 
 ## Publish Notes
 
 `Publish Package` and `Publish Changed` refresh the catalog before uploading, block publishing when the refreshed catalog already contains the same `package_id@version`, create or refresh the local publish clone, commit copied package files, push `main`, push the version tag when needed, and append the catalog row. When a duplicate version is found, the default policy is to stop instead of overwriting the existing Git tag/catalog row; change `package.json` or `Publish Version`, or use `Fork as New` when the package should become a separate package/repository. The Unity Console prints `[ActionFitPackageManager]` logs for repository check, clone path, file copy, commit/tag, branch push, tag push, and catalog append steps.
+
+`Publish All Changed` snapshots the selected packages before upload, runs only the GitHub repository publish step in parallel, and appends catalog rows after every repository publish succeeds. The catalog Web App should support `upsertPackageVersions` and return either a matching `count` or per-item confirmations. If the Web App does not support that batch action yet, the tool falls back to serial `upsertPackageVersion` requests. If repository publish succeeds but catalog append fails, the window keeps those rows and shows `Retry Catalog Append` so the spreadsheet update can be retried without pushing repositories again.
 
 `Settings` stores one GitHub token in `GitHub Publish Default` and separate repository creation organizations for public and private repositories. Fill `_githubToken` once, then set `Repo Creation - Public` and `Repo Creation - Private` org values when the repository owners differ. Private catalog entries can point at private GitHub repositories, so consuming projects still need GitHub access to install them.
 

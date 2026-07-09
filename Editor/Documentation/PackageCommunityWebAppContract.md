@@ -57,9 +57,9 @@ Unity stores the returned comments at `UserSettings/ActionFitPackageManager/pack
 
 Only visible comments should be returned. If hidden rows are returned, Unity filters rows where `hidden` is `true`, `1`, or `yes`.
 
-## Actions
+## Community Actions
 
-All POST bodies include `token`, `action`, `ssId`, `package_id`, and `vote_id`.
+Community POST bodies include `token`, `action`, `ssId`, `package_id`, and `vote_id`.
 
 ### `votePackage`
 
@@ -86,6 +86,98 @@ Response:
   "likes": 12,
   "dislikes": 3,
   "comment_count": 4
+}
+```
+
+## Catalog Publish Actions
+
+Catalog publish POST bodies include `token`, `action`, `ssId`, and catalog payload data. The existing single-row action remains supported so older Web App deployments can continue to work.
+
+### `upsertPackageVersion`
+
+Request:
+
+```json
+{
+  "token": "configured-token",
+  "action": "upsertPackageVersion",
+  "ssId": "spreadsheet-id",
+  "package": {
+    "package_id": "com.actionfit.csvimporter",
+    "display_name": "CSV Importer",
+    "repo_url": "https://github.com/ActionFit-Editor/CSV_Importer.git",
+    "owner": "owner",
+    "status": "verified",
+    "description": "description"
+  },
+  "version": {
+    "catalog_id": "com.actionfit.csvimporter@1.4.15",
+    "version": "1.4.15",
+    "unity_min": "6000.2",
+    "changelog": "release note",
+    "dependencies": "{}"
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "package_id": "com.actionfit.csvimporter",
+  "version": "1.4.15",
+  "catalog_id": "com.actionfit.csvimporter@1.4.15"
+}
+```
+
+### `upsertPackageVersions`
+
+`Publish All Changed` sends this batch action after all repository publishes succeed. The Web App should upsert every item in one request and return either `count` matching the request item count or per-item confirmations. If the Unity client does not receive one of those confirmations, it treats the batch action as unsupported and falls back to serial `upsertPackageVersion`.
+
+Request:
+
+```json
+{
+  "token": "configured-token",
+  "action": "upsertPackageVersions",
+  "ssId": "spreadsheet-id",
+  "items": [
+    {
+      "package": {
+        "package_id": "com.actionfit.csvimporter",
+        "display_name": "CSV Importer",
+        "repo_url": "https://github.com/ActionFit-Editor/CSV_Importer.git",
+        "owner": "owner",
+        "status": "verified",
+        "description": "description"
+      },
+      "version": {
+        "catalog_id": "com.actionfit.csvimporter@1.4.15",
+        "version": "1.4.15",
+        "unity_min": "6000.2",
+        "changelog": "release note",
+        "dependencies": "{}"
+      }
+    }
+  ]
+}
+```
+
+Response:
+
+```json
+{
+  "success": true,
+  "count": 1,
+  "items": [
+    {
+      "success": true,
+      "package_id": "com.actionfit.csvimporter",
+      "version": "1.4.15",
+      "catalog_id": "com.actionfit.csvimporter@1.4.15"
+    }
+  ]
 }
 ```
 
@@ -124,4 +216,4 @@ Response:
 - The same project can keep one editable comment per package.
 - Comment titles are shown first; the body is displayed through a foldout per title.
 - Package comments are refreshed in bulk by `Update Catalog`. The Package Manager window does not show per-package comment load buttons.
-- If the Web App does not support these actions yet, Unity shows the Web App response in the package `Community` panel.
+- If the Web App does not support the community actions yet, Unity shows the Web App response in the package `Community` panel.

@@ -1,7 +1,9 @@
 #if UNITY_EDITOR
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -12,6 +14,9 @@ using Debug = UnityEngine.Debug;
 public static class ActionFitPackagePublisher
 {
     private const string CatalogAppendAction = "upsertPackageVersion";
+    private const string CatalogBatchAppendAction = "upsertPackageVersions";
+
+    public const int DefaultMaxParallelPublishes = 4;
 
     public static bool Publish(ActionFitPackageCatalogSettings_SO settings, ActionFitPackageInfo_SO info, out string message)
     {
@@ -25,8 +30,134 @@ public static class ActionFitPackagePublisher
         return Publish(settings, info, settings.GetRepositoryCreationProfile(repositoryVisibility), out message);
     }
 
+    public static bool TryCreatePublishRequest(
+        ActionFitPackageCatalogSettings_SO settings,
+        ActionFitPackageInfo_SO info,
+        ActionFitPackageRepositoryVisibility repositoryVisibility,
+        out PublishRequest request,
+        out string message)
+    {
+        request = null;
+        message = "";
+        if (settings == null) { message = "Package Manager settings asset is missing."; return false; }
+        return TryCreatePublishRequest(settings, info, settings.GetRepositoryCreationProfile(repositoryVisibility), out request, out message);
+    }
+
+    public static PublishResult PublishRepository(PublishRequest request)
+    {
+        if (request == null) return PublishResult.Failed(null, "Publish request is missing.");
+
+        try
+        {
+            Debug.Log(
+                $"[ActionFitPackageManager] Publish start: {request.PackageId}@{request.Version} " +
+                $"-> {request.GitHubOrganization}/{request.RepoName}");
+            EnsureRepository(request);
+            Debug.Log($"[ActionFitPackageManager] Repository ready: {request.GitHubOrganization}/{request.RepoName}");
+
+            PublishGitRepository(request);
+
+            return PublishResult.Succeeded(
+                request,
+                $"{request.PackageId}@{request.Version} package repository published.");
+        }
+        catch (Exception ex)
+        {
+            return PublishResult.Failed(request, ex.Message);
+        }
+    }
+
+    public static bool TryAppendCatalogBatch(IReadOnlyList<CatalogAppendItem> items, out string message)
+    {
+        message = "";
+        if (items == null || items.Count == 0)
+        {
+            message = "No catalog rows to append.";
+            return true;
+        }
+
+        try
+        {
+            AppendCatalogBatch(items);
+            message = $"{items.Count} catalog row(s) appended by batch request.";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            message = ex.Message;
+            return false;
+        }
+    }
+
+    public static bool TryAppendCatalogSerial(IReadOnlyList<CatalogAppendItem> items, out string message)
+    {
+        message = "";
+        if (items == null || items.Count == 0)
+        {
+            message = "No catalog rows to append.";
+            return true;
+        }
+
+        var appended = new List<string>();
+        foreach (var item in items)
+        {
+            try
+            {
+                AppendCatalog(item);
+                appended.Add(item.CatalogId);
+            }
+            catch (Exception ex)
+            {
+                message =
+                    $"Catalog serial append stopped.\n\nSucceeded:\n{string.Join("\n", appended)}\n\nFailed:\n{item.CatalogId}\n{ex.Message}";
+                return false;
+            }
+        }
+
+        message = $"{items.Count} catalog row(s) appended one by one.";
+        return true;
+    }
+
     private static bool Publish(ActionFitPackageCatalogSettings_SO settings, ActionFitPackageInfo_SO info, ActionFitPackageGitHubProfile github, out string message)
     {
+        if (!TryCreatePublishRequest(settings, info, github, out var request, out message))
+            return false;
+
+        try
+        {
+            EditorUtility.DisplayProgressBar("ActionFit Package Publish", "Checking GitHub repository...", 0.1f);
+            EnsureRepository(request);
+            Debug.Log($"[ActionFitPackageManager] Repository ready: {request.GitHubOrganization}/{request.RepoName}");
+
+            EditorUtility.DisplayProgressBar("ActionFit Package Publish", "Publishing package repository...", 0.45f);
+            PublishGitRepository(request);
+
+            EditorUtility.DisplayProgressBar("ActionFit Package Publish", "Appending catalog row...", 0.8f);
+            AppendCatalog(request.CatalogItem);
+            Debug.Log($"[ActionFitPackageManager] Catalog append complete: {request.PackageId}@{request.Version}");
+
+            message = $"{request.PackageId}@{request.Version} published and catalog append requested.";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            message = ex.Message;
+            return false;
+        }
+        finally
+        {
+            EditorUtility.ClearProgressBar();
+        }
+    }
+
+    private static bool TryCreatePublishRequest(
+        ActionFitPackageCatalogSettings_SO settings,
+        ActionFitPackageInfo_SO info,
+        ActionFitPackageGitHubProfile github,
+        out PublishRequest request,
+        out string message)
+    {
+        request = null;
         message = "";
         if (info == null) { message = "Select an ActionFitPackageInfo_SO asset first."; return false; }
         if (string.IsNullOrWhiteSpace(github.Organization)) { message = $"{github.Label} GitHub Org is empty."; return false; }
@@ -55,40 +186,46 @@ public static class ActionFitPackagePublisher
             return false;
         }
 
-        try
-        {
-            Debug.Log(
-                $"[ActionFitPackageManager] Publish start: {manifest.Name}@{manifest.Version} " +
-                $"-> {github.Organization}/{info.RepoName}");
-            EditorUtility.DisplayProgressBar("ActionFit Package Publish", "Checking GitHub repository...", 0.1f);
-            EnsureRepository(github, info.RepoName);
-            Debug.Log($"[ActionFitPackageManager] Repository ready: {github.Organization}/{info.RepoName}");
+        string spreadsheetId = ExtractSpreadsheetId(settings.SpreadSheetUrl);
+        string repoUrl = $"https://github.com/{github.Organization}/{info.RepoName}.git";
+        string dependencies = !string.IsNullOrWhiteSpace(info.DependenciesOverride)
+            ? info.DependenciesOverride
+            : manifest.Dependencies;
 
-            EditorUtility.DisplayProgressBar("ActionFit Package Publish", "Publishing package repository...", 0.45f);
-            PublishGitRepository(settings, github, packageRoot, info.RepoName, manifest);
+        var catalogItem = new CatalogAppendItem(
+            settings.WebAppUrl,
+            settings.FetchToken,
+            settings.SpreadSheetUrl,
+            spreadsheetId,
+            manifest.Name,
+            info.DisplayName,
+            repoUrl,
+            info.Owner,
+            info.Status,
+            info.Description,
+            manifest.Version,
+            manifest.Unity,
+            info.ReleaseNote,
+            dependencies);
 
-            EditorUtility.DisplayProgressBar("ActionFit Package Publish", "Appending catalog row...", 0.8f);
-            AppendCatalog(settings, github, info, manifest);
-            Debug.Log($"[ActionFitPackageManager] Catalog append complete: {manifest.Name}@{manifest.Version}");
-
-            message = $"{manifest.Name}@{manifest.Version} published and catalog append requested.";
-            return true;
-        }
-        catch (Exception ex)
-        {
-            message = ex.Message;
-            return false;
-        }
-        finally
-        {
-            EditorUtility.ClearProgressBar();
-        }
+        request = new PublishRequest(
+            settings.PublishRoot,
+            packageRoot,
+            info.RepoName,
+            github.Label,
+            github.Organization,
+            github.Token,
+            github.IsPrivate,
+            manifest.Name,
+            manifest.Version,
+            catalogItem);
+        return true;
     }
 
-    private static void EnsureRepository(ActionFitPackageGitHubProfile github, string repoName)
+    private static void EnsureRepository(PublishRequest request)
     {
-        string repoPath = $"{github.Organization}/{repoName}";
-        var get = CreateGitHubRequest($"https://api.github.com/repos/{repoPath}", github.Token, "GET");
+        string repoPath = $"{request.GitHubOrganization}/{request.RepoName}";
+        var get = CreateGitHubRequest($"https://api.github.com/repos/{repoPath}", request.GitHubToken, "GET");
         try
         {
             using var response = (HttpWebResponse)get.GetResponse();
@@ -96,13 +233,13 @@ public static class ActionFitPackagePublisher
         }
         catch (WebException ex) when ((ex.Response as HttpWebResponse)?.StatusCode == HttpStatusCode.NotFound)
         {
-            string visibility = github.IsPrivate ? "true" : "false";
-            string body = $"{{\"name\":\"{EscapeJson(repoName)}\",\"private\":{visibility},\"auto_init\":false}}";
-            var create = CreateGitHubRequest($"https://api.github.com/orgs/{github.Organization}/repos", github.Token, "POST");
+            string visibility = request.GitHubIsPrivate ? "true" : "false";
+            string body = $"{{\"name\":\"{EscapeJson(request.RepoName)}\",\"private\":{visibility},\"auto_init\":false}}";
+            var create = CreateGitHubRequest($"https://api.github.com/orgs/{request.GitHubOrganization}/repos", request.GitHubToken, "POST");
             WriteBody(create, body);
             using var response = (HttpWebResponse)create.GetResponse();
             if ((int)response.StatusCode < 200 || (int)response.StatusCode >= 300)
-                throw new InvalidOperationException($"GitHub repository create failed ({github.Label}): {response.StatusCode}");
+                throw new InvalidOperationException($"GitHub repository create failed ({request.GitHubLabel}): {response.StatusCode}");
             return;
         }
     }
@@ -119,110 +256,146 @@ public static class ActionFitPackagePublisher
         return request;
     }
 
-    private static void PublishGitRepository(ActionFitPackageCatalogSettings_SO settings, ActionFitPackageGitHubProfile github, string packageRoot, string repoName, ActionFitPackageManifest manifest)
+    private static void PublishGitRepository(PublishRequest request)
     {
-        string publishRoot = ExpandPath(settings.PublishRoot);
+        string publishRoot = ExpandPath(request.PublishRoot);
         Directory.CreateDirectory(publishRoot);
 
-        string dest = Path.Combine(publishRoot, repoName);
-        string remote = BuildTokenRemote(github, repoName);
+        string dest = Path.Combine(publishRoot, request.RepoName);
+        string remote = BuildTokenRemote(request);
         Debug.Log($"[ActionFitPackageManager] Publish clone path: {dest}");
         if (!Directory.Exists(Path.Combine(dest, ".git")))
         {
-            Debug.Log($"[ActionFitPackageManager] Cloning package repository: {github.Organization}/{repoName}");
-            RunGit(publishRoot, $"clone {Quote(remote)} {Quote(dest)}", github.Token);
+            Debug.Log($"[ActionFitPackageManager] Cloning package repository: {request.GitHubOrganization}/{request.RepoName}");
+            RunGit(publishRoot, $"clone {Quote(remote)} {Quote(dest)}", request.GitHubToken);
         }
 
-        RunGit(dest, $"remote set-url origin {Quote(remote)}", github.Token);
-        RunGit(dest, "fetch --prune origin", github.Token);
-        RunGit(dest, "reset --hard", github.Token, false);
-        RunGit(dest, "clean -fdx", github.Token, false);
+        RunGit(dest, $"remote set-url origin {Quote(remote)}", request.GitHubToken);
+        RunGit(dest, "fetch --prune origin", request.GitHubToken);
+        RunGit(dest, "reset --hard", request.GitHubToken, false);
+        RunGit(dest, "clean -fdx", request.GitHubToken, false);
 
-        if (RunGit(dest, "show-ref --verify --quiet refs/remotes/origin/main", github.Token, false))
+        if (RunGit(dest, "show-ref --verify --quiet refs/remotes/origin/main", request.GitHubToken, false))
         {
-            RunGit(dest, "checkout -B main origin/main", github.Token);
-            RunGit(dest, "reset --hard origin/main", github.Token);
+            RunGit(dest, "checkout -B main origin/main", request.GitHubToken);
+            RunGit(dest, "reset --hard origin/main", request.GitHubToken);
         }
         else
         {
-            RunGit(dest, "checkout -B main", github.Token);
+            RunGit(dest, "checkout -B main", request.GitHubToken);
         }
 
         ClearDirectoryExceptGit(dest);
-        CopyDirectory(Path.GetFullPath(packageRoot), dest);
-        Debug.Log($"[ActionFitPackageManager] Copied package files: {manifest.Name}@{manifest.Version}");
+        CopyDirectory(Path.GetFullPath(request.PackageRoot), dest);
+        Debug.Log($"[ActionFitPackageManager] Copied package files: {request.PackageId}@{request.Version}");
 
-        RunGit(dest, "add -A", github.Token);
+        RunGit(dest, "add -A", request.GitHubToken);
 
-        if (!RunGit(dest, "diff --cached --quiet", github.Token, false))
+        if (!RunGit(dest, "diff --cached --quiet", request.GitHubToken, false))
         {
-            RunGit(dest, $"commit -m {Quote($"{manifest.Name} {manifest.Version}")}", github.Token);
-            Debug.Log($"[ActionFitPackageManager] Package commit created: {manifest.Name}@{manifest.Version}");
+            RunGit(dest, $"commit -m {Quote($"{request.PackageId} {request.Version}")}", request.GitHubToken);
+            Debug.Log($"[ActionFitPackageManager] Package commit created: {request.PackageId}@{request.Version}");
         }
         else
         {
-            Debug.Log($"[ActionFitPackageManager] No package file changes to commit: {manifest.Name}@{manifest.Version}");
+            Debug.Log($"[ActionFitPackageManager] No package file changes to commit: {request.PackageId}@{request.Version}");
         }
 
-        string tagRef = $"refs/tags/{manifest.Version}";
-        bool remoteTagExists = RunGit(dest, $"ls-remote --exit-code --tags origin {Quote(tagRef)}", github.Token, false);
+        string tagRef = $"refs/tags/{request.Version}";
+        bool remoteTagExists = RunGit(dest, $"ls-remote --exit-code --tags origin {Quote(tagRef)}", request.GitHubToken, false);
         if (!remoteTagExists)
         {
-            if (RunGit(dest, $"show-ref --verify --quiet {Quote(tagRef)}", github.Token, false))
-                RunGit(dest, $"tag -d {Quote(manifest.Version)}", github.Token);
+            if (RunGit(dest, $"show-ref --verify --quiet {Quote(tagRef)}", request.GitHubToken, false))
+                RunGit(dest, $"tag -d {Quote(request.Version)}", request.GitHubToken);
 
-            RunGit(dest, $"tag {Quote(manifest.Version)}", github.Token);
-            Debug.Log($"[ActionFitPackageManager] Package tag prepared: {manifest.Version}");
+            RunGit(dest, $"tag {Quote(request.Version)}", request.GitHubToken);
+            Debug.Log($"[ActionFitPackageManager] Package tag prepared: {request.Version}");
         }
         else
         {
-            Debug.Log($"[ActionFitPackageManager] Remote tag already exists, tag push will be skipped: {manifest.Version}");
+            Debug.Log($"[ActionFitPackageManager] Remote tag already exists, tag push will be skipped: {request.Version}");
         }
 
-        Debug.Log($"[ActionFitPackageManager] Pushing package main branch: {github.Organization}/{repoName}");
-        RunGit(dest, "push -u origin main", github.Token);
-        Debug.Log($"[ActionFitPackageManager] Package main branch pushed: {github.Organization}/{repoName}");
+        Debug.Log($"[ActionFitPackageManager] Pushing package main branch: {request.GitHubOrganization}/{request.RepoName}");
+        RunGit(dest, "push -u origin main", request.GitHubToken);
+        Debug.Log($"[ActionFitPackageManager] Package main branch pushed: {request.GitHubOrganization}/{request.RepoName}");
         if (!remoteTagExists)
         {
-            Debug.Log($"[ActionFitPackageManager] Pushing package tag: {manifest.Version}");
-            RunGit(dest, $"push origin {Quote(manifest.Version)}", github.Token);
-            Debug.Log($"[ActionFitPackageManager] Package tag pushed: {manifest.Version}");
+            Debug.Log($"[ActionFitPackageManager] Pushing package tag: {request.Version}");
+            RunGit(dest, $"push origin {Quote(request.Version)}", request.GitHubToken);
+            Debug.Log($"[ActionFitPackageManager] Package tag pushed: {request.Version}");
         }
     }
 
-    private static void AppendCatalog(ActionFitPackageCatalogSettings_SO settings, ActionFitPackageGitHubProfile github, ActionFitPackageInfo_SO info, ActionFitPackageManifest manifest)
+    private static void AppendCatalog(CatalogAppendItem item)
     {
-        if (string.IsNullOrWhiteSpace(settings.WebAppUrl) ||
-            string.IsNullOrWhiteSpace(settings.FetchToken) ||
-            string.IsNullOrWhiteSpace(settings.SpreadSheetUrl))
-            throw new InvalidOperationException("Spreadsheet URL, Web App URL, and Fetch Token are required for catalog append.");
+        ValidateCatalogSettings(item);
 
-        string ssId = ExtractSpreadsheetId(settings.SpreadSheetUrl);
-        string repoUrl = $"https://github.com/{github.Organization}/{info.RepoName}.git";
-        string dependencies = !string.IsNullOrWhiteSpace(info.DependenciesOverride) ? info.DependenciesOverride : manifest.Dependencies;
         string body =
             "{" +
-            $"\"token\":\"{EscapeJson(settings.FetchToken)}\"," +
+            $"\"token\":\"{EscapeJson(item.FetchToken)}\"," +
             $"\"action\":\"{CatalogAppendAction}\"," +
-            $"\"ssId\":\"{EscapeJson(ssId)}\"," +
-            "\"package\":{" +
-            $"\"package_id\":\"{EscapeJson(manifest.Name)}\"," +
-            $"\"display_name\":\"{EscapeJson(info.DisplayName)}\"," +
-            $"\"repo_url\":\"{EscapeJson(repoUrl)}\"," +
-            $"\"owner\":\"{EscapeJson(info.Owner)}\"," +
-            $"\"status\":\"{EscapeJson(info.Status)}\"," +
-            $"\"description\":\"{EscapeJson(info.Description)}\"" +
-            "}," +
-            "\"version\":{" +
-            $"\"catalog_id\":\"{EscapeJson(manifest.Name + "@" + manifest.Version)}\"," +
-            $"\"version\":\"{EscapeJson(manifest.Version)}\"," +
-            $"\"unity_min\":\"{EscapeJson(manifest.Unity)}\"," +
-            $"\"changelog\":\"{EscapeJson(info.ReleaseNote)}\"," +
-            $"\"dependencies\":\"{EscapeJson(dependencies)}\"" +
-            "}" +
+            $"\"ssId\":\"{EscapeJson(item.SpreadsheetId)}\"," +
+            BuildCatalogPayloadJson(item) +
             "}";
 
-        string url = $"{settings.WebAppUrl}?token={Uri.EscapeDataString(settings.FetchToken)}&ssId={Uri.EscapeDataString(ssId)}";
+        string text = PostCatalogRequest(item, body);
+        var result = JsonUtility.FromJson<CatalogAppendResponse>(text);
+        ValidateCatalogAppendResponse(result, item, text);
+    }
+
+    private static void AppendCatalogBatch(IReadOnlyList<CatalogAppendItem> items)
+    {
+        if (items == null || items.Count == 0) return;
+        var first = items[0];
+        ValidateCatalogSettings(first);
+        foreach (var item in items)
+        {
+            ValidateCatalogSettings(item);
+            if (!string.Equals(first.WebAppUrl, item.WebAppUrl, StringComparison.Ordinal) ||
+                !string.Equals(first.FetchToken, item.FetchToken, StringComparison.Ordinal) ||
+                !string.Equals(first.SpreadsheetId, item.SpreadsheetId, StringComparison.Ordinal))
+                throw new InvalidOperationException("All batch catalog rows must use the same Web App URL, token, and spreadsheet.");
+        }
+
+        string body =
+            "{" +
+            $"\"token\":\"{EscapeJson(first.FetchToken)}\"," +
+            $"\"action\":\"{CatalogBatchAppendAction}\"," +
+            $"\"ssId\":\"{EscapeJson(first.SpreadsheetId)}\"," +
+            "\"items\":[" +
+            string.Join(",", items.Select(item => "{" + BuildCatalogPayloadJson(item) + "}")) +
+            "]" +
+            "}";
+
+        string text = PostCatalogRequest(first, body);
+        var result = JsonUtility.FromJson<CatalogBatchAppendResponse>(text);
+        ValidateCatalogBatchAppendResponse(result, items, text);
+    }
+
+    private static string BuildCatalogPayloadJson(CatalogAppendItem item)
+    {
+        return
+            "\"package\":{" +
+            $"\"package_id\":\"{EscapeJson(item.PackageId)}\"," +
+            $"\"display_name\":\"{EscapeJson(item.DisplayName)}\"," +
+            $"\"repo_url\":\"{EscapeJson(item.RepoUrl)}\"," +
+            $"\"owner\":\"{EscapeJson(item.Owner)}\"," +
+            $"\"status\":\"{EscapeJson(item.Status)}\"," +
+            $"\"description\":\"{EscapeJson(item.Description)}\"" +
+            "}," +
+            "\"version\":{" +
+            $"\"catalog_id\":\"{EscapeJson(item.CatalogId)}\"," +
+            $"\"version\":\"{EscapeJson(item.Version)}\"," +
+            $"\"unity_min\":\"{EscapeJson(item.UnityMin)}\"," +
+            $"\"changelog\":\"{EscapeJson(item.Changelog)}\"," +
+            $"\"dependencies\":\"{EscapeJson(item.Dependencies)}\"" +
+            "}";
+    }
+
+    private static string PostCatalogRequest(CatalogAppendItem item, string body)
+    {
+        string url = $"{item.WebAppUrl}?token={Uri.EscapeDataString(item.FetchToken)}&ssId={Uri.EscapeDataString(item.SpreadsheetId)}";
         var request = (HttpWebRequest)WebRequest.Create(url);
         request.Method = "POST";
         request.ContentType = "application/json; charset=utf-8";
@@ -234,17 +407,66 @@ public static class ActionFitPackagePublisher
         if ((int)response.StatusCode < 200 || (int)response.StatusCode >= 300)
             throw new InvalidOperationException($"Catalog append failed: {text}");
 
-        var result = JsonUtility.FromJson<CatalogAppendResponse>(text);
-        string expectedCatalogId = manifest.Name + "@" + manifest.Version;
+        return text;
+    }
+
+    private static void ValidateCatalogSettings(CatalogAppendItem item)
+    {
+        if (item == null)
+            throw new InvalidOperationException("Catalog append item is missing.");
+        if (string.IsNullOrWhiteSpace(item.WebAppUrl) ||
+            string.IsNullOrWhiteSpace(item.FetchToken) ||
+            string.IsNullOrWhiteSpace(item.SpreadsheetUrl))
+            throw new InvalidOperationException("Spreadsheet URL, Web App URL, and Fetch Token are required for catalog append.");
+        if (string.IsNullOrWhiteSpace(item.SpreadsheetId))
+            throw new InvalidOperationException("Spreadsheet URL is invalid.");
+    }
+
+    private static void ValidateCatalogAppendResponse(CatalogAppendResponse result, CatalogAppendItem item, string responseText)
+    {
         if (result == null || !result.success ||
-            !string.Equals(result.package_id, manifest.Name, StringComparison.Ordinal) ||
-            !string.Equals(result.version, manifest.Version, StringComparison.Ordinal) ||
-            !string.Equals(result.catalog_id, expectedCatalogId, StringComparison.Ordinal))
+            !string.Equals(result.package_id, item.PackageId, StringComparison.Ordinal) ||
+            !string.Equals(result.version, item.Version, StringComparison.Ordinal) ||
+            !string.Equals(result.catalog_id, item.CatalogId, StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
                 "Catalog append did not return package catalog confirmation. " +
-                "Update the Apps Script Web App deployment and try again.\n" + text);
+                "Update the Apps Script Web App deployment and try again.\n" + responseText);
         }
+    }
+
+    private static void ValidateCatalogBatchAppendResponse(CatalogBatchAppendResponse result, IReadOnlyList<CatalogAppendItem> items, string responseText)
+    {
+        if (result == null || !result.success)
+        {
+            throw new InvalidOperationException(
+                "Catalog batch append did not return success. " +
+                "Update the Apps Script Web App deployment and try again.\n" + responseText);
+        }
+
+        if (result.items != null && result.items.Length > 0)
+        {
+            if (result.count > 0 && result.count != items.Count)
+                throw new InvalidOperationException($"Catalog batch append count mismatch. Expected {items.Count}, got {result.count}.\n{responseText}");
+
+            foreach (var item in items)
+            {
+                var responseItem = result.items.FirstOrDefault(r =>
+                    r != null &&
+                    string.Equals(r.package_id, item.PackageId, StringComparison.Ordinal) &&
+                    string.Equals(r.version, item.Version, StringComparison.Ordinal));
+                ValidateCatalogAppendResponse(responseItem, item, responseText);
+            }
+
+            return;
+        }
+
+        if (result.count == items.Count)
+            return;
+
+        throw new InvalidOperationException(
+            "Catalog batch append did not return count or item confirmations. " +
+            "Update the Apps Script Web App deployment and try again.\n" + responseText);
     }
 
     private static bool RunGit(string workingDirectory, string arguments, string token, bool throwOnFailure = true)
@@ -271,8 +493,8 @@ public static class ActionFitPackagePublisher
         throw new InvalidOperationException($"git {sanitizedArguments} failed:\n{sanitizedOutput}");
     }
 
-    private static string BuildTokenRemote(ActionFitPackageGitHubProfile github, string repoName)
-        => $"https://x-access-token:{github.Token}@github.com/{github.Organization}/{repoName}.git";
+    private static string BuildTokenRemote(PublishRequest request)
+        => $"https://x-access-token:{request.GitHubToken}@github.com/{request.GitHubOrganization}/{request.RepoName}.git";
 
     private static void WriteBody(HttpWebRequest request, string body)
     {
@@ -330,6 +552,113 @@ public static class ActionFitPackagePublisher
     private static string EscapeJson(string value) => (value ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\n", "\\n").Replace("\r", "\\r");
     private static string Sanitize(string text, string token) => string.IsNullOrEmpty(token) ? text : text.Replace(token, "***");
 
+    public sealed class PublishRequest
+    {
+        public PublishRequest(
+            string publishRoot,
+            string packageRoot,
+            string repoName,
+            string gitHubLabel,
+            string gitHubOrganization,
+            string gitHubToken,
+            bool gitHubIsPrivate,
+            string packageId,
+            string version,
+            CatalogAppendItem catalogItem)
+        {
+            PublishRoot = publishRoot;
+            PackageRoot = packageRoot;
+            RepoName = repoName;
+            GitHubLabel = gitHubLabel;
+            GitHubOrganization = gitHubOrganization;
+            GitHubToken = gitHubToken;
+            GitHubIsPrivate = gitHubIsPrivate;
+            PackageId = packageId;
+            Version = version;
+            CatalogItem = catalogItem;
+        }
+
+        public string PublishRoot { get; }
+        public string PackageRoot { get; }
+        public string RepoName { get; }
+        public string GitHubLabel { get; }
+        public string GitHubOrganization { get; }
+        public string GitHubToken { get; }
+        public bool GitHubIsPrivate { get; }
+        public string PackageId { get; }
+        public string Version { get; }
+        public CatalogAppendItem CatalogItem { get; }
+        public string CatalogId => CatalogItem?.CatalogId ?? $"{PackageId}@{Version}";
+    }
+
+    public sealed class CatalogAppendItem
+    {
+        public CatalogAppendItem(
+            string webAppUrl,
+            string fetchToken,
+            string spreadsheetUrl,
+            string spreadsheetId,
+            string packageId,
+            string displayName,
+            string repoUrl,
+            string owner,
+            string status,
+            string description,
+            string version,
+            string unityMin,
+            string changelog,
+            string dependencies)
+        {
+            WebAppUrl = webAppUrl;
+            FetchToken = fetchToken;
+            SpreadsheetUrl = spreadsheetUrl;
+            SpreadsheetId = spreadsheetId;
+            PackageId = packageId;
+            DisplayName = displayName;
+            RepoUrl = repoUrl;
+            Owner = owner;
+            Status = status;
+            Description = description;
+            Version = version;
+            UnityMin = unityMin;
+            Changelog = changelog;
+            Dependencies = dependencies;
+        }
+
+        public string WebAppUrl { get; }
+        public string FetchToken { get; }
+        public string SpreadsheetUrl { get; }
+        public string SpreadsheetId { get; }
+        public string PackageId { get; }
+        public string DisplayName { get; }
+        public string RepoUrl { get; }
+        public string Owner { get; }
+        public string Status { get; }
+        public string Description { get; }
+        public string Version { get; }
+        public string UnityMin { get; }
+        public string Changelog { get; }
+        public string Dependencies { get; }
+        public string CatalogId => PackageId + "@" + Version;
+    }
+
+    public sealed class PublishResult
+    {
+        private PublishResult(PublishRequest request, bool success, string message)
+        {
+            Request = request;
+            Success = success;
+            Message = message;
+        }
+
+        public PublishRequest Request { get; }
+        public bool Success { get; }
+        public string Message { get; }
+
+        public static PublishResult Succeeded(PublishRequest request, string message) => new(request, true, message);
+        public static PublishResult Failed(PublishRequest request, string message) => new(request, false, message);
+    }
+
     [Serializable]
     private sealed class CatalogAppendResponse
     {
@@ -337,6 +666,14 @@ public static class ActionFitPackagePublisher
         public string package_id;
         public string version;
         public string catalog_id;
+    }
+
+    [Serializable]
+    private sealed class CatalogBatchAppendResponse
+    {
+        public bool success;
+        public int count;
+        public CatalogAppendResponse[] items;
     }
 }
 #endif

@@ -5,6 +5,8 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
 using UnityEditor;
 using UnityEngine;
 
@@ -29,6 +31,7 @@ public class ActionFitPackagePublishWindow : EditorWindow
     private readonly Dictionary<string, string> _versionByAssetPath = new();
     private readonly HashSet<string> _expandedPackageIds = new();
     private readonly List<Entry> _entries = new();
+    private readonly List<ActionFitPackagePublisher.CatalogAppendItem> _pendingCatalogAppendItems = new();
     private Mode _mode;
     private Vector2 _scroll;
     private bool _delayedGuiActionQueued;
@@ -97,6 +100,12 @@ public class ActionFitPackagePublishWindow : EditorWindow
             if (GUILayout.Button("Reload", EditorStyles.toolbarButton, GUILayout.Width(70))) Reload();
             if (_mode == Mode.Changed)
             {
+                if (_pendingCatalogAppendItems.Count > 0)
+                {
+                    if (GUILayout.Button($"Retry Catalog Append ({_pendingCatalogAppendItems.Count})", EditorStyles.toolbarButton, GUILayout.Width(190)))
+                        ScheduleGuiAction(RetryPendingCatalogAppend);
+                }
+
                 EditorGUI.BeginDisabledGroup(_entries.Count == 0);
                 if (GUILayout.Button("Publish All Changed", EditorStyles.toolbarButton, GUILayout.Width(145)))
                     ScheduleGuiAction(PublishAllChanged);
@@ -252,37 +261,204 @@ public class ActionFitPackagePublishWindow : EditorWindow
             }
         }
 
-        string list = string.Join("\n", targets.Select(e => $"- {e.PackageId}: {GetCatalogVersionLabel(e, catalog)} -> {e.Version}"));
-        string visibilityLine = BuildNewRepositoryVisibilitySummary(targets, catalog);
-        if (!EditorUtility.DisplayDialog(
-                "ActionFit Package Manager",
-                $"Publish all changed packages?\n\n{list}{visibilityLine}\n\nThe catalog was refreshed before this check. This will prepare local publish clones, push package contents, push missing version tags, and append catalog rows.",
-                "Publish All Changed",
-                "Cancel"))
-            return;
-
-        var succeeded = new List<string>();
+        var requests = new List<ActionFitPackagePublisher.PublishRequest>();
         foreach (var entry in targets)
         {
-            if (!PublishInternal(entry, entry.Version, false, settings, catalog, out string error))
+            AssetDatabase.ImportAsset(entry.PackageJsonPath, ImportAssetOptions.ForceUpdate);
+            if (!ActionFitPackagePublisher.TryCreatePublishRequest(settings, entry.Info, entry.Info.RepositoryVisibility, out var request, out string requestError))
             {
-                string message = $"Bulk publish stopped.\n\nSucceeded:\n{string.Join("\n", succeeded)}\n\nFailed:\n{entry.PackageId}@{entry.Version}\n{error}";
-                Debug.LogError($"[ActionFitPackageManager] {message}");
+                string message = $"Bulk publish stopped before uploading any package.\n\n{entry.PackageId}@{entry.Version}\n{requestError}";
+                Debug.LogWarning($"[ActionFitPackageManager] {message}");
                 EditorUtility.DisplayDialog("ActionFit Package Manager", message, "OK");
                 ScheduleReload();
                 return;
             }
 
-            succeeded.Add($"{entry.PackageId}@{entry.Version}");
+            requests.Add(request);
         }
+
+        string list = string.Join("\n", requests.Select(r => $"- {r.PackageId}: {GetCatalogVersionLabel(r.PackageId, catalog, targets)} -> {r.Version}"));
+        string visibilityLine = BuildNewRepositoryVisibilitySummary(targets, catalog);
+        if (!EditorUtility.DisplayDialog(
+                "ActionFit Package Manager",
+                $"Publish all changed packages?\n\n{list}{visibilityLine}\n\nThe catalog was refreshed before this check. Repository publish runs up to {ActionFitPackagePublisher.DefaultMaxParallelPublishes} packages at once, then catalog rows are appended in one batch request.",
+                "Publish All Changed",
+                "Cancel"))
+            return;
+
+        var results = PublishRepositoriesParallel(requests);
+        var failed = results.Where(r => !r.Success).ToList();
+        var succeeded = results.Where(r => r.Success).ToList();
+
+        if (failed.Count > 0)
+        {
+            _pendingCatalogAppendItems.Clear();
+            _pendingCatalogAppendItems.AddRange(succeeded.Select(r => r.Request.CatalogItem));
+
+            string message =
+                "Bulk publish did not append catalog rows because one or more repository publishes failed.\n\n" +
+                $"Succeeded:\n{FormatPublishResultList(succeeded)}\n\n" +
+                $"Failed:\n{FormatPublishResultList(failed)}";
+            if (_pendingCatalogAppendItems.Count > 0)
+            {
+                message += "\n\nRepository-published rows were kept in this window. Use Retry Catalog Append after checking the failed packages.";
+            }
+
+            Debug.LogError($"[ActionFitPackageManager] {message}");
+            EditorUtility.DisplayDialog("ActionFit Package Manager", message, "OK");
+            ScheduleReload();
+            return;
+        }
+
+        var catalogItems = results.Select(r => r.Request.CatalogItem).ToList();
+        if (!AppendCatalogRowsWithFallback(catalogItems, out string appendMessage))
+        {
+            _pendingCatalogAppendItems.Clear();
+            _pendingCatalogAppendItems.AddRange(catalogItems);
+            string message =
+                "Repository publish succeeded, but catalog append failed.\n\n" +
+                appendMessage +
+                "\n\nThe catalog rows were kept in this window. Use Retry Catalog Append to update the spreadsheet without publishing repositories again.";
+            Debug.LogError($"[ActionFitPackageManager] {message}");
+            EditorUtility.DisplayDialog("ActionFit Package Manager", message, "OK");
+            ScheduleReload();
+            return;
+        }
+
+        _pendingCatalogAppendItems.Clear();
+        Debug.Log($"[ActionFitPackageManager] {appendMessage}");
 
         if (ActionFitPackageCatalogUpdater.UpdateCatalog(settings, out string updateMessage))
             Debug.Log($"[ActionFitPackageManager] {updateMessage}");
         else
             Debug.LogWarning($"[ActionFitPackageManager] Catalog refresh failed after bulk publish: {updateMessage}");
 
-        Debug.Log($"[ActionFitPackageManager] Bulk publish preparation complete:\n{string.Join("\n", succeeded)}");
+        Debug.Log($"[ActionFitPackageManager] Bulk publish complete:\n{FormatPublishResultList(results)}");
         ScheduleReload();
+    }
+
+    private void RetryPendingCatalogAppend()
+    {
+        if (_pendingCatalogAppendItems.Count == 0) return;
+
+        var items = _pendingCatalogAppendItems.ToList();
+        string list = string.Join("\n", items.Select(item => $"- {item.CatalogId}"));
+        if (!EditorUtility.DisplayDialog(
+                "ActionFit Package Manager",
+                $"Retry catalog append for repository-published packages?\n\n{list}",
+                "Retry Catalog Append",
+                "Cancel"))
+            return;
+
+        if (!AppendCatalogRowsWithFallback(items, out string appendMessage))
+        {
+            Debug.LogError($"[ActionFitPackageManager] Catalog append retry failed:\n{appendMessage}");
+            EditorUtility.DisplayDialog("ActionFit Package Manager", appendMessage, "OK");
+            return;
+        }
+
+        _pendingCatalogAppendItems.Clear();
+        Debug.Log($"[ActionFitPackageManager] Catalog append retry complete: {appendMessage}");
+
+        var settings = ActionFitPackageCatalogSettingsProvider.FindOrCreate();
+        if (ActionFitPackageCatalogUpdater.UpdateCatalog(settings, out string updateMessage))
+            Debug.Log($"[ActionFitPackageManager] {updateMessage}");
+        else
+            Debug.LogWarning($"[ActionFitPackageManager] Catalog refresh failed after catalog append retry: {updateMessage}");
+
+        ScheduleReload();
+    }
+
+    private static List<ActionFitPackagePublisher.PublishResult> PublishRepositoriesParallel(IReadOnlyList<ActionFitPackagePublisher.PublishRequest> requests)
+    {
+        int completed = 0;
+        int total = requests.Count;
+        var task = StartRepositoryPublishTasks(requests, () => Interlocked.Increment(ref completed));
+
+        try
+        {
+            EditorUtility.DisplayProgressBar("ActionFit Package Publish", $"Publishing repositories... 0/{total}", 0f);
+            while (!task.Wait(100))
+            {
+                float progress = total == 0 ? 1f : Mathf.Clamp01(completed / (float)total);
+                EditorUtility.DisplayProgressBar("ActionFit Package Publish", $"Publishing repositories... {completed}/{total}", progress);
+            }
+
+            EditorUtility.DisplayProgressBar("ActionFit Package Publish", $"Publishing repositories... {total}/{total}", 1f);
+            return task.Result.ToList();
+        }
+        finally
+        {
+            EditorUtility.ClearProgressBar();
+        }
+    }
+
+    private static Task<ActionFitPackagePublisher.PublishResult[]> StartRepositoryPublishTasks(
+        IReadOnlyList<ActionFitPackagePublisher.PublishRequest> requests,
+        Action onCompleted)
+    {
+        var results = new ActionFitPackagePublisher.PublishResult[requests.Count];
+        if (requests.Count == 0) return Task.FromResult(results);
+
+        int nextIndex = -1;
+        int workerCount = Math.Min(ActionFitPackagePublisher.DefaultMaxParallelPublishes, requests.Count);
+        var workers = Enumerable.Range(0, workerCount)
+            .Select(_ => Task.Run(() =>
+            {
+                while (true)
+                {
+                    int index = Interlocked.Increment(ref nextIndex);
+                    if (index >= requests.Count) break;
+
+                    var request = requests[index];
+                    try
+                    {
+                        results[index] = ActionFitPackagePublisher.PublishRepository(request);
+                    }
+                    catch (Exception ex)
+                    {
+                        results[index] = ActionFitPackagePublisher.PublishResult.Failed(request, ex.Message);
+                    }
+                    finally
+                    {
+                        onCompleted?.Invoke();
+                    }
+                }
+            }))
+            .ToArray();
+
+        return Task.WhenAll(workers).ContinueWith(_ => results);
+    }
+
+    private static bool AppendCatalogRowsWithFallback(IReadOnlyList<ActionFitPackagePublisher.CatalogAppendItem> items, out string message)
+    {
+        try
+        {
+            EditorUtility.DisplayProgressBar("ActionFit Package Publish", "Appending catalog rows by batch request...", 0.85f);
+            if (ActionFitPackagePublisher.TryAppendCatalogBatch(items, out message))
+                return true;
+
+            string batchMessage = message;
+            Debug.LogWarning($"[ActionFitPackageManager] Catalog batch append failed. Falling back to serial append.\n{batchMessage}");
+
+            EditorUtility.DisplayProgressBar("ActionFit Package Publish", "Appending catalog rows one by one...", 0.95f);
+            if (ActionFitPackagePublisher.TryAppendCatalogSerial(items, out string serialMessage))
+            {
+                message =
+                    "Catalog batch append failed, but serial fallback succeeded.\n\n" +
+                    $"Batch:\n{batchMessage}\n\nSerial:\n{serialMessage}";
+                return true;
+            }
+
+            message =
+                "Catalog append failed.\n\n" +
+                $"Batch:\n{batchMessage}\n\nSerial fallback:\n{serialMessage}";
+            return false;
+        }
+        finally
+        {
+            EditorUtility.ClearProgressBar();
+        }
     }
 
     private bool PublishInternal(Entry entry, string version, bool refreshCatalog, ActionFitPackageCatalogSettings_SO settings, CatalogSnapshot catalog, out string error)
@@ -405,6 +581,30 @@ public class ActionFitPackagePublishWindow : EditorWindow
         string latest = catalog.GetLatestVersion(entry.PackageId);
         if (!string.IsNullOrWhiteSpace(latest)) return latest;
         return entry.IsRegistered ? entry.CatalogLatestVersion : "not registered";
+    }
+
+    private static string GetCatalogVersionLabel(string packageId, CatalogSnapshot catalog, IEnumerable<Entry> entries)
+    {
+        var entry = entries.FirstOrDefault(e => string.Equals(e.PackageId, packageId, StringComparison.OrdinalIgnoreCase));
+        if (entry != null) return GetCatalogVersionLabel(entry, catalog);
+
+        string latest = catalog.GetLatestVersion(packageId);
+        return string.IsNullOrWhiteSpace(latest) ? "not registered" : latest;
+    }
+
+    private static string FormatPublishResultList(IEnumerable<ActionFitPackagePublisher.PublishResult> results)
+    {
+        var lines = results
+            .Where(r => r != null)
+            .Select(r =>
+            {
+                string label = r.Request?.CatalogId ?? "unknown";
+                if (r.Success) return $"- {label}";
+                return $"- {label}\n  {r.Message}";
+            })
+            .ToList();
+
+        return lines.Count == 0 ? "- none" : string.Join("\n", lines);
     }
 
     private string GetVersion(Entry entry)
