@@ -751,7 +751,7 @@ internal static class ActionFitPackageBaseline
         string baselineRoot = ActionFitPackagePaths.ProjectRelativeFullPath(BaselineRelativePath);
         Directory.CreateDirectory(baselineRoot);
         string baselinePath = Path.Combine(baselineRoot, packageId + ".sha256");
-        File.WriteAllText(baselinePath, ComputeDirectoryHash(packagePath), new UTF8Encoding(false));
+        File.WriteAllText(baselinePath, ComputeContentHash(packagePath), new UTF8Encoding(false));
     }
 
     public static string GetChangeState(string packageId, string packagePath)
@@ -763,7 +763,7 @@ internal static class ActionFitPackageBaseline
                 packageId + ".sha256");
             if (!File.Exists(baselinePath) || !ActionFitPackageFileUtility.PhysicalDirectoryExists(packagePath)) return "UNKNOWN";
             string baseline = File.ReadAllText(baselinePath).Trim();
-            string current = ComputeDirectoryHash(packagePath);
+            string current = ComputeContentHash(packagePath);
             return string.Equals(baseline, current, StringComparison.OrdinalIgnoreCase) ? "UNCHANGED" : "MODIFIED";
         }
         catch
@@ -772,7 +772,7 @@ internal static class ActionFitPackageBaseline
         }
     }
 
-    private static string ComputeDirectoryHash(string directoryPath)
+    public static string ComputeContentHash(string directoryPath)
     {
         string fullRoot = ActionFitPackagePaths.NormalizePhysicalPath(directoryPath);
         var rows = new StringBuilder();

@@ -7,7 +7,7 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.custompackagemanager`
 - Display name: Custom Package Manager
 - Repository: `https://github.com/ActionFit-Editor/Custom_Package_Manager.git`
-- Current package version at generation time: `1.1.58`
+- Current package version at generation time: `1.1.59`
 - Unity version: `6000.2`
 
 ## Purpose
@@ -37,6 +37,7 @@ Read this file when:
 - `Editor/Scripts/ActionFitPackageTransaction.cs`: atomic manifest writes, guarded package-folder transactions, rollback journals, restart recovery, and embedded baselines.
 - `Editor/Scripts/ActionFitPackageEmbedApi.cs`: public dialog-free Embed for Edit validation/execution APIs, JSON wrapper, and batchmode entry point.
 - `Editor/Scripts/ActionFitPackageWorkflowApi.cs`: shared-sheet refresh, installed/latest version comparison, local-change state, and workflow recommendations for AI callers.
+- `Editor/Scripts/ActionFitPackagePublishApi.cs`: read-only publish plan preparation, content-bound approval, pre-execution revalidation, structured repository/catalog execution results, JSON wrappers, and batchmode entry points.
 - `Editor/Scripts/*PackageMenu.cs`: package-owned Unity top-menu `README` and required `Setting SO` entries when a package owns or bootstraps settings. These entries live in each package, not in Custom Package Manager.
 - `Editor/Scripts/ActionFitPackageManagerConsoleWindow.cs`: operational console for create/repo/publish/catalog/manifest/router actions.
 - `Editor/Scripts/ActionFitPackageCatalogSettings_SO.cs`: spreadsheet config, one GitHub publish token, public/private repo creation org profiles, and publish cache root.
@@ -93,6 +94,9 @@ Read this file when:
 - AI callers should run `ActionFitPackageWorkflowApi.Inspect` with `RefreshCatalog = true` before choosing a package workflow. The result must distinguish installed, embedded, behind-latest, matches-latest, ahead-of-catalog, and local modification states and should present current-source fork and latest-source update/embed options.
 - `ActionFitPackageWorkflowApi` is read/refresh/advice only. It must not push, tag, create repositories, or append catalog rows. Real publishing still requires an explicit user request.
 - `ActionFitPackageEmbedApi` is the public dialog-free entry point for candidates, validation, JSON execution, recoverable embedding, and explicit recovery. The Package Manager UI must call the same API instead of maintaining a separate conversion implementation.
+- AI publishing must use `ActionFitPackagePublishApi.Prepare` before `Execute`. Preparation is read-only and must refresh the catalog, reject an already registered version, require a version newer than the catalog latest, validate credentials without exposing them, and check the remote repository/tag.
+- `Execute` must require the exact prepared plan ID and approval text, re-run preparation, reject content/catalog/remote changes, and require `ApproveRepositoryCreation` for a missing repository. Never infer publish approval from an earlier edit, embed, inspection, or preparation request.
+- Repository publication and catalog registration are separate result stages. If the repository succeeds and catalog upsert fails, return `RetryCatalogAppendAvailable` and retry only the catalog stage instead of pushing Git/tag again.
 - If `Packages/<packageId>/` already exists during `Embed for Edit`, validate its `package.json` name and let the user use that existing folder by writing the local `file:<packageId>` dependency. Do not overwrite the local folder.
 - Downloaded packages may also be copied through `Fork as New` when the user wants a new `com.actionfit.*` package ID and a new repository instead of publishing edits back to the source package repository. This flow must rewrite the copied package's `package.json` metadata, create PackageInfo metadata for the new repository, remove the original manifest dependency, and write the new local `file:<newPackageId>` dependency so duplicate source/fork assemblies are not compiled together.
 - Embedded packages may be returned to the downloaded flow through `Use Downloaded`, which writes the selected catalog Git UPM dependency, removes the local package folder, and runs Package Manager resolve.

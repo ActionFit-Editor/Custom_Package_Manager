@@ -51,6 +51,8 @@ public sealed class ActionFitPackageInspectionResult
     public string InstalledDependency;
     public string LocalChangeState;
     public bool CatalogPackageFound;
+    public bool CatalogContainsInstalledVersion;
+    public string[] CatalogVersions = Array.Empty<string>();
     public string LatestVersion;
     public string LatestPackageUrl;
     public string RepositoryUrl;
@@ -111,6 +113,7 @@ public static class ActionFitPackageWorkflowApi
                 .ToList();
             CatalogVersion latest = catalogVersions.FirstOrDefault(version => version.IsLatest) ?? catalogVersions.FirstOrDefault();
             result.CatalogPackageFound = latest != null;
+            result.CatalogVersions = catalogVersions.Select(version => version.Version).Distinct(StringComparer.Ordinal).ToArray();
             if (latest != null)
             {
                 result.LatestVersion = latest.Version;
@@ -123,6 +126,7 @@ public static class ActionFitPackageWorkflowApi
             }
 
             ReadInstalledState(request.PackageId, result);
+            result.CatalogContainsInstalledVersion = result.CatalogVersions.Contains(result.InstalledVersion, StringComparer.Ordinal);
             BuildRecommendation(result, warnings);
             result.Warnings = warnings.ToArray();
             result.Success = true;

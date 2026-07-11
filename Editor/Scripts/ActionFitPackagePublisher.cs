@@ -67,6 +67,44 @@ public static class ActionFitPackagePublisher
         }
     }
 
+    /// <summary>
+    /// Checks whether the target repository and immutable version tag already exist without changing GitHub state.
+    /// </summary>
+    public static bool TryGetRemoteState(PublishRequest request, out RemoteState state, out string message)
+    {
+        state = null;
+        message = "";
+        if (request == null)
+        {
+            message = "Publish request is missing.";
+            return false;
+        }
+
+        try
+        {
+            string repoPath = $"{request.GitHubOrganization}/{request.RepoName}";
+            bool repositoryExists = GitHubResourceExists(
+                $"https://api.github.com/repos/{repoPath}",
+                request.GitHubToken);
+            bool tagExists = repositoryExists && GitHubResourceExists(
+                $"https://api.github.com/repos/{repoPath}/git/ref/tags/{Uri.EscapeDataString(request.Version)}",
+                request.GitHubToken);
+
+            state = new RemoteState(repositoryExists, tagExists);
+            message = repositoryExists
+                ? tagExists
+                    ? $"Repository and tag {request.Version} already exist."
+                    : $"Repository exists and tag {request.Version} is available."
+                : "Repository does not exist and would be created during publish.";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            message = $"GitHub remote preflight failed: {ex.Message}";
+            return false;
+        }
+    }
+
     public static bool TryAppendCatalogBatch(IReadOnlyList<CatalogAppendItem> items, out string message)
     {
         message = "";
@@ -241,6 +279,21 @@ public static class ActionFitPackagePublisher
             if ((int)response.StatusCode < 200 || (int)response.StatusCode >= 300)
                 throw new InvalidOperationException($"GitHub repository create failed ({request.GitHubLabel}): {response.StatusCode}");
             return;
+        }
+    }
+
+    private static bool GitHubResourceExists(string url, string token)
+    {
+        var get = CreateGitHubRequest(url, token, "GET");
+        try
+        {
+            using var response = (HttpWebResponse)get.GetResponse();
+            return (int)response.StatusCode >= 200 && (int)response.StatusCode < 300;
+        }
+        catch (WebException ex) when ((ex.Response as HttpWebResponse)?.StatusCode == HttpStatusCode.NotFound)
+        {
+            ex.Response?.Dispose();
+            return false;
         }
     }
 
@@ -657,6 +710,21 @@ public static class ActionFitPackagePublisher
 
         public static PublishResult Succeeded(PublishRequest request, string message) => new(request, true, message);
         public static PublishResult Failed(PublishRequest request, string message) => new(request, false, message);
+    }
+
+    /// <summary>
+    /// Read-only GitHub repository and immutable tag state used by publish preflight.
+    /// </summary>
+    public sealed class RemoteState
+    {
+        public RemoteState(bool repositoryExists, bool tagExists)
+        {
+            RepositoryExists = repositoryExists;
+            TagExists = tagExists;
+        }
+
+        public bool RepositoryExists { get; }
+        public bool TagExists { get; }
     }
 
     [Serializable]

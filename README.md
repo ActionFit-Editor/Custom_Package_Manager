@@ -7,7 +7,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.58"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.59"
   }
 }
 ```
@@ -135,13 +135,19 @@ var embed = ActionFitPackageEmbedApi.EmbedForEdit(new ActionFitPackageEmbedReque
 - `ActionFitPackageEmbedApi.EmbedForEdit`: recoverable conversion used by both AI and the Package Manager UI.
 - `ActionFitPackageEmbedApi.ExecuteJson`: JSON wrapper for Unity connectors and AI tools.
 - `ActionFitPackageEmbedApi.RecoverPendingTransactions`: explicit recovery entry point in addition to automatic Editor-load recovery.
+- `ActionFitPackagePublishApi.Prepare`: refreshes the catalog, blocks reused versions, validates package metadata/authentication, checks the GitHub repository and immutable tag, and returns a content-bound plan ID without changing external state.
+- `ActionFitPackagePublishApi.Execute`: re-runs every preflight and requires the same plan ID plus the exact `RequiredApprovalText` before repository push, tag push, and catalog upsert.
+- `ActionFitPackagePublishApi.PrepareJson` / `ExecuteJson`: JSON wrappers for AI connectors. Execution never infers approval from preparation.
 
 Batchmode callers can use:
 
 - `-executeMethod ActionFitPackageEmbedCli.Run` with `-actionFitEmbedRequest <request.json>` and `-actionFitEmbedResult <result.json>`.
 - `-executeMethod ActionFitPackageWorkflowCli.Run` with `-actionFitInspectRequest <request.json>` and `-actionFitInspectResult <result.json>`.
+- `-executeMethod ActionFitPackagePublishCli.Prepare` or `ActionFitPackagePublishCli.Execute` with `-actionFitPublishRequest <request.json>` and `-actionFitPublishResult <result.json>`.
 
 Inspection is advisory and never publishes. Workflow options mark repository publishing with `RequiresExplicitPublishApproval`; AI must not push, tag, create a repository, or append a catalog row unless the user explicitly requests that external action.
+
+`Prepare` is always read-only. A successful plan returns an exact approval string such as `PUBLISH com.actionfit.example@1.2.3 PLAN <planId>`. `Execute` rejects missing or mismatched approval, rechecks the refreshed catalog and remote tag, and rejects a changed content hash or plan. New repository creation additionally requires `ApproveRepositoryCreation = true`. If repository push succeeds but catalog upsert fails, the result reports `RetryCatalogAppendAvailable = true` instead of pushing the repository again.
 
 Custom Package Manager scans installed `AI_GUIDE.md` files from embedded `Packages/com.actionfit.*` folders and Git UPM `Library/PackageCache/com.actionfit.*@*` folders, then refreshes `PACKAGE_AI_GUIDE_ROUTER.md` from their `Requested router entry` blocks. Router entries are rewritten to the actual discovered guide path, so Git UPM packages point at `Library/PackageCache/...@hash/AI_GUIDE.md`. When a consuming project already has a primary AI markdown entry point, it also generates a `packages/actionfit-packages.md` compatibility pointer next to that entry point and adds an auto-managed section so the project-level AI router can discover `PACKAGE_AI_GUIDE_ROUTER.md`.
 
