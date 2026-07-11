@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using UnityEditor;
@@ -13,6 +14,8 @@ public class ActionFitPackageManagerWindow : EditorWindow
 {
     private const string PackageName = "com.actionfit.custompackagemanager";
     private const string CatalogRelativePath = "Editor/Catalog/package_catalog.csv";
+    private const string EmbeddedBackupRelativePath = "UserSettings/ActionFitPackageManager/EmbeddedBackups";
+    private const string EmbeddedBaselineRelativePath = "UserSettings/ActionFitPackageManager/EmbeddedBaselines";
     private static readonly string PackageCatalogPath = Path.Combine("Packages", PackageName, CatalogRelativePath).Replace("\\", "/");
     private static readonly string PackageCachePath = Path.Combine("Library", "PackageCache").Replace("\\", "/");
     private static string ProjectRootPath => Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
@@ -36,6 +39,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
     private readonly HashSet<string> _expandedCommunityPackageIds = new();
     private readonly HashSet<string> _expandedCommentKeys = new();
     private readonly HashSet<string> _selectedUpdatePackageIds = new();
+    private readonly Dictionary<string, EmbeddedChangeState> _embeddedChangeStatesByPackage = new();
     private readonly Dictionary<string, ActionFitPackageCommunityClient.Summary> _communitySummariesByPackage = new();
     private readonly Dictionary<string, CommentPanelState> _commentStatesByPackage = new();
     private readonly Dictionary<string, string> _communityMessagesByPackage = new();
@@ -211,7 +215,8 @@ public class ActionFitPackageManagerWindow : EditorWindow
                 _selectedVersionByPackage[package.Id] = selected;
 
                 EditorGUI.BeginDisabledGroup(!CanApplySelectedVersion(installed, selectedVersion));
-                if (GUILayout.Button(installed.IsInstalled ? "Apply Version" : "Install", GUILayout.Width(120)))
+                string applyLabel = installed.IsEmbedded ? "Convert & Apply" : installed.IsInstalled ? "Apply Version" : "Install";
+                if (GUILayout.Button(applyLabel, GUILayout.Width(120)))
                     ApplyPackage(package, selectedVersion);
                 EditorGUI.EndDisabledGroup();
 
@@ -248,7 +253,9 @@ public class ActionFitPackageManagerWindow : EditorWindow
             }
 
             if (installed.IsEmbedded)
-                EditorGUILayout.HelpBox("Embedded package is present under Packages/. Applying a different version will write the Git UPM dependency, remove the embedded folder, and run Package Manager resolve.", MessageType.Info);
+                EditorGUILayout.HelpBox(
+                    "This editable package is stored under Packages/. Applying another version creates a backup, replaces it with a downloaded Git UPM dependency, and removes the embedded folder from the project. Local modifications are not merged automatically.",
+                    MessageType.Warning);
 
             DrawDependencyDetails(selectedVersion);
 
@@ -529,6 +536,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
     {
         var candidates = BuildUpdateCandidates(packages);
         var updatable = candidates.Where(c => c.CanApply).ToList();
+        var downloadedUpdatable = updatable.Where(c => !c.Installed.IsEmbedded).ToList();
 
         using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
         {
@@ -537,13 +545,14 @@ public class ActionFitPackageManagerWindow : EditorWindow
                 EditorGUILayout.LabelField($"Available Updates ({updatable.Count}/{candidates.Count})", EditorStyles.boldLabel);
                 GUILayout.FlexibleSpace();
 
-                EditorGUI.BeginDisabledGroup(updatable.Count == 0);
-                if (GUILayout.Button("Select All", GUILayout.Width(80)))
+                EditorGUI.BeginDisabledGroup(downloadedUpdatable.Count == 0);
+                if (GUILayout.Button("Select Downloaded", GUILayout.Width(120)))
                 {
                     _selectedUpdatePackageIds.Clear();
-                    foreach (var candidate in updatable)
+                    foreach (var candidate in downloadedUpdatable)
                         _selectedUpdatePackageIds.Add(candidate.Package.Id);
                 }
+                EditorGUI.EndDisabledGroup();
 
                 if (GUILayout.Button("Clear", GUILayout.Width(60)))
                     _selectedUpdatePackageIds.Clear();
@@ -558,8 +567,9 @@ public class ActionFitPackageManagerWindow : EditorWindow
                     UpdateAllLatest(selectedPackages);
                 EditorGUI.EndDisabledGroup();
 
-                if (GUILayout.Button($"Update All ({updatable.Count})", GUILayout.Width(120)))
-                    UpdateAllLatest(updatable.Select(c => c.Package).ToList());
+                EditorGUI.BeginDisabledGroup(downloadedUpdatable.Count == 0);
+                if (GUILayout.Button($"Update Downloaded ({downloadedUpdatable.Count})", GUILayout.Width(170)))
+                    UpdateAllLatest(downloadedUpdatable.Select(c => c.Package).ToList());
                 EditorGUI.EndDisabledGroup();
             }
 
@@ -595,13 +605,16 @@ public class ActionFitPackageManagerWindow : EditorWindow
                         OpenLatestGit(candidate.Package);
 
                     EditorGUI.BeginDisabledGroup(!candidate.CanApply);
-                    if (GUILayout.Button("Update", GUILayout.Width(80)))
+                    string updateLabel = candidate.Installed.IsEmbedded ? "Convert & Update" : "Update";
+                    if (GUILayout.Button(updateLabel, GUILayout.Width(candidate.Installed.IsEmbedded ? 125 : 80)))
                         ApplyPackage(candidate.Package, candidate.Latest);
                     EditorGUI.EndDisabledGroup();
                 }
 
                 if (candidate.Installed.IsEmbedded)
-                    EditorGUILayout.HelpBox($"{candidate.Package.Id} is embedded under Packages/. Updating will convert it to a Git UPM dependency and remove the embedded folder.", MessageType.Info);
+                    EditorGUILayout.HelpBox(
+                        $"{candidate.Package.Id} is editable under Packages/. Updating creates a backup, converts it to a downloaded Git UPM dependency, and removes the embedded folder. Local modifications are not merged. Change scan: {GetEmbeddedChangeStateLabel(GetEmbeddedChangeState(candidate.Package.Id))}.",
+                        MessageType.Warning);
             }
 
             DrawHistoryPanel(true);
@@ -784,6 +797,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
     {
         _packages.Clear();
         _selectedVersionByPackage.Clear();
+        _embeddedChangeStatesByPackage.Clear();
 
         string path = ProjectRelativeFullPath(ActiveCatalogPath);
         if (File.Exists(path))
@@ -944,12 +958,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
             return;
         }
 
-        if (replaceEmbedded &&
-            !EditorUtility.DisplayDialog(
-                "ActionFit Package Manager",
-                $"Replace embedded package with Git UPM dependency?\n\n{package.Id}: {installed.Version} -> {version.Version}\n\nThis will remove Packages/{package.Id} after writing Packages/manifest.json.",
-                "Replace",
-                "Cancel"))
+        if (replaceEmbedded && !ConfirmEmbeddedReplacement(new[] { package }, "Convert & Apply", version))
             return;
 
         string manifestPath = ManifestFullPath;
@@ -960,6 +969,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
         }
 
         string manifest = File.ReadAllText(manifestPath);
+        string originalManifest = manifest;
         var changes = new List<string>();
 
         if (!ApplyPackageDependencies(ref manifest, version, changes))
@@ -968,11 +978,14 @@ public class ActionFitPackageManagerWindow : EditorWindow
         manifest = SetDependency(manifest, version.Id, version.PackageUrl);
         changes.Add($"{version.Id} -> {version.PackageUrl}");
 
-        File.WriteAllText(manifestPath, manifest, new UTF8Encoding(false));
-        UnityEngine.Debug.Log("[ActionFitPackageManager] Updated manifest:\n" + string.Join("\n", changes));
+        if (!TryWriteManifestAndReplaceEmbeddedPackages(
+                manifestPath,
+                originalManifest,
+                manifest,
+                replaceEmbedded ? new[] { package } : Array.Empty<PackageGroup>()))
+            return;
 
-        if (replaceEmbedded)
-            RemoveEmbeddedFolderWithoutManifestChange(package);
+        UnityEngine.Debug.Log("[ActionFitPackageManager] Updated manifest:\n" + string.Join("\n", changes));
 
         ActionFitPackageAiGuideRouter.EnsureProjectRouter();
         AssetDatabase.Refresh();
@@ -980,29 +993,227 @@ public class ActionFitPackageManagerWindow : EditorWindow
         QueueReload();
     }
 
-    private static void RemoveEmbeddedFolderWithoutManifestChange(PackageGroup package)
+    private static bool RemoveEmbeddedFolderWithoutManifestChange(PackageGroup package)
     {
         string packageRoot = $"Packages/{package.Id}";
         string fullPackageRoot = Path.Combine(ProjectRootPath, "Packages", package.Id);
-        if (!Directory.Exists(fullPackageRoot)) return;
+        if (!Directory.Exists(fullPackageRoot)) return true;
 
         bool removedFolder = AssetDatabase.MoveAssetToTrash(packageRoot);
         if (removedFolder)
             UnityEngine.Debug.Log($"[ActionFitPackageManager] Removed embedded package folder for Git UPM replacement: {packageRoot}");
         else
             UnityEngine.Debug.LogError($"[ActionFitPackageManager] Failed to remove embedded package folder after manifest update: {packageRoot}");
+
+        return removedFolder;
+    }
+
+    private bool ConfirmEmbeddedReplacement(IEnumerable<PackageGroup> source, string confirmLabel, PackageVersion singleTarget = null)
+    {
+        var packages = source.ToList();
+        var rows = new List<string>();
+        foreach (var package in packages)
+        {
+            var installed = GetInstalledVersion(package.Id);
+            var target = packages.Count == 1 && singleTarget != null ? singleTarget : package.LatestVersion;
+            var changeState = RefreshEmbeddedChangeState(package.Id);
+            rows.Add($"- {package.Id}: {installed.Version} -> {target?.Version}\n  {GetEmbeddedChangeStateLabel(changeState)}");
+        }
+
+        string message =
+            "The embedded package folders below will be replaced with downloaded Git UPM dependencies.\n\n" +
+            string.Join("\n", rows) +
+            $"\n\nA safety backup will be created under:\n{EmbeddedBackupRelativePath}\n\n" +
+            "Local modifications are not merged into the downloaded version. The embedded folders will be moved to the operating system trash after the backup succeeds. Commit or separately back up important work before continuing.";
+
+        return EditorUtility.DisplayDialog(
+            "Replace Embedded Packages",
+            message,
+            confirmLabel,
+            "Cancel");
+    }
+
+    private bool TryWriteManifestAndReplaceEmbeddedPackages(
+        string manifestPath,
+        string originalManifest,
+        string updatedManifest,
+        IEnumerable<PackageGroup> embeddedSource)
+    {
+        var embeddedPackages = embeddedSource.ToList();
+        if (embeddedPackages.Count == 0)
+        {
+            try
+            {
+                File.WriteAllText(manifestPath, updatedManifest, new UTF8Encoding(false));
+                return true;
+            }
+            catch (Exception ex)
+            {
+                EditorUtility.DisplayDialog("ActionFit Package Manager", $"Failed to update Packages/manifest.json:\n{ex.Message}", "OK");
+                return false;
+            }
+        }
+
+        var backups = new List<EmbeddedPackageBackup>();
+        foreach (var package in embeddedPackages)
+        {
+            if (TryCreateEmbeddedBackup(package, out EmbeddedPackageBackup backup, out string backupError))
+            {
+                backups.Add(backup);
+                continue;
+            }
+
+            EditorUtility.DisplayDialog(
+                "Embedded Package Backup Failed",
+                $"No package folders were replaced.\n\n{backupError}",
+                "OK");
+            return false;
+        }
+
+        try
+        {
+            File.WriteAllText(manifestPath, updatedManifest, new UTF8Encoding(false));
+        }
+        catch (Exception ex)
+        {
+            EditorUtility.DisplayDialog(
+                "Manifest Update Failed",
+                $"No embedded package folders were removed. Safety backups remain available.\n\n{ex.Message}\n\n{FormatBackupLocations(backups)}",
+                "OK");
+            return false;
+        }
+
+        var removedBackups = new List<EmbeddedPackageBackup>();
+        foreach (var backup in backups)
+        {
+            if (RemoveEmbeddedFolderWithoutManifestChange(backup.Package))
+            {
+                removedBackups.Add(backup);
+                continue;
+            }
+
+            RollBackEmbeddedReplacement(manifestPath, originalManifest, removedBackups, backups);
+            return false;
+        }
+
+        foreach (var backup in backups)
+            DeleteEmbeddedBaseline(backup.Package.Id);
+
+        UnityEngine.Debug.Log($"[ActionFitPackageManager] Embedded package backups created:\n{FormatBackupLocations(backups)}");
+        return true;
+    }
+
+    private bool TryCreateEmbeddedBackup(PackageGroup package, out EmbeddedPackageBackup backup, out string error)
+    {
+        backup = null;
+        error = "";
+
+        string sourcePath = Path.Combine(ProjectRootPath, "Packages", package.Id);
+        if (!Directory.Exists(sourcePath))
+        {
+            error = $"Embedded package folder not found: Packages/{package.Id}";
+            return false;
+        }
+
+        string packageBackupRoot = ProjectRelativeFullPath(Path.Combine(EmbeddedBackupRelativePath, package.Id).Replace("\\", "/"));
+        string timestamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss_fff");
+        string backupPath = Path.Combine(packageBackupRoot, timestamp);
+        int suffix = 1;
+        while (Directory.Exists(backupPath))
+            backupPath = Path.Combine(packageBackupRoot, $"{timestamp}_{suffix++}");
+
+        try
+        {
+            CopyDirectoryForEmbeddedPackage(sourcePath, backupPath);
+            if (!TryValidateLocalPackageFolder(package.Id, backupPath, out _, out string validationError))
+                throw new InvalidOperationException(validationError);
+
+            backup = new EmbeddedPackageBackup(package, backupPath);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                if (Directory.Exists(backupPath))
+                    Directory.Delete(backupPath, true);
+            }
+            catch (Exception cleanupEx)
+            {
+                UnityEngine.Debug.LogWarning($"[ActionFitPackageManager] Failed to clean incomplete backup for {package.Id}: {cleanupEx.Message}");
+            }
+
+            error = $"Failed to back up {package.Id}:\n{ex.Message}";
+            return false;
+        }
+    }
+
+    private void RollBackEmbeddedReplacement(
+        string manifestPath,
+        string originalManifest,
+        List<EmbeddedPackageBackup> removedBackups,
+        List<EmbeddedPackageBackup> allBackups)
+    {
+        var rollbackErrors = new List<string>();
+        try
+        {
+            File.WriteAllText(manifestPath, originalManifest, new UTF8Encoding(false));
+        }
+        catch (Exception ex)
+        {
+            rollbackErrors.Add($"manifest restore failed: {ex.Message}");
+        }
+
+        foreach (var backup in removedBackups)
+        {
+            string destination = Path.Combine(ProjectRootPath, "Packages", backup.Package.Id);
+            try
+            {
+                CopyDirectoryForEmbeddedPackage(backup.FullPath, destination);
+                if (!TryValidateLocalPackageFolder(backup.Package.Id, destination, out _, out string validationError))
+                    throw new InvalidOperationException(validationError);
+
+                UnityEngine.Debug.Log($"[ActionFitPackageManager] Restored embedded package after replacement failure: Packages/{backup.Package.Id}");
+            }
+            catch (Exception ex)
+            {
+                rollbackErrors.Add($"{backup.Package.Id} restore failed: {ex.Message}");
+            }
+        }
+
+        AssetDatabase.Refresh();
+        Client.Resolve();
+
+        string rollbackStatus = rollbackErrors.Count == 0
+            ? "The original manifest and any already moved package folders were restored."
+            : "Rollback was incomplete:\n- " + string.Join("\n- ", rollbackErrors);
+
+        EditorUtility.DisplayDialog(
+            "Embedded Package Replacement Failed",
+            $"A package folder could not be moved to trash, so the conversion was stopped.\n\n{rollbackStatus}\n\nSafety backups remain available:\n{FormatBackupLocations(allBackups)}",
+            "OK");
+    }
+
+    private static string FormatBackupLocations(IEnumerable<EmbeddedPackageBackup> backups)
+    {
+        return string.Join("\n", backups.Select(backup => $"- {ToProjectRelativePath(backup.FullPath)}"));
     }
 
     private void UpdateAllLatest(List<PackageGroup> packages)
     {
         if (packages == null || packages.Count == 0) return;
 
-        string list = FormatPackageVersionList(packages);
-        if (!EditorUtility.DisplayDialog(
-                "ActionFit Package Manager",
-                $"Update selected packages to latest versions?\n\nEmbedded packages will be converted to Git UPM dependencies.\n\n{list}",
-                "Update All Latest",
-                "Cancel"))
+        var embedded = packages.Where(p => GetInstalledVersion(p.Id).IsEmbedded).ToList();
+        if (embedded.Count > 0)
+        {
+            if (!ConfirmEmbeddedReplacement(embedded, "Convert & Update"))
+                return;
+        }
+        else if (!EditorUtility.DisplayDialog(
+                     "ActionFit Package Manager",
+                     $"Update downloaded packages to latest versions?\n\n{FormatPackageVersionList(packages)}",
+                     "Update Downloaded",
+                     "Cancel"))
             return;
 
         ApplyLatestVersions(packages, true, "Updated manifest to latest versions");
@@ -1062,6 +1273,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
         }
 
         string manifest = File.ReadAllText(manifestPath);
+        string originalManifest = manifest;
         var changes = new List<string>();
         var embeddedReplacements = new List<PackageGroup>();
         foreach (var package in packages)
@@ -1082,11 +1294,14 @@ public class ActionFitPackageManagerWindow : EditorWindow
             changes.Add($"{package.LatestVersion.Id} -> {package.LatestVersion.PackageUrl}");
         }
 
-        File.WriteAllText(manifestPath, manifest, new UTF8Encoding(false));
-        UnityEngine.Debug.Log($"[ActionFitPackageManager] {logTitle}:\n" + string.Join("\n", changes.Distinct()));
+        if (!TryWriteManifestAndReplaceEmbeddedPackages(
+                manifestPath,
+                originalManifest,
+                manifest,
+                embeddedReplacements))
+            return;
 
-        foreach (var package in embeddedReplacements)
-            RemoveEmbeddedFolderWithoutManifestChange(package);
+        UnityEngine.Debug.Log($"[ActionFitPackageManager] {logTitle}:\n" + string.Join("\n", changes.Distinct()));
 
         ActionFitPackageAiGuideRouter.EnsureProjectRouter();
         AssetDatabase.Refresh();
@@ -1223,6 +1438,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
         }
 
         AssetDatabase.Refresh();
+        SaveEmbeddedBaseline(package.Id, fullPackageRoot);
         Client.Resolve();
         QueueReload();
     }
@@ -1404,6 +1620,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
         }
 
         AssetDatabase.Refresh();
+        SaveEmbeddedBaseline(package.Id, fullPackageRoot);
         Client.Resolve();
         QueueReload();
     }
@@ -1489,11 +1706,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
             return;
         }
 
-        if (!EditorUtility.DisplayDialog(
-                "ActionFit Package Manager",
-                $"Use downloaded Git UPM package instead of local embedded package?\n\n{package.Id}: {version.Version}\n\nThis will write Packages/manifest.json, move {packageRoot} to trash, and run Package Manager resolve.",
-                "Use Downloaded",
-                "Cancel"))
+        if (!ConfirmEmbeddedReplacement(new[] { package }, "Use Downloaded", version))
             return;
 
         string manifestPath = ManifestFullPath;
@@ -1504,6 +1717,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
         }
 
         string manifest = File.ReadAllText(manifestPath);
+        string originalManifest = manifest;
         var changes = new List<string>();
 
         if (!ApplyPackageDependencies(ref manifest, version, changes))
@@ -1512,10 +1726,14 @@ public class ActionFitPackageManagerWindow : EditorWindow
         manifest = SetDependency(manifest, version.Id, version.PackageUrl);
         changes.Add($"{version.Id} -> {version.PackageUrl}");
 
-        File.WriteAllText(manifestPath, manifest, new UTF8Encoding(false));
-        UnityEngine.Debug.Log("[ActionFitPackageManager] Converted embedded package to downloaded dependency:\n" + string.Join("\n", changes));
+        if (!TryWriteManifestAndReplaceEmbeddedPackages(
+                manifestPath,
+                originalManifest,
+                manifest,
+                new[] { package }))
+            return;
 
-        RemoveEmbeddedFolderWithoutManifestChange(package);
+        UnityEngine.Debug.Log("[ActionFitPackageManager] Converted embedded package to downloaded dependency:\n" + string.Join("\n", changes));
         ActionFitPackageAiGuideRouter.EnsureProjectRouter();
         AssetDatabase.Refresh();
         Client.Resolve();
@@ -1737,6 +1955,111 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
         string name = ExtractJsonString(File.ReadAllText(packageJson), "name");
         return string.Equals(name, packageId, StringComparison.Ordinal);
+    }
+
+    private EmbeddedChangeState GetEmbeddedChangeState(string packageId)
+    {
+        if (_embeddedChangeStatesByPackage.TryGetValue(packageId, out EmbeddedChangeState cached))
+            return cached;
+
+        return RefreshEmbeddedChangeState(packageId);
+    }
+
+    private EmbeddedChangeState RefreshEmbeddedChangeState(string packageId)
+    {
+        EmbeddedChangeState state = ScanEmbeddedChangeState(packageId);
+        _embeddedChangeStatesByPackage[packageId] = state;
+        return state;
+    }
+
+    private static EmbeddedChangeState ScanEmbeddedChangeState(string packageId)
+    {
+        string baselinePath = GetEmbeddedBaselinePath(packageId);
+        string packagePath = Path.Combine(ProjectRootPath, "Packages", packageId);
+        if (!File.Exists(baselinePath) || !Directory.Exists(packagePath))
+            return EmbeddedChangeState.Unknown;
+
+        try
+        {
+            string baselineHash = File.ReadAllText(baselinePath).Trim();
+            string currentHash = ComputeDirectoryHash(packagePath);
+            return string.Equals(baselineHash, currentHash, StringComparison.OrdinalIgnoreCase)
+                ? EmbeddedChangeState.Unchanged
+                : EmbeddedChangeState.Modified;
+        }
+        catch
+        {
+            return EmbeddedChangeState.Unknown;
+        }
+    }
+
+    private static string GetEmbeddedChangeStateLabel(EmbeddedChangeState state)
+    {
+        return state switch
+        {
+            EmbeddedChangeState.Unchanged => "no changes detected since Embed for Edit",
+            EmbeddedChangeState.Modified => "MODIFIED since Embed for Edit",
+            _ => "baseline unavailable; assume local changes exist",
+        };
+    }
+
+    private void SaveEmbeddedBaseline(string packageId, string packagePath)
+    {
+        try
+        {
+            string baselinePath = GetEmbeddedBaselinePath(packageId);
+            Directory.CreateDirectory(Path.GetDirectoryName(baselinePath));
+            File.WriteAllText(baselinePath, ComputeDirectoryHash(packagePath), new UTF8Encoding(false));
+            _embeddedChangeStatesByPackage[packageId] = EmbeddedChangeState.Unchanged;
+        }
+        catch (Exception ex)
+        {
+            _embeddedChangeStatesByPackage[packageId] = EmbeddedChangeState.Unknown;
+            UnityEngine.Debug.LogWarning($"[ActionFitPackageManager] Failed to save embedded package baseline for {packageId}: {ex.Message}");
+        }
+    }
+
+    private void DeleteEmbeddedBaseline(string packageId)
+    {
+        try
+        {
+            string baselinePath = GetEmbeddedBaselinePath(packageId);
+            if (File.Exists(baselinePath))
+                File.Delete(baselinePath);
+        }
+        catch (Exception ex)
+        {
+            UnityEngine.Debug.LogWarning($"[ActionFitPackageManager] Failed to remove embedded package baseline for {packageId}: {ex.Message}");
+        }
+
+        _embeddedChangeStatesByPackage.Remove(packageId);
+    }
+
+    private static string GetEmbeddedBaselinePath(string packageId)
+    {
+        string relativePath = Path.Combine(EmbeddedBaselineRelativePath, packageId + ".sha256").Replace("\\", "/");
+        return ProjectRelativeFullPath(relativePath);
+    }
+
+    private static string ComputeDirectoryHash(string directoryPath)
+    {
+        string fullRoot = Path.GetFullPath(directoryPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var rows = new StringBuilder();
+        using var sha256 = SHA256.Create();
+
+        foreach (string file in Directory.GetFiles(fullRoot, "*", SearchOption.AllDirectories)
+                     .OrderBy(path => path, StringComparer.Ordinal))
+        {
+            string relative = file[(fullRoot.Length + 1)..].Replace("\\", "/");
+            if (IsGitMetadataPath(relative)) continue;
+
+            using var stream = File.OpenRead(file);
+            string fileHash = BitConverter.ToString(sha256.ComputeHash(stream)).Replace("-", "");
+            rows.Append(relative).Append('|').Append(fileHash).Append('\n');
+        }
+
+        byte[] directoryBytes = Encoding.UTF8.GetBytes(rows.ToString());
+        return BitConverter.ToString(sha256.ComputeHash(directoryBytes)).Replace("-", "");
     }
 
     private static void CopyDirectoryForEmbeddedPackage(string source, string destination)
@@ -2353,6 +2676,25 @@ public class ActionFitPackageManagerWindow : EditorWindow
         public int CommentCount;
         public string PackageUrl => $"{RepoUrl}#{Version}";
         public string VersionLabel => IsLatest ? $"{Version} ({Status}, latest)" : $"{Version} ({Status})";
+    }
+
+    private enum EmbeddedChangeState
+    {
+        Unknown,
+        Unchanged,
+        Modified,
+    }
+
+    private sealed class EmbeddedPackageBackup
+    {
+        public EmbeddedPackageBackup(PackageGroup package, string fullPath)
+        {
+            Package = package;
+            FullPath = fullPath;
+        }
+
+        public PackageGroup Package { get; }
+        public string FullPath { get; }
     }
 
     private readonly struct UpdateCandidate

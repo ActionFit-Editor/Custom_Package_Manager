@@ -7,7 +7,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.56"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.57"
   }
 }
 ```
@@ -37,9 +37,11 @@ Package README and settings access live in the Unity top menu, not inside the Pa
 
 Use the established priority bands unless a package has a documented reason to differ: Package Manager `0-9`, executable tools `20-99`, `Setting SO` + `README` only packages `600-699`, and README-only packages `900-999`. New packages created by `1. Create Package` include a README-only package menu file by default.
 
-Downloaded packages include `Embed for Edit` and `Fork as New`. `Embed for Edit` copies the resolved package source from Unity's package cache into a temporary folder, validates the copied `package.json`, moves it into `Packages/<packageId>/`, writes `file:<packageId>` to `Packages/manifest.json`, and preserves catalog repository metadata so edits can be published back to the existing package repository. If the local package folder already exists and its `package.json` name matches, the tool can use that existing folder instead of copying over it.
+Downloaded packages include `Embed for Edit` and `Fork as New`. `Embed for Edit` copies the resolved package source from Unity's package cache into a temporary folder, validates the copied `package.json`, moves it into `Packages/<packageId>/`, writes `file:<packageId>` to `Packages/manifest.json`, and preserves catalog repository metadata so edits can be published back to the existing package repository. If the local package folder already exists and its `package.json` name matches, the tool can use that existing folder instead of copying over it. The manager records a package file baseline under `UserSettings/ActionFitPackageManager/EmbeddedBaselines` so later conversion warnings can report whether files changed after embedding.
 
-`Fork as New` copies the downloaded package into a new `Packages/<newPackageId>/` folder, rewrites package metadata for the new `com.actionfit.*` package ID, creates PackageInfo metadata for a new repository, removes the original manifest dependency, and writes the new local `file:` dependency. This prevents the source package and the fork from compiling duplicate assemblies at the same time. If the copy or validation fails, the manifest is left unchanged so Unity does not resolve a broken `file:` dependency. Embedded packages include `Use Downloaded`, which writes the selected catalog Git UPM version back to `Packages/manifest.json`, removes the local folder, and returns the package to the downloaded flow.
+`Fork as New` copies the downloaded package into a new `Packages/<newPackageId>/` folder, rewrites package metadata for the new `com.actionfit.*` package ID, creates PackageInfo metadata for a new repository, removes the original manifest dependency, and writes the new local `file:` dependency. This prevents the source package and the fork from compiling duplicate assemblies at the same time. If the copy or validation fails, the manifest is left unchanged so Unity does not resolve a broken `file:` dependency. Embedded packages include `Use Downloaded`, which returns the package to the downloaded flow through the same protected replacement process used by embedded updates.
+
+Before an embedded package is replaced, the manager reports whether it changed since `Embed for Edit`, warns that local modifications are not merged, and creates a timestamped safety copy under `UserSettings/ActionFitPackageManager/EmbeddedBackups/<packageId>/`. The manifest is changed only after every required backup succeeds. If an embedded folder cannot be moved to the operating system trash, the manager restores the original manifest and any package folders already moved during that operation. Backups remain until they are removed manually.
 
 After editing an embedded package, bump its `package.json` version above the catalog latest version before using `Publish Changed`.
 
@@ -59,8 +61,8 @@ The configured catalog Web App must support `votePackage`, `upsertPackageComment
 
 The `Check Update` panel shows installed packages only when the catalog latest version is higher than the current installed version.
 
-- Downloaded packages can be updated individually, by selection, or all at once.
-- Embedded packages are shown too. Selecting a different version converts them to Git UPM dependencies.
+- Downloaded packages can be updated individually, by selection, or all at once. `Select Downloaded` and `Update Downloaded` never select embedded packages automatically.
+- Embedded packages are shown too, but must be selected explicitly or updated with `Convert & Update`. Selecting a different version creates a safety backup and converts the package to a Git UPM dependency; local modifications are not merged.
 - `Changes` shows changelog rows between the installed version and the selected target version.
 - `History` shows all catalog changelog rows for the package.
 - Package detail rows expose the same `Changes` and `History` behavior inline under the expanded package.

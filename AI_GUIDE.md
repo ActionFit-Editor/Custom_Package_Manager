@@ -7,7 +7,7 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.custompackagemanager`
 - Display name: Custom Package Manager
 - Repository: `https://github.com/ActionFit-Editor/Custom_Package_Manager.git`
-- Current package version at generation time: `1.1.56`
+- Current package version at generation time: `1.1.57`
 - Unity version: `6000.2`
 
 ## Purpose
@@ -91,6 +91,10 @@ Read this file when:
 - Expanded package rows should show dependency details for the selected version, including resolved catalog Git URLs for ActionFit dependencies and raw registry version values for non-ActionFit dependencies.
 - `ActionFitPackageCatalogUpdater` must parse CSV by records, not by raw lines, because release notes can contain quoted newlines. Otherwise `dependencies` and later columns shift and package details incorrectly show `None`.
 - `Embed for Edit` does not publish by itself. After editing, the package `package.json` version must be bumped above the catalog latest version before `Publish Changed` will pick it up.
+- `Embed for Edit` records a content baseline under `UserSettings/ActionFitPackageManager/EmbeddedBaselines`. Embedded update warnings rescan the package against that baseline, but a missing baseline must be treated as potentially modified rather than clean.
+- Replacing an embedded package through `Convert & Apply`, `Convert & Update`, `Update Selected`, or `Use Downloaded` must first create a timestamped validated backup under `UserSettings/ActionFitPackageManager/EmbeddedBackups/<packageId>/`. Local edits are never merged into the downloaded version.
+- Bulk update controls must not select embedded packages implicitly. `Select Downloaded` and `Update Downloaded` operate on downloaded packages only; users must explicitly select embedded rows before conversion.
+- Embedded replacement must preserve the original manifest until backups succeed. If any embedded folder cannot be moved to trash after the manifest write, restore the original manifest and restore already moved folders from their safety backups before resolving packages.
 - Publish flows must refresh the catalog immediately before uploading and block when the refreshed catalog already contains the same `package_id@version`. The default policy is never to overwrite an existing Git tag or catalog version row. Tell users to bump `package.json`/`Publish Version`, or use `Fork as New` when they need a separate package/repository.
 - Package sections should sort by community score (`likes - dislikes`) descending, then likes, comments, and display name. Keep `Package Manager` separate from normal catalog sections.
 - Package community feedback uses an anonymous project ID stored under `UserSettings/ActionFitPackageManager/`, not a user identity. Do not move this ID into committed project settings.
