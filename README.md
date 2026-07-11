@@ -7,7 +7,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.59"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.60"
   }
 }
 ```
@@ -37,9 +37,9 @@ Package README and settings access live in the Unity top menu, not inside the Pa
 
 Use the established priority bands unless a package has a documented reason to differ: Package Manager `0-9`, executable tools `20-99`, `Setting SO` + `README` only packages `600-699`, and README-only packages `900-999`. New packages created by `1. Create Package` include a README-only package menu file by default.
 
-Downloaded packages include `Embed for Edit` and `Fork as New`. `Embed for Edit` copies the resolved package source from Unity's package cache into a temporary folder, validates the copied `package.json`, moves it into `Packages/<packageId>/`, writes `file:<packageId>` to `Packages/manifest.json`, and preserves catalog repository metadata so edits can be published back to the existing package repository. If the local package folder already exists and its `package.json` name matches, the tool can use that existing folder instead of copying over it. The manager records a package file baseline under `UserSettings/ActionFitPackageManager/EmbeddedBaselines` so later conversion warnings can report whether files changed after embedding.
+Downloaded packages include `Embed for Edit` and `Fork as New`. `Embed for Edit` uses Unity Package Manager's official `Client.Embed` operation to materialize the downloaded package under `Packages/<packageId>/`. After Unity reports success, the manager validates `package.json`, removes cache-only `_fingerprint` metadata, normalizes `Packages/manifest.json` to `file:<packageId>`, and preserves catalog repository metadata so edits can be published back to the existing package repository. If a physical local package folder already exists and its `package.json` name matches, the tool can use that existing folder without overwriting it. The manager records a package file baseline under `UserSettings/ActionFitPackageManager/EmbeddedBaselines` so later conversion warnings can report whether files changed after embedding.
 
-Package conversion now uses an atomic, journaled transaction shared by the UI and public AI API. The package folder is validated before the manifest is replaced, manifest writes use a verified temporary file and atomic replacement, and rollback restores the affected dependency values before deleting any transaction-created package folder. Pending operations are recorded under `UserSettings/ActionFitPackageManager/Transactions` and recovered after an Editor restart or domain reload. If dependency recovery cannot be verified, the local package folder is preserved and the API returns `RECOVERY_REQUIRED` with the journal path.
+Downloaded embedding is delegated to Unity Package Manager so Unity's virtual `Packages/<packageId>` mapping cannot redirect a custom folder move back into `Library/PackageCache`. Existing-folder conversion and `Fork as New` continue to use the atomic, journaled transaction shared by the UI and public AI API. Manifest writes use a verified temporary file and atomic replacement, and rollback restores affected dependency values before deleting any transaction-created package folder. Pending custom transactions are recorded under `UserSettings/ActionFitPackageManager/Transactions` and recovered after an Editor restart or domain reload. If dependency recovery cannot be verified, the local package folder is preserved and the API returns `RECOVERY_REQUIRED` with the journal path.
 
 Unity can expose downloaded package cache contents through a logical `Packages/<packageId>` path even when no physical embedded folder exists. Conversion therefore uses guarded physical directory enumeration instead of `Directory.Exists` alone when deciding whether a reusable local folder exists. This prevents a downloaded cache projection from being mistaken for an embedded package and avoids writing a `file:` dependency without copying the package.
 
@@ -121,19 +121,20 @@ var validation = ActionFitPackageEmbedApi.Validate(new ActionFitPackageEmbedRequ
     DryRun = true,
 });
 
-var embed = ActionFitPackageEmbedApi.EmbedForEdit(new ActionFitPackageEmbedRequest
+ActionFitPackageEmbedApi.EmbedForEditAsync(new ActionFitPackageEmbedRequest
 {
     PackageId = "com.actionfit.example",
     Resolve = true,
-});
+}, embed => Debug.Log($"{embed.Code}: {embed.Message}"));
 ```
 
 - `ActionFitPackageWorkflowApi.Inspect`: optionally refreshes the shared spreadsheet without confirmation UI, reads the latest catalog row, compares it with the installed version, reports embedded change state, and returns safe workflow options.
 - `ActionFitPackageWorkflowApi.InspectJson`: JSON wrapper for Unity connectors and AI tools.
 - `ActionFitPackageEmbedApi.GetCandidates`: lists installed ActionFit packages that have a downloadable source.
 - `ActionFitPackageEmbedApi.Validate`: dry, read-only validation for `Embed for Edit`.
-- `ActionFitPackageEmbedApi.EmbedForEdit`: recoverable conversion used by both AI and the Package Manager UI.
-- `ActionFitPackageEmbedApi.ExecuteJson`: JSON wrapper for Unity connectors and AI tools.
+- `ActionFitPackageEmbedApi.EmbedForEditAsync`: conversion API used by the Package Manager UI; its callback receives the final `EMBEDDED` or failure result after Unity Package Manager finishes.
+- `ActionFitPackageEmbedApi.EmbedForEdit`: start-oriented convenience API. Downloaded packages return `EMBED_STARTED`; callers that require final success must use the async overload or inspect package state afterward.
+- `ActionFitPackageEmbedApi.ExecuteJson`: JSON start-result wrapper for Unity connectors and AI tools. A returned `EMBED_STARTED` is not the final conversion result.
 - `ActionFitPackageEmbedApi.RecoverPendingTransactions`: explicit recovery entry point in addition to automatic Editor-load recovery.
 - `ActionFitPackagePublishApi.Prepare`: refreshes the catalog, blocks reused versions, validates package metadata/authentication, checks the GitHub repository and immutable tag, and returns a content-bound plan ID without changing external state.
 - `ActionFitPackagePublishApi.Execute`: re-runs every preflight and requires the same plan ID plus the exact `RequiredApprovalText` before repository push, tag push, and catalog upsert.
@@ -141,7 +142,7 @@ var embed = ActionFitPackageEmbedApi.EmbedForEdit(new ActionFitPackageEmbedReque
 
 Batchmode callers can use:
 
-- `-executeMethod ActionFitPackageEmbedCli.Run` with `-actionFitEmbedRequest <request.json>` and `-actionFitEmbedResult <result.json>`.
+- `-executeMethod ActionFitPackageEmbedCli.Run` with `-actionFitEmbedRequest <request.json>` and `-actionFitEmbedResult <result.json>`. Do not add Unity's `-quit` option: this command waits for the asynchronous embed result, writes the result file, and exits Unity itself.
 - `-executeMethod ActionFitPackageWorkflowCli.Run` with `-actionFitInspectRequest <request.json>` and `-actionFitInspectResult <result.json>`.
 - `-executeMethod ActionFitPackagePublishCli.Prepare` or `ActionFitPackagePublishCli.Execute` with `-actionFitPublishRequest <request.json>` and `-actionFitPublishResult <result.json>`.
 

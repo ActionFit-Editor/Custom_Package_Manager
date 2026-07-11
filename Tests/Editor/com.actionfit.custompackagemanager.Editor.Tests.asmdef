@@ -1,0 +1,21 @@
+{
+    "name": "com.actionfit.custompackagemanager.Editor.Tests",
+    "rootNamespace": "",
+    "references": [
+        "com.actionfit.custompackagemanager.Editor"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false,
+    "optionalUnityReferences": [
+        "TestAssemblies"
+    ]
+}

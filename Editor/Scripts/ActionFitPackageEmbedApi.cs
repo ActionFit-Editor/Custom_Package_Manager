@@ -6,6 +6,7 @@ using System.Linq;
 using System.Text;
 using UnityEditor;
 using UnityEditor.PackageManager;
+using UnityEditor.PackageManager.Requests;
 using UnityEngine;
 
 /// <summary>
@@ -105,11 +106,20 @@ public static class ActionFitPackageEmbedApi
     }
 
     /// <summary>
-    /// Embeds a downloaded package using a recoverable filesystem and manifest transaction.
+    /// Starts embedding a downloaded package. A downloaded source returns EMBED_STARTED;
+    /// use EmbedForEditAsync when the final completion result is required.
     /// </summary>
     public static ActionFitPackageEmbedResult EmbedForEdit(ActionFitPackageEmbedRequest request)
     {
-        return EmbedForEdit(request, null);
+        return BeginEmbedForEdit(request, null, null);
+    }
+
+    /// <summary>
+    /// Embeds a downloaded package through Unity Package Manager and reports the final result asynchronously.
+    /// </summary>
+    public static void EmbedForEditAsync(ActionFitPackageEmbedRequest request, Action<ActionFitPackageEmbedResult> completed)
+    {
+        BeginEmbedForEdit(request, null, completed);
     }
 
     /// <summary>
@@ -136,16 +146,28 @@ public static class ActionFitPackageEmbedApi
         return ActionFitPackageTransaction.RecoverPendingTransactions();
     }
 
-    internal static ActionFitPackageEmbedResult EmbedForEdit(
+    internal static void EmbedForEditAsync(
         ActionFitPackageEmbedRequest request,
-        Action<string> prepareDestination)
+        Action<string> prepareDestination,
+        Action<ActionFitPackageEmbedResult> completed)
+    {
+        BeginEmbedForEdit(request, prepareDestination, completed);
+    }
+
+    private static ActionFitPackageEmbedResult BeginEmbedForEdit(
+        ActionFitPackageEmbedRequest request,
+        Action<string> prepareDestination,
+        Action<ActionFitPackageEmbedResult> completed)
     {
         if (!TryBuildContext(request, out EmbedContext context, out ActionFitPackageEmbedResult failure))
+        {
+            Complete(failure, completed);
             return failure;
+        }
 
         if (context.AlreadyEmbedded)
         {
-            return new ActionFitPackageEmbedResult
+            var result = new ActionFitPackageEmbedResult
             {
                 Success = true,
                 DryRun = request.DryRun,
@@ -159,6 +181,8 @@ public static class ActionFitPackageEmbedApi
                 PreviousDependency = context.PreviousDependency,
                 NewDependency = context.NewDependency,
             };
+            Complete(result, completed);
+            return result;
         }
 
         if (request.DryRun)
@@ -167,9 +191,63 @@ public static class ActionFitPackageEmbedApi
             dryRun.Code = "DRY_RUN";
             dryRun.DryRun = true;
             dryRun.Message = $"Embed for Edit validation passed for {request.PackageId}; no files were changed.";
+            Complete(dryRun, completed);
             return dryRun;
         }
 
+        if (context.UseExistingDestination)
+        {
+            ActionFitPackageEmbedResult existingResult = CompleteExistingDestination(request, context, prepareDestination);
+            Complete(existingResult, completed);
+            return existingResult;
+        }
+
+        EmbedRequest embedRequest;
+        try
+        {
+            embedRequest = Client.Embed(request.PackageId);
+        }
+        catch (Exception ex)
+        {
+            ActionFitPackageEmbedResult startFailure = Failure(request.PackageId, "EMBED_START_FAILED", ex.Message);
+            Complete(startFailure, completed);
+            return startFailure;
+        }
+
+        EditorApplication.CallbackFunction poll = null;
+        poll = () =>
+        {
+            if (!embedRequest.IsCompleted) return;
+
+            EditorApplication.update -= poll;
+            ActionFitPackageEmbedResult result = embedRequest.Status == StatusCode.Success
+                ? FinalizeOfficialEmbed(request, context, prepareDestination)
+                : Failure(request.PackageId, "UNITY_EMBED_FAILED", embedRequest.Error?.message ?? "Unity Package Manager embed failed.");
+            Complete(result, completed);
+        };
+        EditorApplication.update += poll;
+
+        return new ActionFitPackageEmbedResult
+        {
+            Success = true,
+            Changed = false,
+            Code = "EMBED_STARTED",
+            Message = $"Unity Package Manager started embedding {request.PackageId}.",
+            PackageId = request.PackageId,
+            SourceVersion = context.SourceVersion,
+            SourcePath = ActionFitPackagePaths.ToProjectRelativePath(context.SourcePath),
+            EmbeddedPath = ActionFitPackagePaths.ToProjectRelativePath(context.DestinationPath),
+            ManifestPath = ActionFitPackagePaths.ToProjectRelativePath(ActionFitPackagePaths.ManifestPath),
+            PreviousDependency = context.PreviousDependency,
+            NewDependency = context.NewDependency,
+        };
+    }
+
+    private static ActionFitPackageEmbedResult CompleteExistingDestination(
+        ActionFitPackageEmbedRequest request,
+        EmbedContext context,
+        Action<string> prepareDestination)
+    {
         var transaction = ActionFitPackageTransaction.Execute(new ActionFitPackageTransaction.Request
         {
             Operation = "Embed for Edit",
@@ -179,8 +257,7 @@ public static class ActionFitPackageEmbedApi
             OriginalManifest = context.OriginalManifest,
             UpdatedManifest = context.UpdatedManifest,
             AffectedPackageIds = new[] { request.PackageId },
-            UseExistingDestination = context.UseExistingDestination,
-            PrepareDestination = prepareDestination,
+            UseExistingDestination = true,
         });
 
         if (!transaction.Success)
@@ -197,7 +274,58 @@ public static class ActionFitPackageEmbedApi
             return result;
         }
 
+        return FinalizeEmbeddedPackage(request, context, prepareDestination, transaction.JournalPath);
+    }
+
+    private static ActionFitPackageEmbedResult FinalizeOfficialEmbed(
+        ActionFitPackageEmbedRequest request,
+        EmbedContext context,
+        Action<string> prepareDestination)
+    {
+        if (!ActionFitPackageFileUtility.IsValidLocalPackageFolder(request.PackageId, context.DestinationPath, out string destinationError))
+            return Failure(request.PackageId, "UNITY_EMBED_INVALID", destinationError);
+
+        try
+        {
+            ActionFitPackageFileUtility.RemovePackageCacheMetadata(request.PackageId, context.DestinationPath);
+            string currentManifest = File.ReadAllText(ActionFitPackagePaths.ManifestPath);
+            string normalizedManifest = ActionFitPackageManifestUtility.SetDependency(
+                currentManifest,
+                request.PackageId,
+                context.NewDependency);
+            ActionFitPackageManifestUtility.WriteAtomic(ActionFitPackagePaths.ManifestPath, normalizedManifest);
+        }
+        catch (Exception ex)
+        {
+            ActionFitPackageEmbedResult failure = Failure(
+                request.PackageId,
+                "EMBED_FINALIZE_FAILED",
+                $"Unity embedded the package, but local dependency finalization failed: {ex.Message}");
+            failure.Changed = true;
+            failure.RecoveryRequired = true;
+            failure.EmbeddedPath = ActionFitPackagePaths.ToProjectRelativePath(context.DestinationPath);
+            return failure;
+        }
+
+        return FinalizeEmbeddedPackage(request, context, prepareDestination, "");
+    }
+
+    private static ActionFitPackageEmbedResult FinalizeEmbeddedPackage(
+        ActionFitPackageEmbedRequest request,
+        EmbedContext context,
+        Action<string> prepareDestination,
+        string journalPath)
+    {
         var warnings = new List<string>();
+        try
+        {
+            prepareDestination?.Invoke(context.DestinationPath);
+        }
+        catch (Exception ex)
+        {
+            warnings.Add($"PackageInfo refresh skipped: {ex.Message}");
+        }
+
         try
         {
             ActionFitPackageAiGuideRouter.EnsureProjectRouter();
@@ -238,7 +366,7 @@ public static class ActionFitPackageEmbedApi
             ManifestPath = ActionFitPackagePaths.ToProjectRelativePath(ActionFitPackagePaths.ManifestPath),
             PreviousDependency = context.PreviousDependency,
             NewDependency = context.NewDependency,
-            JournalPath = ActionFitPackagePaths.ToProjectRelativePath(transaction.JournalPath),
+            JournalPath = string.IsNullOrWhiteSpace(journalPath) ? "" : ActionFitPackagePaths.ToProjectRelativePath(journalPath),
             ChangedFiles = new[]
             {
                 ActionFitPackagePaths.ToProjectRelativePath(context.DestinationPath),
@@ -246,6 +374,20 @@ public static class ActionFitPackageEmbedApi
             },
             Warnings = warnings.ToArray(),
         };
+    }
+
+    private static void Complete(ActionFitPackageEmbedResult result, Action<ActionFitPackageEmbedResult> completed)
+    {
+        if (completed != null)
+        {
+            completed(result);
+            return;
+        }
+
+        if (result.Success)
+            Debug.Log($"[ActionFitPackageManager] Embed result: {result.Code} - {result.Message}");
+        else
+            Debug.LogError($"[ActionFitPackageManager] Embed failed: {result.Code} - {result.Message}");
     }
 
     private static bool TryBuildContext(
@@ -442,7 +584,6 @@ public static class ActionFitPackageEmbedCli
     {
         string requestPath = GetArgument("-actionFitEmbedRequest");
         string resultPath = GetArgument("-actionFitEmbedResult");
-        ActionFitPackageEmbedResult result;
 
         try
         {
@@ -452,27 +593,36 @@ public static class ActionFitPackageEmbedCli
                 throw new InvalidOperationException("-actionFitEmbedResult is required.");
 
             var request = JsonUtility.FromJson<ActionFitPackageEmbedRequest>(File.ReadAllText(Path.GetFullPath(requestPath)));
-            result = ActionFitPackageEmbedApi.EmbedForEdit(request);
+            ActionFitPackageEmbedApi.EmbedForEditAsync(request, result =>
+            {
+                WriteResult(resultPath, result);
+                if (result.Success) Debug.Log($"[ActionFitPackageManager] Embed CLI succeeded: {result.Message}");
+                else Debug.LogError($"[ActionFitPackageManager] Embed CLI failed: {result.Code} - {result.Message}");
+                EditorApplication.Exit(result.Success ? 0 : 1);
+            });
         }
         catch (Exception ex)
         {
-            result = new ActionFitPackageEmbedResult
+            var result = new ActionFitPackageEmbedResult
             {
                 Success = false,
                 Code = "CLI_FAILED",
                 Message = ex.Message,
             };
+            WriteResult(resultPath, result);
+            Debug.LogError($"[ActionFitPackageManager] Embed CLI failed: {result.Code} - {result.Message}");
+            EditorApplication.Exit(1);
         }
+    }
 
+    private static void WriteResult(string resultPath, ActionFitPackageEmbedResult result)
+    {
         if (!string.IsNullOrWhiteSpace(resultPath))
         {
             string fullResultPath = Path.GetFullPath(resultPath);
             Directory.CreateDirectory(Path.GetDirectoryName(fullResultPath));
             File.WriteAllText(fullResultPath, JsonUtility.ToJson(result, true), new UTF8Encoding(false));
         }
-
-        if (result.Success) Debug.Log($"[ActionFitPackageManager] Embed CLI succeeded: {result.Message}");
-        else Debug.LogError($"[ActionFitPackageManager] Embed CLI failed: {result.Code} - {result.Message}");
     }
 
     private static string GetArgument(string name)

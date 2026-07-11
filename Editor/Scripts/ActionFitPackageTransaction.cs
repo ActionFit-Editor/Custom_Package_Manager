@@ -708,6 +708,31 @@ internal static class ActionFitPackageFileUtility
             throw new InvalidOperationException($"Local package version is missing: {packageJsonPath}");
     }
 
+    public static void RemovePackageCacheMetadata(string packageId, string packagePath)
+    {
+        ValidateLocalPackageFolder(packageId, packagePath);
+
+        string packageJsonPath = Path.Combine(packagePath, "package.json");
+        string json = File.ReadAllText(packageJsonPath);
+        string updated = Regex.Replace(
+            json,
+            @"\s*,\s*""_fingerprint""\s*:\s*""[^""]*""",
+            "",
+            RegexOptions.CultureInvariant);
+        updated = Regex.Replace(
+            updated,
+            @"""_fingerprint""\s*:\s*""[^""]*""\s*,\s*",
+            "",
+            RegexOptions.CultureInvariant);
+
+        if (updated.Contains("\"_fingerprint\""))
+            throw new InvalidOperationException($"Failed to remove package cache metadata: {packageJsonPath}");
+        if (string.Equals(json, updated, StringComparison.Ordinal)) return;
+
+        File.WriteAllText(packageJsonPath, updated, new UTF8Encoding(false));
+        ValidateLocalPackageFolder(packageId, packagePath);
+    }
+
     public static void DeletePackageDirectory(string packagePath)
     {
         ActionFitPackagePaths.EnsurePackagePath(packagePath);

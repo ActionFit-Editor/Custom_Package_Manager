@@ -1363,8 +1363,6 @@ public class ActionFitPackageManagerWindow : EditorWindow
         }
 
         string packageRoot = $"Packages/{package.Id}";
-        string sourcePath = ProjectRelativeFullPath(validation.SourcePath);
-        string sourcePackageJson = Path.Combine(sourcePath, "package.json");
         if (!EditorUtility.DisplayDialog(
                 "ActionFit Package Manager",
                 $"Embed downloaded package for edit?\n\n{package.Id}: {validation.SourceVersion}\n\nSource: {validation.SourcePath}\nDestination: {packageRoot}\n\nThis uses a recoverable transaction and replaces the Git UPM dependency only after the local package is valid.",
@@ -1372,27 +1370,27 @@ public class ActionFitPackageManagerWindow : EditorWindow
                 "Cancel"))
             return;
 
-        ActionFitPackageEmbedResult result = ActionFitPackageEmbedApi.EmbedForEdit(request, _ =>
-        {
-            try
+        ActionFitPackageEmbedApi.EmbedForEditAsync(
+            request,
+            destinationPath => RefreshEmbeddedPackageInfoFromCatalog(
+                packageRoot,
+                package,
+                selectedVersion,
+                Path.Combine(destinationPath, "package.json")),
+            result => EditorApplication.delayCall += () =>
             {
-                RefreshEmbeddedPackageInfoFromCatalog(packageRoot, package, selectedVersion, sourcePackageJson);
-            }
-            catch (Exception ex)
-            {
-                UnityEngine.Debug.LogWarning($"[ActionFitPackageManager] PackageInfo refresh skipped for {package.Id}: {ex.Message}");
-            }
-        });
-        if (!result.Success)
-        {
-            string recovery = result.RecoveryRequired
-                ? $"\n\nRecovery journal: {result.JournalPath}"
-                : result.RolledBack ? "\n\nThe original dependency was restored." : "";
-            EditorUtility.DisplayDialog("ActionFit Package Manager", result.Message + recovery, "OK");
-            return;
-        }
+                if (!result.Success)
+                {
+                    string recovery = result.RecoveryRequired
+                        ? $"\n\nRecovery journal: {result.JournalPath}"
+                        : result.RolledBack ? "\n\nThe original dependency was restored." : "";
+                    EditorUtility.DisplayDialog("ActionFit Package Manager", result.Message + recovery, "OK");
+                    return;
+                }
 
-        QueueReload();
+                if (this != null)
+                    QueueReload();
+            });
     }
 
     private void OpenForkDownloadedPackageWindow(PackageGroup package, InstalledPackage installed, PackageVersion selectedVersion)
@@ -2117,6 +2115,14 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
     private InstalledPackage GetInstalledVersion(string packageId)
     {
+        string embeddedPackageRoot = Path.Combine(ProjectRootPath, "Packages", packageId);
+        if (ActionFitPackageFileUtility.IsValidLocalPackageFolder(packageId, embeddedPackageRoot, out _))
+        {
+            string embeddedPackageJson = Path.Combine(embeddedPackageRoot, "package.json");
+            string version = ExtractJsonString(File.ReadAllText(embeddedPackageJson), "version");
+            return new InstalledPackage(true, true, version, $"embedded ({version})");
+        }
+
         string manifestPath = ManifestFullPath;
         if (File.Exists(manifestPath))
         {
@@ -2134,13 +2140,6 @@ public class ActionFitPackageManagerWindow : EditorWindow
                 string localLabel = string.IsNullOrWhiteSpace(localVersion) ? manifestValue : $"embedded ({localVersion})";
                 return new InstalledPackage(true, true, localVersion, localLabel);
             }
-        }
-
-        string embeddedPackageJson = Path.Combine(ProjectRootPath, "Packages", packageId, "package.json");
-        if (File.Exists(embeddedPackageJson))
-        {
-            string version = ExtractJsonString(File.ReadAllText(embeddedPackageJson), "version");
-            return new InstalledPackage(true, true, version, $"embedded ({version})");
         }
 
         return InstalledPackage.NotInstalled;
