@@ -24,6 +24,14 @@ public static class ActionFitPackageCatalogUpdater
 
     public static bool UpdateCatalog(ActionFitPackageCatalogSettings_SO settings, out string message)
     {
+        return UpdateCatalog(settings, out message, true);
+    }
+
+    /// <summary>
+    /// Downloads the shared catalog and optionally suppresses Editor progress UI for headless callers.
+    /// </summary>
+    public static bool UpdateCatalog(ActionFitPackageCatalogSettings_SO settings, out string message, bool showProgress)
+    {
         message = "";
         if (settings == null)
         {
@@ -49,7 +57,8 @@ public static class ActionFitPackageCatalogUpdater
         string json;
         try
         {
-            EditorUtility.DisplayProgressBar("ActionFit Package Catalog", "Downloading catalog from spreadsheet...", 0.4f);
+            if (showProgress)
+                EditorUtility.DisplayProgressBar("ActionFit Package Catalog", "Downloading catalog from spreadsheet...", 0.4f);
             json = HttpGet($"{settings.WebAppUrl}?token={Uri.EscapeDataString(settings.FetchToken)}&ssId={Uri.EscapeDataString(ssId)}");
         }
         catch (Exception ex)
@@ -59,7 +68,8 @@ public static class ActionFitPackageCatalogUpdater
         }
         finally
         {
-            EditorUtility.ClearProgressBar();
+            if (showProgress)
+                EditorUtility.ClearProgressBar();
         }
 
         if (!TryFindCatalogCsv(json, out string csv, out bool hasCommentCsv, out string commentCsv, out message)) return false;

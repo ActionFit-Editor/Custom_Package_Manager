@@ -7,7 +7,7 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.custompackagemanager`
 - Display name: Custom Package Manager
 - Repository: `https://github.com/ActionFit-Editor/Custom_Package_Manager.git`
-- Current package version at generation time: `1.1.57`
+- Current package version at generation time: `1.1.58`
 - Unity version: `6000.2`
 
 ## Purpose
@@ -34,6 +34,9 @@ Read this file when:
 ## Main Files
 
 - `Editor/Scripts/ActionFitPackageManagerWindow.cs`: package list, install/apply/remove/check-update/force-update/history UI.
+- `Editor/Scripts/ActionFitPackageTransaction.cs`: atomic manifest writes, guarded package-folder transactions, rollback journals, restart recovery, and embedded baselines.
+- `Editor/Scripts/ActionFitPackageEmbedApi.cs`: public dialog-free Embed for Edit validation/execution APIs, JSON wrapper, and batchmode entry point.
+- `Editor/Scripts/ActionFitPackageWorkflowApi.cs`: shared-sheet refresh, installed/latest version comparison, local-change state, and workflow recommendations for AI callers.
 - `Editor/Scripts/*PackageMenu.cs`: package-owned Unity top-menu `README` and required `Setting SO` entries when a package owns or bootstraps settings. These entries live in each package, not in Custom Package Manager.
 - `Editor/Scripts/ActionFitPackageManagerConsoleWindow.cs`: operational console for create/repo/publish/catalog/manifest/router actions.
 - `Editor/Scripts/ActionFitPackageCatalogSettings_SO.cs`: spreadsheet config, one GitHub publish token, public/private repo creation org profiles, and publish cache root.
@@ -84,6 +87,12 @@ Read this file when:
 - `Tools/Package` must stay grouped by `MenuItem` priority: package-wide manager first, packages with executable tool commands next, packages with only `Setting SO` + `README` after that, and README-only packages at the bottom. Leave separator gaps between those groups. Inside each package root, real tool commands stay above the separated lower `Setting SO` and `README` entries.
 - Use the established priority bands unless a package has a documented reason to differ: Package Manager `0-9`, executable tools `20-99`, `Setting SO` + `README` only packages `600-699`, and README-only packages `900-999`.
 - Downloaded packages may be converted to editable embedded packages through `Embed for Edit`. The conversion should copy the resolved package source into a temporary folder, validate that the copied `package.json` exists and has the expected package `name`, move it into `Packages/<packageId>/`, write `file:<packageId>` in `Packages/manifest.json`, preserve catalog repository metadata in PackageInfo for publishing back to the existing package repository, refresh package AI routing, and run Package Manager resolve without requiring publish credentials. Do not write a local `file:` dependency unless the target local package folder has a valid `package.json`; Unity Package Manager will fail project resolve when manifest points at a missing local package.
+- `Embed for Edit`, `Fork as New`, and AI-driven embedding must use `ActionFitPackageTransaction`. Never delete a transaction-created package folder until the original affected manifest dependencies have been restored and verified. Manifest updates must use the atomic writer rather than direct `File.WriteAllText`.
+- Do not use `Directory.Exists("Packages/<packageId>")` alone to decide that an embedded folder physically exists. Unity can project downloaded package cache contents through that logical path. Use `ActionFitPackageFileUtility.PhysicalDirectoryExists` plus package ID validation before reusing or deleting a package folder.
+- Pending conversions are journaled under `UserSettings/ActionFitPackageManager/Transactions`. Editor-load recovery may finalize a valid local package or restore only the affected dependency values while preserving unrelated manifest changes. When recovery cannot be verified, preserve the package folder and return/log `RECOVERY_REQUIRED` with the journal path.
+- AI callers should run `ActionFitPackageWorkflowApi.Inspect` with `RefreshCatalog = true` before choosing a package workflow. The result must distinguish installed, embedded, behind-latest, matches-latest, ahead-of-catalog, and local modification states and should present current-source fork and latest-source update/embed options.
+- `ActionFitPackageWorkflowApi` is read/refresh/advice only. It must not push, tag, create repositories, or append catalog rows. Real publishing still requires an explicit user request.
+- `ActionFitPackageEmbedApi` is the public dialog-free entry point for candidates, validation, JSON execution, recoverable embedding, and explicit recovery. The Package Manager UI must call the same API instead of maintaining a separate conversion implementation.
 - If `Packages/<packageId>/` already exists during `Embed for Edit`, validate its `package.json` name and let the user use that existing folder by writing the local `file:<packageId>` dependency. Do not overwrite the local folder.
 - Downloaded packages may also be copied through `Fork as New` when the user wants a new `com.actionfit.*` package ID and a new repository instead of publishing edits back to the source package repository. This flow must rewrite the copied package's `package.json` metadata, create PackageInfo metadata for the new repository, remove the original manifest dependency, and write the new local `file:<newPackageId>` dependency so duplicate source/fork assemblies are not compiled together.
 - Embedded packages may be returned to the downloaded flow through `Use Downloaded`, which writes the selected catalog Git UPM dependency, removes the local package folder, and runs Package Manager resolve.

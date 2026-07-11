@@ -7,7 +7,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.57"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.58"
   }
 }
 ```
@@ -38,6 +38,10 @@ Package README and settings access live in the Unity top menu, not inside the Pa
 Use the established priority bands unless a package has a documented reason to differ: Package Manager `0-9`, executable tools `20-99`, `Setting SO` + `README` only packages `600-699`, and README-only packages `900-999`. New packages created by `1. Create Package` include a README-only package menu file by default.
 
 Downloaded packages include `Embed for Edit` and `Fork as New`. `Embed for Edit` copies the resolved package source from Unity's package cache into a temporary folder, validates the copied `package.json`, moves it into `Packages/<packageId>/`, writes `file:<packageId>` to `Packages/manifest.json`, and preserves catalog repository metadata so edits can be published back to the existing package repository. If the local package folder already exists and its `package.json` name matches, the tool can use that existing folder instead of copying over it. The manager records a package file baseline under `UserSettings/ActionFitPackageManager/EmbeddedBaselines` so later conversion warnings can report whether files changed after embedding.
+
+Package conversion now uses an atomic, journaled transaction shared by the UI and public AI API. The package folder is validated before the manifest is replaced, manifest writes use a verified temporary file and atomic replacement, and rollback restores the affected dependency values before deleting any transaction-created package folder. Pending operations are recorded under `UserSettings/ActionFitPackageManager/Transactions` and recovered after an Editor restart or domain reload. If dependency recovery cannot be verified, the local package folder is preserved and the API returns `RECOVERY_REQUIRED` with the journal path.
+
+Unity can expose downloaded package cache contents through a logical `Packages/<packageId>` path even when no physical embedded folder exists. Conversion therefore uses guarded physical directory enumeration instead of `Directory.Exists` alone when deciding whether a reusable local folder exists. This prevents a downloaded cache projection from being mistaken for an embedded package and avoids writing a `file:` dependency without copying the package.
 
 `Fork as New` copies the downloaded package into a new `Packages/<newPackageId>/` folder, rewrites package metadata for the new `com.actionfit.*` package ID, creates PackageInfo metadata for a new repository, removes the original manifest dependency, and writes the new local `file:` dependency. This prevents the source package and the fork from compiling duplicate assemblies at the same time. If the copy or validation fails, the manifest is left unchanged so Unity does not resolve a broken `file:` dependency. Embedded packages include `Use Downloaded`, which returns the package to the downloaded flow through the same protected replacement process used by embedded updates.
 
@@ -99,6 +103,45 @@ Every ActionFit package should ship an `AI_GUIDE.md` at the package root. This f
 - `Editor/PackageInfo/ActionFitPackageInfo_SO.asset`: catalog metadata and release note source.
 
 When package behavior changes, update that package's `AI_GUIDE.md` before publishing. Custom Package Manager reads each package's `Requested router entry` and refreshes `PACKAGE_AI_GUIDE_ROUTER.md` automatically.
+
+### Public AI APIs
+
+The APIs below are Editor-only, public, static, dialog-free, and return serializable result objects.
+
+```csharp
+var inspection = ActionFitPackageWorkflowApi.Inspect(new ActionFitPackageInspectionRequest
+{
+    PackageId = "com.actionfit.example",
+    RefreshCatalog = true,
+});
+
+var validation = ActionFitPackageEmbedApi.Validate(new ActionFitPackageEmbedRequest
+{
+    PackageId = "com.actionfit.example",
+    DryRun = true,
+});
+
+var embed = ActionFitPackageEmbedApi.EmbedForEdit(new ActionFitPackageEmbedRequest
+{
+    PackageId = "com.actionfit.example",
+    Resolve = true,
+});
+```
+
+- `ActionFitPackageWorkflowApi.Inspect`: optionally refreshes the shared spreadsheet without confirmation UI, reads the latest catalog row, compares it with the installed version, reports embedded change state, and returns safe workflow options.
+- `ActionFitPackageWorkflowApi.InspectJson`: JSON wrapper for Unity connectors and AI tools.
+- `ActionFitPackageEmbedApi.GetCandidates`: lists installed ActionFit packages that have a downloadable source.
+- `ActionFitPackageEmbedApi.Validate`: dry, read-only validation for `Embed for Edit`.
+- `ActionFitPackageEmbedApi.EmbedForEdit`: recoverable conversion used by both AI and the Package Manager UI.
+- `ActionFitPackageEmbedApi.ExecuteJson`: JSON wrapper for Unity connectors and AI tools.
+- `ActionFitPackageEmbedApi.RecoverPendingTransactions`: explicit recovery entry point in addition to automatic Editor-load recovery.
+
+Batchmode callers can use:
+
+- `-executeMethod ActionFitPackageEmbedCli.Run` with `-actionFitEmbedRequest <request.json>` and `-actionFitEmbedResult <result.json>`.
+- `-executeMethod ActionFitPackageWorkflowCli.Run` with `-actionFitInspectRequest <request.json>` and `-actionFitInspectResult <result.json>`.
+
+Inspection is advisory and never publishes. Workflow options mark repository publishing with `RequiresExplicitPublishApproval`; AI must not push, tag, create a repository, or append a catalog row unless the user explicitly requests that external action.
 
 Custom Package Manager scans installed `AI_GUIDE.md` files from embedded `Packages/com.actionfit.*` folders and Git UPM `Library/PackageCache/com.actionfit.*@*` folders, then refreshes `PACKAGE_AI_GUIDE_ROUTER.md` from their `Requested router entry` blocks. Router entries are rewritten to the actual discovered guide path, so Git UPM packages point at `Library/PackageCache/...@hash/AI_GUIDE.md`. When a consuming project already has a primary AI markdown entry point, it also generates a `packages/actionfit-packages.md` compatibility pointer next to that entry point and adds an auto-managed section so the project-level AI router can discover `PACKAGE_AI_GUIDE_ROUTER.md`.
 

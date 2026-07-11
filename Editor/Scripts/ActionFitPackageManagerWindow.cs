@@ -997,7 +997,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
     {
         string packageRoot = $"Packages/{package.Id}";
         string fullPackageRoot = Path.Combine(ProjectRootPath, "Packages", package.Id);
-        if (!Directory.Exists(fullPackageRoot)) return true;
+        if (!ActionFitPackageFileUtility.PhysicalDirectoryExists(fullPackageRoot)) return true;
 
         bool removedFolder = AssetDatabase.MoveAssetToTrash(packageRoot);
         if (removedFolder)
@@ -1044,7 +1044,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
         {
             try
             {
-                File.WriteAllText(manifestPath, updatedManifest, new UTF8Encoding(false));
+                ActionFitPackageManifestUtility.WriteAtomic(manifestPath, updatedManifest);
                 return true;
             }
             catch (Exception ex)
@@ -1072,7 +1072,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
         try
         {
-            File.WriteAllText(manifestPath, updatedManifest, new UTF8Encoding(false));
+            ActionFitPackageManifestUtility.WriteAtomic(manifestPath, updatedManifest);
         }
         catch (Exception ex)
         {
@@ -1157,7 +1157,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
         var rollbackErrors = new List<string>();
         try
         {
-            File.WriteAllText(manifestPath, originalManifest, new UTF8Encoding(false));
+            ActionFitPackageManifestUtility.WriteAtomic(manifestPath, originalManifest);
         }
         catch (Exception ex)
         {
@@ -1349,97 +1349,49 @@ public class ActionFitPackageManagerWindow : EditorWindow
             return;
         }
 
+        var request = new ActionFitPackageEmbedRequest
+        {
+            PackageId = package.Id,
+            Resolve = true,
+            AllowExistingLocalFolder = true,
+        };
+        ActionFitPackageEmbedResult validation = ActionFitPackageEmbedApi.Validate(request);
+        if (!validation.Success)
+        {
+            EditorUtility.DisplayDialog("ActionFit Package Manager", validation.Message, "OK");
+            return;
+        }
+
         string packageRoot = $"Packages/{package.Id}";
-        string fullPackageRoot = Path.Combine(ProjectRootPath, "Packages", package.Id);
-        if (Directory.Exists(fullPackageRoot))
-        {
-            UseExistingLocalFolderForEdit(package, packageRoot, fullPackageRoot);
-            return;
-        }
-
-        if (!TryFindDownloadedPackageSource(package.Id, out string sourcePath, out string sourceError))
-        {
-            EditorUtility.DisplayDialog("ActionFit Package Manager", sourceError, "OK");
-            return;
-        }
-
+        string sourcePath = ProjectRelativeFullPath(validation.SourcePath);
         string sourcePackageJson = Path.Combine(sourcePath, "package.json");
-        string sourcePackageId = ExtractJsonString(File.ReadAllText(sourcePackageJson), "name");
-        if (!string.Equals(sourcePackageId, package.Id, StringComparison.Ordinal))
-        {
-            EditorUtility.DisplayDialog(
-                "ActionFit Package Manager",
-                $"Resolved package source does not match.\n\nExpected: {package.Id}\nFound: {sourcePackageId}\nSource: {ToProjectRelativePath(sourcePath)}",
-                "OK");
-            return;
-        }
-
-        string sourceVersion = ExtractJsonString(File.ReadAllText(sourcePackageJson), "version");
         if (!EditorUtility.DisplayDialog(
                 "ActionFit Package Manager",
-                $"Embed downloaded package for edit?\n\n{package.Id}: {sourceVersion}\n\nSource: {ToProjectRelativePath(sourcePath)}\nDestination: {packageRoot}\n\nThis will copy the package into Packages/ and replace its Git UPM dependency with a local file dependency.",
+                $"Embed downloaded package for edit?\n\n{package.Id}: {validation.SourceVersion}\n\nSource: {validation.SourcePath}\nDestination: {packageRoot}\n\nThis uses a recoverable transaction and replaces the Git UPM dependency only after the local package is valid.",
                 "Embed for Edit",
                 "Cancel"))
             return;
 
-        string manifestPath = ManifestFullPath;
-        if (!File.Exists(manifestPath))
+        ActionFitPackageEmbedResult result = ActionFitPackageEmbedApi.EmbedForEdit(request, _ =>
         {
-            EditorUtility.DisplayDialog("ActionFit Package Manager", "Packages/manifest.json not found.", "OK");
+            try
+            {
+                RefreshEmbeddedPackageInfoFromCatalog(packageRoot, package, selectedVersion, sourcePackageJson);
+            }
+            catch (Exception ex)
+            {
+                UnityEngine.Debug.LogWarning($"[ActionFitPackageManager] PackageInfo refresh skipped for {package.Id}: {ex.Message}");
+            }
+        });
+        if (!result.Success)
+        {
+            string recovery = result.RecoveryRequired
+                ? $"\n\nRecovery journal: {result.JournalPath}"
+                : result.RolledBack ? "\n\nThe original dependency was restored." : "";
+            EditorUtility.DisplayDialog("ActionFit Package Manager", result.Message + recovery, "OK");
             return;
         }
 
-        string manifest = File.ReadAllText(manifestPath);
-        string updatedManifest = SetDependency(manifest, package.Id, LocalPackageDependencyValue(package.Id));
-        string tempPackageRoot = Path.Combine(ProjectRootPath, "Temp", "ActionFitPackageManager", package.Id);
-
-        try
-        {
-            if (Directory.Exists(tempPackageRoot))
-                Directory.Delete(tempPackageRoot, true);
-
-            CopyDirectoryForEmbeddedPackage(sourcePath, tempPackageRoot);
-            if (!TryValidateLocalPackageFolder(package.Id, tempPackageRoot, out _, out string tempValidationError))
-                throw new InvalidOperationException(tempValidationError);
-
-            if (Directory.Exists(fullPackageRoot))
-                throw new InvalidOperationException($"Destination package folder already exists: {packageRoot}");
-
-            Directory.CreateDirectory(Path.GetDirectoryName(fullPackageRoot));
-            Directory.Move(tempPackageRoot, fullPackageRoot);
-            if (!TryValidateLocalPackageFolder(package.Id, fullPackageRoot, out _, out string embeddedValidationError))
-                throw new InvalidOperationException(embeddedValidationError);
-
-            File.WriteAllText(manifestPath, updatedManifest, new UTF8Encoding(false));
-        }
-        catch (Exception ex)
-        {
-            if (Directory.Exists(tempPackageRoot))
-                Directory.Delete(tempPackageRoot, true);
-
-            if (Directory.Exists(fullPackageRoot))
-                Directory.Delete(fullPackageRoot, true);
-
-            EditorUtility.DisplayDialog("ActionFit Package Manager", $"Embed for edit failed:\n{ex.Message}", "OK");
-            return;
-        }
-
-        UnityEngine.Debug.Log($"[ActionFitPackageManager] Embedded package for edit: {package.Id}\nSource: {ToProjectRelativePath(sourcePath)}\nDestination: {packageRoot}");
-        ActionFitPackageAiGuideRouter.EnsureProjectRouter();
-        AssetDatabase.Refresh();
-
-        try
-        {
-            RefreshEmbeddedPackageInfoFromCatalog(packageRoot, package, selectedVersion, sourcePackageJson);
-        }
-        catch (Exception ex)
-        {
-            UnityEngine.Debug.LogWarning($"[ActionFitPackageManager] PackageInfo refresh skipped for {package.Id}: {ex.Message}");
-        }
-
-        AssetDatabase.Refresh();
-        SaveEmbeddedBaseline(package.Id, fullPackageRoot);
-        Client.Resolve();
         QueueReload();
     }
 
@@ -1497,7 +1449,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
         string packageRoot = $"Packages/{request.PackageId}";
         string fullPackageRoot = Path.Combine(ProjectRootPath, "Packages", request.PackageId);
-        if (Directory.Exists(fullPackageRoot))
+        if (ActionFitPackageFileUtility.PhysicalDirectoryExists(fullPackageRoot))
         {
             EditorUtility.DisplayDialog("ActionFit Package Manager", $"Destination package folder already exists:\n{packageRoot}", "OK");
             return;
@@ -1521,41 +1473,31 @@ public class ActionFitPackageManagerWindow : EditorWindow
             return;
         }
 
-        string manifest = File.ReadAllText(manifestPath);
-        manifest = RemoveDependency(manifest, package.Id, out _);
-        manifest = SetDependency(manifest, request.PackageId, LocalPackageDependencyValue(request.PackageId));
+        string originalManifest = File.ReadAllText(manifestPath);
+        string updatedManifest = ActionFitPackageManifestUtility.RemoveDependency(originalManifest, package.Id, out _);
+        updatedManifest = ActionFitPackageManifestUtility.SetDependency(
+            updatedManifest,
+            request.PackageId,
+            ActionFitPackageManifestUtility.LocalDependency(request.PackageId));
 
-        string tempPackageRoot = Path.Combine(ProjectRootPath, "Temp", "ActionFitPackageManager", request.PackageId);
-
-        try
+        ActionFitPackageTransaction.Result transaction = ActionFitPackageTransaction.Execute(new ActionFitPackageTransaction.Request
         {
-            if (Directory.Exists(tempPackageRoot))
-                Directory.Delete(tempPackageRoot, true);
-
-            CopyDirectoryForEmbeddedPackage(sourcePath, tempPackageRoot);
-            RewritePackageJsonForFork(Path.Combine(tempPackageRoot, "package.json"), request);
-
-            if (!TryValidateLocalPackageFolder(request.PackageId, tempPackageRoot, out _, out string tempValidationError))
-                throw new InvalidOperationException(tempValidationError);
-
-            Directory.CreateDirectory(Path.GetDirectoryName(fullPackageRoot));
-            Directory.Move(tempPackageRoot, fullPackageRoot);
-
-            if (!TryValidateLocalPackageFolder(request.PackageId, fullPackageRoot, out _, out string embeddedValidationError))
-                throw new InvalidOperationException(embeddedValidationError);
-
-            ActionFitPackageInfoUtility.CreatePackage(request);
-            File.WriteAllText(manifestPath, manifest, new UTF8Encoding(false));
-        }
-        catch (Exception ex)
+            Operation = "Fork as New",
+            PackageId = request.PackageId,
+            SourcePath = sourcePath,
+            DestinationPath = fullPackageRoot,
+            OriginalManifest = originalManifest,
+            UpdatedManifest = updatedManifest,
+            AffectedPackageIds = new[] { package.Id, request.PackageId },
+            PrepareStagedPackage = stagedPath => RewritePackageJsonForFork(Path.Combine(stagedPath, "package.json"), request),
+            PrepareDestination = _ => ActionFitPackageInfoUtility.CreatePackage(request),
+        });
+        if (!transaction.Success)
         {
-            if (Directory.Exists(tempPackageRoot))
-                Directory.Delete(tempPackageRoot, true);
-
-            if (Directory.Exists(fullPackageRoot))
-                Directory.Delete(fullPackageRoot, true);
-
-            EditorUtility.DisplayDialog("ActionFit Package Manager", $"Fork as new package failed:\n{ex.Message}", "OK");
+            string recovery = transaction.RecoveryRequired
+                ? $"\n\nRecovery journal: {ToProjectRelativePath(transaction.JournalPath)}"
+                : transaction.RolledBack ? "\n\nThe original dependencies were restored." : "";
+            EditorUtility.DisplayDialog("ActionFit Package Manager", $"Fork as new package failed:\n{transaction.Message}{recovery}", "OK");
             return;
         }
 
@@ -1564,6 +1506,8 @@ public class ActionFitPackageManagerWindow : EditorWindow
             $"Source: {package.Id}\nNew: {request.PackageId}\nFolder: {packageRoot}\nRepo: {request.RepoName}");
 
         ActionFitPackageAiGuideRouter.EnsureProjectRouter();
+        ActionFitPackageBaseline.Save(request.PackageId, fullPackageRoot);
+        Client.Resolve();
         AssetDatabase.Refresh();
 
         var info = AssetDatabase.LoadAssetAtPath<ActionFitPackageInfo_SO>(
@@ -1574,54 +1518,6 @@ public class ActionFitPackageManagerWindow : EditorWindow
             EditorGUIUtility.PingObject(info);
         }
 
-        Client.Resolve();
-        QueueReload();
-    }
-
-    private void UseExistingLocalFolderForEdit(PackageGroup package, string packageRoot, string fullPackageRoot)
-    {
-        if (!TryValidateLocalPackageFolder(package.Id, fullPackageRoot, out string localVersion, out string validationError))
-        {
-            EditorUtility.DisplayDialog("ActionFit Package Manager", $"{validationError}\n\nFolder: {packageRoot}", "OK");
-            return;
-        }
-
-        if (!EditorUtility.DisplayDialog(
-                "ActionFit Package Manager",
-                $"Use existing local package folder for edit?\n\n{package.Id}: {localVersion}\n\nFolder: {packageRoot}\n\nThis will replace the Git UPM dependency with a local file dependency without copying or overwriting the local folder.",
-                "Use Existing Local",
-                "Cancel"))
-            return;
-
-        string manifestPath = ManifestFullPath;
-        if (!File.Exists(manifestPath))
-        {
-            EditorUtility.DisplayDialog("ActionFit Package Manager", "Packages/manifest.json not found.", "OK");
-            return;
-        }
-
-        string manifest = File.ReadAllText(manifestPath);
-        string updatedManifest = SetDependency(manifest, package.Id, LocalPackageDependencyValue(package.Id));
-
-        File.WriteAllText(manifestPath, updatedManifest, new UTF8Encoding(false));
-        UnityEngine.Debug.Log($"[ActionFitPackageManager] Using existing local package folder for edit: {package.Id}\nDependency: {LocalPackageDependencyValue(package.Id)}\nFolder: {packageRoot}");
-
-        ActionFitPackageAiGuideRouter.EnsureProjectRouter();
-        AssetDatabase.Refresh();
-
-        try
-        {
-            PackageVersion catalogVersion = FindVersion(package.Id, localVersion) ?? package.LatestVersion;
-            RefreshEmbeddedPackageInfoFromCatalog(packageRoot, package, catalogVersion, Path.Combine(fullPackageRoot, "package.json"));
-        }
-        catch (Exception ex)
-        {
-            UnityEngine.Debug.LogWarning($"[ActionFitPackageManager] PackageInfo refresh skipped for {package.Id}: {ex.Message}");
-        }
-
-        AssetDatabase.Refresh();
-        SaveEmbeddedBaseline(package.Id, fullPackageRoot);
-        Client.Resolve();
         QueueReload();
     }
 
@@ -1659,7 +1555,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
         version = "";
         error = "";
 
-        if (string.IsNullOrWhiteSpace(fullPackageRoot) || !Directory.Exists(fullPackageRoot))
+        if (string.IsNullOrWhiteSpace(fullPackageRoot) || !ActionFitPackageFileUtility.PhysicalDirectoryExists(fullPackageRoot))
         {
             string displayPath = string.IsNullOrWhiteSpace(fullPackageRoot) ? "<empty>" : ToProjectRelativePath(fullPackageRoot);
             error = $"Local package folder does not exist: {displayPath}";
@@ -1699,7 +1595,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
         string packageRoot = $"Packages/{package.Id}";
         string fullPackageRoot = Path.Combine(ProjectRootPath, "Packages", package.Id);
-        if (!Directory.Exists(fullPackageRoot))
+        if (!ActionFitPackageFileUtility.PhysicalDirectoryExists(fullPackageRoot))
         {
             EditorUtility.DisplayDialog("ActionFit Package Manager", $"Embedded package folder not found:\n{packageRoot}", "OK");
             QueueReload();
@@ -1764,7 +1660,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
             return;
         }
 
-        File.WriteAllText(manifestPath, manifest, new UTF8Encoding(false));
+        ActionFitPackageManifestUtility.WriteAtomic(manifestPath, manifest);
         UnityEngine.Debug.Log($"[ActionFitPackageManager] Removed manifest dependency: {package.Id}");
 
         ActionFitPackageAiGuideRouter.EnsureProjectRouter();
@@ -1777,7 +1673,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
     {
         string packageRoot = $"Packages/{package.Id}";
         string fullPackageRoot = Path.Combine(ProjectRootPath, "Packages", package.Id);
-        if (!Directory.Exists(fullPackageRoot))
+        if (!ActionFitPackageFileUtility.PhysicalDirectoryExists(fullPackageRoot))
         {
             UnityEngine.Debug.LogWarning($"[ActionFitPackageManager] Embedded package folder not found: {packageRoot}");
             QueueReload();
@@ -1805,7 +1701,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
             string updated = RemoveDependency(manifest, package.Id, out bool removedDependency);
             if (removedDependency)
             {
-                File.WriteAllText(manifestPath, updated, new UTF8Encoding(false));
+                ActionFitPackageManifestUtility.WriteAtomic(manifestPath, updated);
                 UnityEngine.Debug.Log($"[ActionFitPackageManager] Removed manifest dependency: {package.Id}");
             }
         }
@@ -2097,79 +1993,12 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
     private static string SetDependency(string manifest, string packageId, string value)
     {
-        var dependencies = ReadDependencies(manifest, out int openBrace, out int closeBrace);
-        bool updated = false;
-        for (int i = 0; i < dependencies.Count; i++)
-        {
-            if (!string.Equals(dependencies[i].Id, packageId, StringComparison.Ordinal)) continue;
-
-            dependencies[i] = (packageId, value);
-            updated = true;
-            break;
-        }
-
-        if (!updated)
-            dependencies.Add((packageId, value));
-
-        return WriteDependencies(manifest, openBrace, closeBrace, dependencies);
+        return ActionFitPackageManifestUtility.SetDependency(manifest, packageId, value);
     }
 
     private static string RemoveDependency(string manifest, string packageId, out bool removed)
     {
-        var dependencies = ReadDependencies(manifest, out int openBrace, out int closeBrace);
-        int removedCount = dependencies.RemoveAll(d => string.Equals(d.Id, packageId, StringComparison.Ordinal));
-        removed = removedCount > 0;
-        return removed ? WriteDependencies(manifest, openBrace, closeBrace, dependencies) : manifest;
-    }
-
-    private static List<(string Id, string Value)> ReadDependencies(string manifest, out int openBrace, out int closeBrace)
-    {
-        int dependenciesStart = manifest.IndexOf("\"dependencies\"", StringComparison.Ordinal);
-        if (dependenciesStart < 0) throw new InvalidOperationException("manifest.json has no dependencies block.");
-
-        openBrace = manifest.IndexOf('{', dependenciesStart);
-        closeBrace = FindMatchingBrace(manifest, openBrace);
-        string dependenciesBody = manifest.Substring(openBrace + 1, closeBrace - openBrace - 1);
-        var dependencies = new List<(string Id, string Value)>();
-        var pattern = new Regex("^\\s*\"([^\"]+)\"\\s*:\\s*\"([^\"]*)\"\\s*,?\\s*$");
-
-        foreach (string line in dependenciesBody.Replace("\r\n", "\n").Split('\n'))
-        {
-            if (string.IsNullOrWhiteSpace(line)) continue;
-
-            var match = pattern.Match(line);
-            if (!match.Success) continue;
-
-            dependencies.Add((match.Groups[1].Value, match.Groups[2].Value));
-        }
-
-        return dependencies;
-    }
-
-    private static string WriteDependencies(string manifest, int openBrace, int closeBrace, List<(string Id, string Value)> dependencies)
-    {
-        string newline = manifest.Contains("\r\n") ? "\r\n" : "\n";
-        var sb = new StringBuilder();
-        sb.Append('{');
-
-        if (dependencies.Count > 0)
-        {
-            sb.Append(newline);
-            for (int i = 0; i < dependencies.Count; i++)
-            {
-                var dependency = dependencies[i];
-                string comma = i < dependencies.Count - 1 ? "," : "";
-                sb.Append("    ")
-                    .Append('"').Append(dependency.Id).Append("\": \"")
-                    .Append(dependency.Value).Append('"').Append(comma)
-                    .Append(newline);
-            }
-
-            sb.Append("  ");
-        }
-
-        sb.Append('}');
-        return manifest.Substring(0, openBrace) + sb + manifest[(closeBrace + 1)..];
+        return ActionFitPackageManifestUtility.RemoveDependency(manifest, packageId, out removed);
     }
 
     private static void RewritePackageJsonForFork(string packageJsonPath, ActionFitPackageCreateRequest request)
