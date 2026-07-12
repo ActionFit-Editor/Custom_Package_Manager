@@ -7,7 +7,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.62"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.64"
   }
 }
 ```
@@ -182,6 +182,8 @@ If an AI assistant reads this package documentation before the automatic router 
 ## Publish Notes
 
 `Publish Package` and `Publish Changed` refresh the catalog before uploading, block publishing when the refreshed catalog already contains the same `package_id@version`, create or refresh the local publish clone, commit copied package files, push `main`, push the version tag when needed, and append the catalog row. When a duplicate version is found, the default policy is to stop instead of overwriting the existing Git tag/catalog row; change `package.json` or `Publish Version`, or use `Fork as New` when the package should become a separate package/repository. The Unity Console prints `[ActionFitPackageManager]` logs for repository check, clone path, file copy, commit/tag, branch push, tag push, and catalog append steps.
+
+Publish preflight also supports a repository that exists but has no first commit yet. GitHub's empty-repository conflict response from the tag lookup is treated as an available tag while the repository remains classified as existing. Git command output streams are drained concurrently so large warning output, including line-ending warnings, cannot block publication.
 
 `Publish All Changed` snapshots the selected packages before upload, runs only the GitHub repository publish step in parallel, and appends catalog rows after every repository publish succeeds. The catalog Web App should support `upsertPackageVersions` and return either a matching `count` or per-item confirmations. If the Web App does not support that batch action yet, the tool falls back to serial `upsertPackageVersion` requests. If repository publish succeeds but catalog append fails, the window keeps those rows and shows `Retry Catalog Append` so the spreadsheet update can be retried without pushing repositories again.
 

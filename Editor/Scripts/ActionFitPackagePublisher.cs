@@ -7,6 +7,7 @@ using System.Linq;
 using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using UnityEditor;
 using UnityEngine;
 using Debug = UnityEngine.Debug;
@@ -88,7 +89,8 @@ public static class ActionFitPackagePublisher
                 request.GitHubToken);
             bool tagExists = repositoryExists && GitHubResourceExists(
                 $"https://api.github.com/repos/{repoPath}/git/ref/tags/{Uri.EscapeDataString(request.Version)}",
-                request.GitHubToken);
+                request.GitHubToken,
+                true);
 
             state = new RemoteState(repositoryExists, tagExists);
             message = repositoryExists
@@ -282,7 +284,7 @@ public static class ActionFitPackagePublisher
         }
     }
 
-    private static bool GitHubResourceExists(string url, string token)
+    private static bool GitHubResourceExists(string url, string token, bool conflictMeansMissing = false)
     {
         var get = CreateGitHubRequest(url, token, "GET");
         try
@@ -290,12 +292,18 @@ public static class ActionFitPackagePublisher
             using var response = (HttpWebResponse)get.GetResponse();
             return (int)response.StatusCode >= 200 && (int)response.StatusCode < 300;
         }
-        catch (WebException ex) when ((ex.Response as HttpWebResponse)?.StatusCode == HttpStatusCode.NotFound)
+        catch (WebException ex) when (
+            ex.Response is HttpWebResponse response &&
+            IsMissingGitHubResourceStatus(response.StatusCode, conflictMeansMissing))
         {
             ex.Response?.Dispose();
             return false;
         }
     }
+
+    internal static bool IsMissingGitHubResourceStatus(HttpStatusCode statusCode, bool conflictMeansMissing)
+        => statusCode == HttpStatusCode.NotFound ||
+           conflictMeansMissing && statusCode == HttpStatusCode.Conflict;
 
     private static HttpWebRequest CreateGitHubRequest(string url, string token, string method)
     {
@@ -522,7 +530,7 @@ public static class ActionFitPackagePublisher
             "Update the Apps Script Web App deployment and try again.\n" + responseText);
     }
 
-    private static bool RunGit(string workingDirectory, string arguments, string token, bool throwOnFailure = true)
+    internal static bool RunGit(string workingDirectory, string arguments, string token, bool throwOnFailure = true)
     {
         var startInfo = new ProcessStartInfo("git", arguments)
         {
@@ -534,9 +542,14 @@ public static class ActionFitPackagePublisher
         };
 
         using var process = Process.Start(startInfo);
-        string output = process.StandardOutput.ReadToEnd();
-        string error = process.StandardError.ReadToEnd();
+        if (process == null)
+            throw new InvalidOperationException("Could not start git process.");
+
+        Task<string> outputTask = process.StandardOutput.ReadToEndAsync();
+        Task<string> errorTask = process.StandardError.ReadToEndAsync();
         process.WaitForExit();
+        string output = outputTask.GetAwaiter().GetResult();
+        string error = errorTask.GetAwaiter().GetResult();
 
         if (process.ExitCode == 0) return true;
         if (!throwOnFailure) return false;

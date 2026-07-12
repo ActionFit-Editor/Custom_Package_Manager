@@ -1,5 +1,8 @@
 #if UNITY_EDITOR
 using System;
+using System.IO;
+using System.Net;
+using System.Text;
 using NUnit.Framework;
 
 public sealed class ActionFitPackagePublishApiTests
@@ -38,6 +41,70 @@ public sealed class ActionFitPackagePublishApiTests
 
         Assert.That(forward, Is.EqualTo(reverse));
         Assert.That(forward, Has.Length.EqualTo(20));
+    }
+
+    [TestCase(HttpStatusCode.NotFound, false, true)]
+    [TestCase(HttpStatusCode.NotFound, true, true)]
+    [TestCase(HttpStatusCode.Conflict, true, true)]
+    [TestCase(HttpStatusCode.Conflict, false, false)]
+    [TestCase(HttpStatusCode.Unauthorized, true, false)]
+    public void IsMissingGitHubResourceStatus_OnlyAllowsConflictForTagChecks(
+        HttpStatusCode statusCode,
+        bool conflictMeansMissing,
+        bool expected)
+    {
+        Assert.That(
+            ActionFitPackagePublisher.IsMissingGitHubResourceStatus(statusCode, conflictMeansMissing),
+            Is.EqualTo(expected));
+    }
+
+    [Test]
+    [Timeout(30000)]
+    public void RunGit_DrainsLargeLineEndingWarningOutputWithoutDeadlock()
+    {
+        string testRoot = Path.Combine(
+            ActionFitPackagePaths.ProjectRoot,
+            "Temp",
+            "ActionFitPackageManagerTests",
+            Guid.NewGuid().ToString("N"),
+            "git-output-drain");
+        Directory.CreateDirectory(testRoot);
+
+        try
+        {
+            Assert.That(ActionFitPackagePublisher.RunGit(testRoot, "init", ""), Is.True);
+
+            var utf8WithoutBom = new UTF8Encoding(false);
+            for (int i = 0; i < 512; i++)
+            {
+                string path = Path.Combine(testRoot, $"line-ending-{i:D4}.txt");
+                File.WriteAllText(path, "first line\nsecond line\n", utf8WithoutBom);
+            }
+
+            Assert.That(
+                ActionFitPackagePublisher.RunGit(
+                    testRoot,
+                    "-c core.autocrlf=true -c core.safecrlf=warn add -A",
+                    ""),
+                Is.True);
+            Assert.That(File.Exists(Path.Combine(testRoot, ".git", "index.lock")), Is.False);
+        }
+        finally
+        {
+            string operationRoot = Directory.GetParent(testRoot)?.FullName;
+            if (!string.IsNullOrWhiteSpace(operationRoot) && Directory.Exists(operationRoot))
+                DeleteDirectory(operationRoot);
+        }
+    }
+
+    private static void DeleteDirectory(string path)
+    {
+        foreach (string file in Directory.GetFiles(path, "*", SearchOption.AllDirectories))
+            File.SetAttributes(file, FileAttributes.Normal);
+        foreach (string directory in Directory.GetDirectories(path, "*", SearchOption.AllDirectories))
+            File.SetAttributes(directory, FileAttributes.Directory);
+        File.SetAttributes(path, FileAttributes.Directory);
+        Directory.Delete(path, true);
     }
 
     private static ActionFitPackageCreateRequest CreateValidRequest()

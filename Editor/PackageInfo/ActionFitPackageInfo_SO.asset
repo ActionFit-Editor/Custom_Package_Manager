@@ -21,5 +21,16 @@ MonoBehaviour:
   _description: "ActionFit UPM \uD328\uD0A4\uC9C0 \uCE74\uD0C8\uB85C\uADF8\uB97C
     \uBCF4\uACE0 Git URL \uAE30\uBC18 \uC124\uCE58\uC640 \uBC84\uC804 \uC801\uC6A9\uC744
     \uB3C4\uC640\uC8FC\uB294 Unity \uC5D0\uB514\uD130 \uD234."
-  _releaseNote: "- `1. Create Package`와 `Fork as New`에서 저장소 공개 범위를 반드시 `Public` 또는 `Private`로 직접 선택하게 해, 기본값으로 공개 저장소가 만들어지는 위험을 차단했습니다.\n- `ActionFitPackageCreateRequest.RepositoryVisibilitySpecified` 검증을 추가해 AI/API 호출도 공개 범위를 생략하면 패키지를 만들 수 없습니다.\n- `ActionFitPackageBulkPublishApi`와 JSON/CLI 진입점을 추가해 AI가 전체 변경 패키지를 하나의 승인 계획으로 준비하고 최대 4개씩 병렬 배포할 수 있습니다.\n- Manager Console의 `Publish All Changed`가 공용 API를 사용하며, 새 저장소 생성 목록과 공개 범위가 정확히 승인된 경우에만 실행되고 저장소 전체 성공 후 카탈로그를 갱신합니다."
+  _releaseNote: "- `git add -A`\uAC00 \uB2E4\uC218\uC758 LF/CRLF \uACBD\uACE0\uB97C
+    \uCD9C\uB825\uD560 \uB54C publish\uAC00 \uBA48\uCD94\uB358 \uBB38\uC81C\uB97C
+    \uC218\uC815\uD574, Git \uCD9C\uB825\uC774 \uB9CE\uC544\uB3C4 repository publish\uB97C
+    \uACC4\uC18D\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4.\n- \uC800\uC7A5\uC18C \uC0DD\uC131
+    \uD6C4 \uCCAB commit \uC804\uC758 \uBE48 GitHub repository\uC5D0\uC11C tag \uC870\uD68C\uAC00
+    `409 Conflict`\uB85C \uC2E4\uD328\uD558\uB358 \uBB38\uC81C\uB97C \uC218\uC815\uD574,
+    \uD574\uB2F9 \uC0C1\uD0DC\uB97C tag \uC5C6\uC74C\uC73C\uB85C \uD655\uC778\uD558\uACE0
+    \uC0C8 publish \uACC4\uD68D\uC744 \uC900\uBE44\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4.\n-
+    `ActionFitPackagePublishApiTests`\uC5D0 \uB300\uC6A9\uB7C9 Git \uACBD\uACE0 \uCD9C\uB825\uACFC
+    GitHub \uC0C1\uD0DC \uBD84\uB958 \uD68C\uADC0 \uAC80\uC99D\uC744 \uCD94\uAC00\uD574
+    \uB3D9\uC77C\uD55C publish \uC911\uB2E8\uC774 \uC7AC\uBC1C\uD558\uC9C0 \uC54A\uB3C4\uB85D
+    \uD588\uC2B5\uB2C8\uB2E4."
   _dependenciesOverride: 

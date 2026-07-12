@@ -7,7 +7,7 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.custompackagemanager`
 - Display name: Custom Package Manager
 - Repository: `https://github.com/ActionFit-Editor/Custom_Package_Manager.git`
-- Current package version at generation time: `1.1.62`
+- Current package version at generation time: `1.1.64`
 - Unity version: `6000.2`
 
 ## Purpose
@@ -214,4 +214,6 @@ When updating a package version, write PackageInfo release notes using these sta
 - The single-package publisher fetches `origin/main`, resets the local publish clone, copies package files, creates a package commit/tag, pushes `main`, pushes the package version tag when it does not already exist remotely, then appends the catalog row.
 - `Publish All Changed` uses snapshot-based publish requests so background tasks do not read Unity objects. It publishes repositories in parallel, appends catalog rows by `upsertPackageVersions` after all repository publishes succeed, falls back to serial `upsertPackageVersion` when batch append is unsupported, and keeps retryable catalog rows when append fails after successful repository publish.
 - Publish logs should identify each major step: repository check, publish clone path, file copy, commit/tag creation, `main` push, tag push, and catalog append.
+- Git subprocess stdout and stderr must be drained concurrently. Sequentially draining one redirected stream before the other can deadlock when Git emits many warnings.
+- A `409 Conflict` from the tag-ref lookup of an existing but empty GitHub repository means that the tag is absent and publication may proceed. Do not apply that exception to the repository existence request or to authentication failures.
 - The package repository should include this `AI_GUIDE.md` so other projects can load the AI package context after installing the package.

@@ -26,6 +26,7 @@ Do not silently create `Docs/AI/PROJECT.md` or any other AI entry point in a pro
 ## Package Guide Entries
 
 - `Packages/com.actionfit.actionfitpackagemanager/AI_GUIDE.md` - ActionFitPackageManager provides an ActionFit Unity editor workflow. Read when changing `ActionFitPackageManager` package behavior, settings, metadata, or release flow.
+- `Packages/com.actionfit.ai-autocreateprefab/AI_GUIDE.md` - AI AutoCreatePrefab manages rule-driven prefab generation and preview image placement through UnityCLI and Editor workflows. Read when changing prefab recipes, hierarchy generation, image placement, preview behavior, or UnityCLI-facing APIs.
 - `Packages/com.actionfit.ai-jira/AI_GUIDE.md` - AI Jira defines ActionFit Jira automation rules. Read when creating Jira issues, discovering Jira tasks, changing Jira lifecycle/status behavior, editing Jira REST scripts, or handling Jira local config.
 - `Packages/com.actionfit.ai-pr/AI_GUIDE.md` - AI PullRequest defines branch/worktree, commit, PR creation, review response, sensitive-change disclosure, worktree activity auditing, and final reporting rules. Read before creating or reusing a development branch, checking what isolated AI worktrees are doing, pushing a branch, creating or updating a PR, or handling review feedback.
 - `Packages/com.actionfit.ai-unitycli/AI_GUIDE.md` - AI UnityCLI explains Unity CLI installation and defines safe AI usage for Editor inspection, refresh, console checks, tests, screenshots, profiling, menu execution, `exec`, and reserialization.
