@@ -1,0 +1,9 @@
+{
+  "name": "com.actionfit.wrong",
+  "version": "1.2",
+  "displayName": "Wrong Tool",
+  "description": "Invalid package contract fixture.",
+  "unity": "6000",
+  "author": {},
+  "dependencies": []
+}

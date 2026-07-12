@@ -7,7 +7,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.64"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.65"
   }
 }
 ```
@@ -18,6 +18,36 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 - `Tools > Package > Custom Package Manager > Manager Console`: create packages, publish changed package versions, publish selected package versions, open catalog/manifest files, and refresh the AI guide router.
 - `Tools > Package > <Package Name> > README`: opens that package's README in an editor window.
 - `Tools > Package > <Package Name> > Setting SO`: focuses that package's settings ScriptableObject when the package has one.
+
+## Package Contract Validator
+
+`Tools~/package_contract_validator.py` validates embedded `Packages/com.actionfit.*` packages without starting Unity or contacting external services. Run it from the consuming Unity project root with Python 3:
+
+```bash
+# One package. Add --base-ref to enforce a version bump for changed files.
+python Packages/com.actionfit.custompackagemanager/Tools~/package_contract_validator.py \
+  --package com.actionfit.custompackagemanager \
+  --base-ref origin/dev_jewoo
+
+# Every package changed from the merge base of the supplied Git ref.
+python Packages/com.actionfit.custompackagemanager/Tools~/package_contract_validator.py \
+  --changed \
+  --base-ref origin/dev_jewoo \
+  --output Temp/actionfit-package-contract.json
+
+# The current contract state of every embedded ActionFit package.
+python Packages/com.actionfit.custompackagemanager/Tools~/package_contract_validator.py --all
+```
+
+The validator checks `package.json`, SemVer and changed-package version bumps, README install tags, `AI_GUIDE.md` identity/version/router entries, `ActionFitPackageInfo_SO`, and package asmdefs. It writes the same JSON schema to stdout and optional `--output`; every diagnostic includes `code`, `severity`, `path`, `line`, `message`, and `suggestedFix`.
+
+Exit codes are stable for local automation and CI:
+
+- `0`: every selected package passed.
+- `1`: one or more package contract diagnostics have `severity: error`.
+- `2`: the validator could not run reliably because of arguments, Git, repository, or result-output infrastructure.
+
+`--changed` requires `--base-ref`. `--package` and `--all` can run without Git comparison, but version-bump enforcement is enabled only when `--base-ref` is supplied. The validator does not inspect catalogs, GitHub remotes, credentials, Unity compilation, or package tests.
 
 ## Package Manager
 

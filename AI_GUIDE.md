@@ -7,7 +7,7 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.custompackagemanager`
 - Display name: Custom Package Manager
 - Repository: `https://github.com/ActionFit-Editor/Custom_Package_Manager.git`
-- Current package version at generation time: `1.1.64`
+- Current package version at generation time: `1.1.65`
 - Unity version: `6000.2`
 
 ## Purpose
@@ -48,6 +48,8 @@ Read this file when:
 - `Editor/Scripts/ActionFitPackageCatalogUpdater.cs`: spreadsheet/web-app catalog download.
 - `Editor/Scripts/ActionFitPackageCommunityClient.cs`: anonymous project vote ID, package vote/comment Web App requests, and local vote state.
 - `Editor/Scripts/ActionFitPackageAiGuideRouter.cs`: scans embedded and Git UPM package `AI_GUIDE.md` files, syncs `PACKAGE_AI_GUIDE_ROUTER.md`, and connects discovered AI entry points through adapter-style helpers.
+- `Tools~/package_contract_validator.py`: Unity-independent package contract CLI for package selection, changed-package discovery, SemVer/version-bump checks, metadata/document/asmdef validation, stable diagnostics, and JSON results.
+- `Tests/Shell/run-tests.sh`: Python fixture regression suite for valid, invalid, changed-version, output, and infrastructure result contracts.
 - `Editor/Documentation/PackageCommunityWebAppContract.md`: required spreadsheet sheets and Web App actions for package votes, comments, and batch catalog publish confirmation.
 - `Editor/PackageInfo/ActionFitPackageInfo_SO.asset`: catalog metadata source for this package.
 - `PACKAGE_AI_GUIDE_ROUTER.md`: package-shipped AI router for choosing which package `AI_GUIDE.md` to read for a task.
@@ -127,6 +129,16 @@ Read this file when:
 - `History` and `Changes` must render from both `Check Update` rows and expanded package detail rows; package detail buttons should draw the panel inline under the selected package, not only inside the update manager panel.
 - Release notes do not need headings such as `## 1.1.29`; the UI already renders the version label.
 - Catalog CSV reading supports quoted multiline changelog fields. Do not rely on unquoted commas or raw newlines in catalog rows.
+
+## Package Contract Validation
+
+- Run `python Packages/com.actionfit.custompackagemanager/Tools~/package_contract_validator.py --package <package-id>` for one package, `--changed --base-ref <ref>` for Git-diff selection and version-bump enforcement, or `--all` for the embedded baseline.
+- `--package` and `--all` also enforce changed-package version bumps when `--base-ref` is supplied. Without a base ref they validate only the current package state.
+- The JSON result schema is shared by local AI and CI callers. Every diagnostic has `code`, `severity`, `path`, `line`, `message`, and `suggestedFix`; exit codes are `0` success, `1` contract failure, and `2` infrastructure failure.
+- Contract checks cover package.json fields and JSON, SemVer, changed-package version increases, README Git UPM install tags, AI guide identity/version/router entries, PackageInfo identity/required metadata, and package-owned asmdefs.
+- Directories whose names end in `~`, including validator fixtures and `Tools~`, are excluded from asmdef discovery because Unity does not import them as package assemblies.
+- The validator is standard-library Python and must remain independent of Unity, network APIs, catalogs, credentials, publishing, and package compilation/test execution.
+- Run `bash Packages/com.actionfit.custompackagemanager/Tests/Shell/run-tests.sh` after changing validator behavior or its stable result contract.
 
 ## AI Guide Distribution Rule
 
