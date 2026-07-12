@@ -7,7 +7,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.60"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.62"
   }
 }
 ```
@@ -43,7 +43,7 @@ Downloaded embedding is delegated to Unity Package Manager so Unity's virtual `P
 
 Unity can expose downloaded package cache contents through a logical `Packages/<packageId>` path even when no physical embedded folder exists. Conversion therefore uses guarded physical directory enumeration instead of `Directory.Exists` alone when deciding whether a reusable local folder exists. This prevents a downloaded cache projection from being mistaken for an embedded package and avoids writing a `file:` dependency without copying the package.
 
-`Fork as New` copies the downloaded package into a new `Packages/<newPackageId>/` folder, rewrites package metadata for the new `com.actionfit.*` package ID, creates PackageInfo metadata for a new repository, removes the original manifest dependency, and writes the new local `file:` dependency. This prevents the source package and the fork from compiling duplicate assemblies at the same time. If the copy or validation fails, the manifest is left unchanged so Unity does not resolve a broken `file:` dependency. Embedded packages include `Use Downloaded`, which returns the package to the downloaded flow through the same protected replacement process used by embedded updates.
+`Fork as New` copies the downloaded package into a new `Packages/<newPackageId>/` folder, rewrites package metadata for the new `com.actionfit.*` package ID, creates PackageInfo metadata for a new repository, removes the original manifest dependency, and writes the new local `file:` dependency. Both `1. Create Package` and `Fork as New` require an explicit `Public` or `Private` repository visibility choice; there is no silent public default, and API requests without `RepositoryVisibilitySpecified = true` fail validation. This prevents the source package and the fork from compiling duplicate assemblies at the same time. If the copy or validation fails, the manifest is left unchanged so Unity does not resolve a broken `file:` dependency. Embedded packages include `Use Downloaded`, which returns the package to the downloaded flow through the same protected replacement process used by embedded updates.
 
 Before an embedded package is replaced, the manager reports whether it changed since `Embed for Edit`, warns that local modifications are not merged, and creates a timestamped safety copy under `UserSettings/ActionFitPackageManager/EmbeddedBackups/<packageId>/`. The manifest is changed only after every required backup succeeds. If an embedded folder cannot be moved to the operating system trash, the manager restores the original manifest and any package folders already moved during that operation. Backups remain until they are removed manually.
 
@@ -139,12 +139,16 @@ ActionFitPackageEmbedApi.EmbedForEditAsync(new ActionFitPackageEmbedRequest
 - `ActionFitPackagePublishApi.Prepare`: refreshes the catalog, blocks reused versions, validates package metadata/authentication, checks the GitHub repository and immutable tag, and returns a content-bound plan ID without changing external state.
 - `ActionFitPackagePublishApi.Execute`: re-runs every preflight and requires the same plan ID plus the exact `RequiredApprovalText` before repository push, tag push, and catalog upsert.
 - `ActionFitPackagePublishApi.PrepareJson` / `ExecuteJson`: JSON wrappers for AI connectors. Execution never infers approval from preparation.
+- `ActionFitPackageBulkPublishApi.PrepareAllChanged`: discovers changed embedded packages or validates an explicit package ID list, refreshes catalog/GitHub state, and returns one content-bound bulk plan without external changes.
+- `ActionFitPackageBulkPublishApi.ExecuteAll`: requires the exact bulk plan ID, exact approval text, and an exact list of every package whose repository will be created. Repository work runs in parallel only after revalidation, and catalog rows are appended after all repository publishes succeed.
+- `ActionFitPackageBulkPublishApi.PrepareAllChangedJson` / `ExecuteAllJson`: JSON wrappers for AI connectors. The Manager Console's `Publish All Changed` button calls this same API.
 
 Batchmode callers can use:
 
 - `-executeMethod ActionFitPackageEmbedCli.Run` with `-actionFitEmbedRequest <request.json>` and `-actionFitEmbedResult <result.json>`. Do not add Unity's `-quit` option: this command waits for the asynchronous embed result, writes the result file, and exits Unity itself.
 - `-executeMethod ActionFitPackageWorkflowCli.Run` with `-actionFitInspectRequest <request.json>` and `-actionFitInspectResult <result.json>`.
 - `-executeMethod ActionFitPackagePublishCli.Prepare` or `ActionFitPackagePublishCli.Execute` with `-actionFitPublishRequest <request.json>` and `-actionFitPublishResult <result.json>`.
+- `-executeMethod ActionFitPackageBulkPublishCli.PrepareAllChanged` or `ActionFitPackageBulkPublishCli.ExecuteAll` with `-actionFitBulkPublishRequest <request.json>` and `-actionFitBulkPublishResult <result.json>`.
 
 Inspection is advisory and never publishes. Workflow options mark repository publishing with `RequiresExplicitPublishApproval`; AI must not push, tag, create a repository, or append a catalog row unless the user explicitly requests that external action.
 
@@ -156,7 +160,7 @@ If an AI assistant reads this package documentation before the automatic router 
 
 ## Manager Console
 
-- `1. Create Package`: creates the `Packages/com.actionfit.*` package skeleton, README, AI guide, README-only package menu file, asmdef, and PackageInfo SO.
+- `1. Create Package`: requires an explicit `Public` or `Private` repository visibility choice, then creates the `Packages/com.actionfit.*` package skeleton, README, AI guide, README-only package menu file, asmdef, and PackageInfo SO. Creation validation rejects requests that omit the explicit choice.
 - `2. Publish Changed`: normal publish path. It finds packages whose local `package.json` version is higher than the catalog latest version, includes newly created packages that are not yet registered, prepares local publish clones, creates missing repositories, pushes package contents/tags, and appends catalog rows. `Publish All Changed` runs repository publishes up to 4 packages at once, then appends all catalog rows by one batch request when the Web App supports it. Each package's `Repository Visibility` in `ActionFitPackageInfo_SO` selects the public/private GitHub profile for both new and already registered package publishes.
 - `Publish Package`: manual publish path for an already registered package version when you need to type a specific version before publishing.
 - `Open Catalog`: selects the local or fallback catalog CSV.

@@ -7,7 +7,7 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.custompackagemanager`
 - Display name: Custom Package Manager
 - Repository: `https://github.com/ActionFit-Editor/Custom_Package_Manager.git`
-- Current package version at generation time: `1.1.60`
+- Current package version at generation time: `1.1.62`
 - Unity version: `6000.2`
 
 ## Purpose
@@ -38,6 +38,7 @@ Read this file when:
 - `Editor/Scripts/ActionFitPackageEmbedApi.cs`: public dialog-free Embed for Edit validation/execution APIs, JSON wrapper, and batchmode entry point.
 - `Editor/Scripts/ActionFitPackageWorkflowApi.cs`: shared-sheet refresh, installed/latest version comparison, local-change state, and workflow recommendations for AI callers.
 - `Editor/Scripts/ActionFitPackagePublishApi.cs`: read-only publish plan preparation, content-bound approval, pre-execution revalidation, structured repository/catalog execution results, JSON wrappers, and batchmode entry points.
+- `Editor/Scripts/ActionFitPackageBulkPublishApi.cs`: shared AI/UI bulk publish preparation and execution, exact repository-creation approvals, bounded parallel repository publishing, catalog fallback, JSON wrappers, and batchmode entry points.
 - `Editor/Scripts/*PackageMenu.cs`: package-owned Unity top-menu `README` and required `Setting SO` entries when a package owns or bootstraps settings. These entries live in each package, not in Custom Package Manager.
 - `Editor/Scripts/ActionFitPackageManagerConsoleWindow.cs`: operational console for create/repo/publish/catalog/manifest/router actions.
 - `Editor/Scripts/ActionFitPackageCatalogSettings_SO.cs`: spreadsheet config, one GitHub publish token, public/private repo creation org profiles, and publish cache root.
@@ -77,6 +78,7 @@ Read this file when:
 - It manages internal UPM package install/update/remove, repository creation, changelog/history display, AI guide routing, and manual publish flows.
 - Manager Console exposes `1. Create Package`, `2. Publish Changed`, `Publish Package`, catalog/manifest access, and AI guide router refresh. Package README and settings SO access must stay in Unity top-menu package entries such as `Tools/Package/<Package Name>/README` and `Tools/Package/<Package Name>/Setting SO`, not in `Project Files` or Package Manager package rows.
 - Each package's `ActionFitPackageInfo_SO` stores `Repository Visibility`. Publish flows use that package-local value to choose the public/private GitHub profile for both new and already registered packages, so `Publish All Changed` can safely publish mixed public/private packages in one run.
+- New package creation and `Fork as New` must ask the user to choose `Public` or `Private`; never infer `Public` from an enum default. `ActionFitPackageCreateRequest.RepositoryVisibilitySpecified` must be true, and create validation must reject a missing or invalid choice. Internal metadata refreshes for an existing package may preserve an already-known value without showing a creation prompt.
 - `Publish All Changed` must create publish request snapshots on the Unity main thread, run only repository publish work in parallel with `ActionFitPackagePublisher.DefaultMaxParallelPublishes`, and append catalog rows only after all repository publishes succeed.
 - Bulk catalog append should call Web App action `upsertPackageVersions` first. The Web App must return either `count == item count` or per-item confirmations; otherwise the client treats batch append as unsupported and falls back to serial `upsertPackageVersion`.
 - If repository publish succeeds but catalog append fails, keep the successful catalog append items in the publish window and expose `Retry Catalog Append` so the user can update the spreadsheet without pushing repositories again.
@@ -97,6 +99,7 @@ Read this file when:
 - PackageInfo refresh, AI router refresh, baseline creation, and other destination post-processing must run only after the official embed request has succeeded and the physical embedded package has been validated. Post-processing warnings must not delete or roll back a successfully embedded package.
 - AI publishing must use `ActionFitPackagePublishApi.Prepare` before `Execute`. Preparation is read-only and must refresh the catalog, reject an already registered version, require a version newer than the catalog latest, validate credentials without exposing them, and check the remote repository/tag.
 - `Execute` must require the exact prepared plan ID and approval text, re-run preparation, reject content/catalog/remote changes, and require `ApproveRepositoryCreation` for a missing repository. Never infer publish approval from an earlier edit, embed, inspection, or preparation request.
+- AI bulk publishing must use `ActionFitPackageBulkPublishApi.PrepareAllChanged` before `ExecuteAll`. Execution must match the exact bulk plan and approval text and must provide an exact `ApprovedRepositoryCreationPackageIds` set, including each plan's already selected `Public`/`Private` visibility. The Manager Console must use this same API rather than a separate bulk implementation.
 - Repository publication and catalog registration are separate result stages. If the repository succeeds and catalog upsert fails, return `RetryCatalogAppendAvailable` and retry only the catalog stage instead of pushing Git/tag again.
 - If `Packages/<packageId>/` already exists during `Embed for Edit`, validate its `package.json` name and let the user use that existing folder by writing the local `file:<packageId>` dependency. Do not overwrite the local folder.
 - Downloaded packages may also be copied through `Fork as New` when the user wants a new `com.actionfit.*` package ID and a new repository instead of publishing edits back to the source package repository. This flow must rewrite the copied package's `package.json` metadata, create PackageInfo metadata for the new repository, remove the original manifest dependency, and write the new local `file:<newPackageId>` dependency so duplicate source/fork assemblies are not compiled together.

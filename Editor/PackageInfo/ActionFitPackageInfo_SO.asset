@@ -21,21 +21,5 @@ MonoBehaviour:
   _description: "ActionFit UPM \uD328\uD0A4\uC9C0 \uCE74\uD0C8\uB85C\uADF8\uB97C
     \uBCF4\uACE0 Git URL \uAE30\uBC18 \uC124\uCE58\uC640 \uBC84\uC804 \uC801\uC6A9\uC744
     \uB3C4\uC640\uC8FC\uB294 Unity \uC5D0\uB514\uD130 \uD234."
-  _releaseNote: "- `Embed for Edit`\uAC00 Unity \uACF5\uC2DD `Client.Embed`\uB97C
-    \uC0AC\uC6A9\uD558\uB3C4\uB85D \uBCC0\uACBD\uD574 `Library/PackageCache` \uD3F4\uB354\uAC00
-    \uC774\uBBF8 \uC788\uB2E4\uB294 \uCDA9\uB3CC\uB85C \uC784\uBCA0\uB4DC\uAC00 \uC2E4\uD328\uD558\uB358
-    \uBB38\uC81C\uB97C \uD574\uACB0\uD588\uC2B5\uB2C8\uB2E4.\n- Unity \uC784\uBCA0\uB4DC
-    \uC131\uACF5 \uD6C4\uC5D0\uB9CC `file:` \uC758\uC874\uC131, PackageInfo, AI \uB77C\uC6B0\uD130,
-    \uBCC0\uACBD \uAE30\uC900\uC120\uC744 \uCC98\uB9AC\uD574 \uC644\uB8CC \uC804
-    \uD6C4\uCC98\uB9AC\uAC00 \uCE90\uC2DC\uB97C \uAC74\uB4DC\uB9AC\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4.\n-
-    \uCE90\uC2DC \uC804\uC6A9 `_fingerprint` \uBA54\uD0C0\uB370\uC774\uD130\uB97C
-    \uC784\uBCA0\uB4DC \uD328\uD0A4\uC9C0\uC5D0\uC11C \uC81C\uAC70\uD574 \uD3B8\uC9D1\uB41C
-    `package.json`\uC774 \uBC30\uD3EC \uC18C\uC2A4\uC5D0 \uD3EC\uD568\uB418\uC9C0
-    \uC54A\uB3C4\uB85D \uD588\uC2B5\uB2C8\uB2E4.\n- `EmbedForEditAsync`\uC640 UI/CLI\uAC00
-    \uCD5C\uC885 \uC644\uB8CC \uACB0\uACFC\uB97C \uAE30\uB2E4\uB9AC\uBA70, \uD30C\uC77C
-    \uBA54\uD0C0\uB370\uC774\uD130 \uC81C\uAC70\uC640 manifest \uC815\uADDC\uD654
-    \uD68C\uADC0 \uD14C\uC2A4\uD2B8\uB97C \uCD94\uAC00\uD588\uC2B5\uB2C8\uB2E4.\n-
-    Caution: `ActionFitPackageEmbedCli.Run`\uC740 \uBE44\uB3D9\uAE30 \uC644\uB8CC
-    \uD6C4 \uC9C1\uC811 Unity\uB97C \uC885\uB8CC\uD558\uBBC0\uB85C \uBA85\uB839\uD589\uC5D0
-    `-quit`\uC744 \uCD94\uAC00\uD558\uC9C0 \uB9C8\uC2ED\uC2DC\uC624."
+  _releaseNote: "- `1. Create Package`와 `Fork as New`에서 저장소 공개 범위를 반드시 `Public` 또는 `Private`로 직접 선택하게 해, 기본값으로 공개 저장소가 만들어지는 위험을 차단했습니다.\n- `ActionFitPackageCreateRequest.RepositoryVisibilitySpecified` 검증을 추가해 AI/API 호출도 공개 범위를 생략하면 패키지를 만들 수 없습니다.\n- `ActionFitPackageBulkPublishApi`와 JSON/CLI 진입점을 추가해 AI가 전체 변경 패키지를 하나의 승인 계획으로 준비하고 최대 4개씩 병렬 배포할 수 있습니다.\n- Manager Console의 `Publish All Changed`가 공용 API를 사용하며, 새 저장소 생성 목록과 공개 범위가 정확히 승인된 경우에만 실행되고 저장소 전체 성공 후 카탈로그를 갱신합니다."
   _dependenciesOverride: 

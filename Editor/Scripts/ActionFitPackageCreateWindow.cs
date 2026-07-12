@@ -9,7 +9,8 @@ public class ActionFitPackageCreateWindow : EditorWindow
     private string _packageId = "com.actionfit.";
     private string _displayName = "";
     private string _repoName = "";
-    private ActionFitPackageRepositoryVisibility _repositoryVisibility = ActionFitPackageRepositoryVisibility.Public;
+    private int _repositoryVisibilitySelection;
+    private static readonly string[] RepositoryVisibilityOptions = { "Select...", "Public", "Private" };
     private string _version = "1.0.0";
     private string _unityVersion = "6000.2";
     private string _owner = "ActionFit";
@@ -32,7 +33,9 @@ public class ActionFitPackageCreateWindow : EditorWindow
         _packageId = EditorGUILayout.TextField("Package Id", _packageId);
         _displayName = EditorGUILayout.TextField("Display Name", _displayName);
         _repoName = EditorGUILayout.TextField("Repo Name", _repoName);
-        _repositoryVisibility = (ActionFitPackageRepositoryVisibility)EditorGUILayout.EnumPopup("Repository Visibility", _repositoryVisibility);
+        _repositoryVisibilitySelection = EditorGUILayout.Popup("Repository Visibility", _repositoryVisibilitySelection, RepositoryVisibilityOptions);
+        if (_repositoryVisibilitySelection == 0)
+            EditorGUILayout.HelpBox("Choose Public or Private. Package creation cannot continue without an explicit repository visibility choice.", MessageType.Warning);
         _version = EditorGUILayout.TextField("Version", _version);
         _unityVersion = EditorGUILayout.TextField("Unity", _unityVersion);
 
@@ -78,7 +81,8 @@ public class ActionFitPackageCreateWindow : EditorWindow
                 PackageId = _packageId,
                 DisplayName = _displayName,
                 RepoName = _repoName,
-                RepositoryVisibility = _repositoryVisibility,
+                RepositoryVisibility = GetSelectedRepositoryVisibility(),
+                RepositoryVisibilitySpecified = _repositoryVisibilitySelection > 0,
                 Version = _version,
                 UnityVersion = _unityVersion,
                 Owner = _owner,
@@ -109,5 +113,10 @@ public class ActionFitPackageCreateWindow : EditorWindow
             EditorUtility.DisplayDialog("ActionFit Package Manager", ex.Message, "OK");
         }
     }
+
+    private ActionFitPackageRepositoryVisibility GetSelectedRepositoryVisibility()
+        => _repositoryVisibilitySelection == 2
+            ? ActionFitPackageRepositoryVisibility.Private
+            : ActionFitPackageRepositoryVisibility.Public;
 }
 #endif

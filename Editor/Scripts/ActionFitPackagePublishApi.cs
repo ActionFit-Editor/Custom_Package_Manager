@@ -328,7 +328,7 @@ public static class ActionFitPackagePublishApi
         }
     }
 
-    private static ActionFitPackageInfo_SO FindPackageInfo(string packageId)
+    internal static ActionFitPackageInfo_SO FindPackageInfo(string packageId)
     {
         string assetPath = Path.Combine(
             "Packages",

@@ -12,6 +12,7 @@ public sealed class ActionFitPackageCreateRequest
     public string DisplayName;
     public string RepoName;
     public ActionFitPackageRepositoryVisibility RepositoryVisibility;
+    public bool RepositoryVisibilitySpecified;
     public string Version;
     public string UnityVersion;
     public string Description;
@@ -246,9 +247,16 @@ public static class ActionFitPackageInfoUtility
         if (prop != null) prop.enumValueIndex = (int)visibility;
     }
 
-    private static void ValidateCreateRequest(ActionFitPackageCreateRequest request)
+    internal static void ValidateCreateRequest(ActionFitPackageCreateRequest request)
     {
         if (request == null) throw new ArgumentNullException(nameof(request));
+        if (!request.RepositoryVisibilitySpecified)
+            throw new InvalidOperationException("Repository Visibility must be explicitly selected as Public or Private before creating a package.");
+        if (request.RepositoryVisibility != ActionFitPackageRepositoryVisibility.Public &&
+            request.RepositoryVisibility != ActionFitPackageRepositoryVisibility.Private)
+        {
+            throw new InvalidOperationException("Repository Visibility must be Public or Private.");
+        }
         request.PackageId = NormalizePackageId(request.PackageId);
         request.DisplayName = NormalizeRequired(request.DisplayName, "Display Name");
         request.RepoName = NormalizeRepoName(request.RepoName);
