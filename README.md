@@ -7,7 +7,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.65"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.66"
   }
 }
 ```
@@ -166,7 +166,7 @@ ActionFitPackageEmbedApi.EmbedForEditAsync(new ActionFitPackageEmbedRequest
 - `ActionFitPackageEmbedApi.EmbedForEdit`: start-oriented convenience API. Downloaded packages return `EMBED_STARTED`; callers that require final success must use the async overload or inspect package state afterward.
 - `ActionFitPackageEmbedApi.ExecuteJson`: JSON start-result wrapper for Unity connectors and AI tools. A returned `EMBED_STARTED` is not the final conversion result.
 - `ActionFitPackageEmbedApi.RecoverPendingTransactions`: explicit recovery entry point in addition to automatic Editor-load recovery.
-- `ActionFitPackagePublishApi.Prepare`: refreshes the catalog, blocks reused versions, validates package metadata/authentication, checks the GitHub repository and immutable tag, and returns a content-bound plan ID without changing external state.
+- `ActionFitPackagePublishApi.Prepare`: runs the local package contract first, then refreshes the catalog, blocks reused versions, validates package metadata/authentication, checks the GitHub repository and immutable tag, and returns a content-bound plan ID without changing external state. Contract failures include structured diagnostics and stop before catalog, credential, or GitHub requests.
 - `ActionFitPackagePublishApi.Execute`: re-runs every preflight and requires the same plan ID plus the exact `RequiredApprovalText` before repository push, tag push, and catalog upsert.
 - `ActionFitPackagePublishApi.PrepareJson` / `ExecuteJson`: JSON wrappers for AI connectors. Execution never infers approval from preparation.
 - `ActionFitPackageBulkPublishApi.PrepareAllChanged`: discovers changed embedded packages or validates an explicit package ID list, refreshes catalog/GitHub state, and returns one content-bound bulk plan without external changes.
@@ -190,7 +190,7 @@ If an AI assistant reads this package documentation before the automatic router 
 
 ## Manager Console
 
-- `1. Create Package`: requires an explicit `Public` or `Private` repository visibility choice, then creates the `Packages/com.actionfit.*` package skeleton, README, AI guide, README-only package menu file, asmdef, and PackageInfo SO. Creation validation rejects requests that omit the explicit choice.
+- `1. Create Package`: requires an explicit `Public` or `Private` repository visibility choice, then creates the `Packages/com.actionfit.*` package skeleton, README, AI guide, README-only package menu file, asmdef, and PackageInfo SO. Creation validation rejects requests that omit the explicit choice, and the completed skeleton must pass the package-owned round-trip contract validator before creation returns successfully.
 - `2. Publish Changed`: normal publish path. It finds packages whose local `package.json` version is higher than the catalog latest version, includes newly created packages that are not yet registered, prepares local publish clones, creates missing repositories, pushes package contents/tags, and appends catalog rows. `Publish All Changed` runs repository publishes up to 4 packages at once, then appends all catalog rows by one batch request when the Web App supports it. Each package's `Repository Visibility` in `ActionFitPackageInfo_SO` selects the public/private GitHub profile for both new and already registered package publishes.
 - `Publish Package`: manual publish path for an already registered package version when you need to type a specific version before publishing.
 - `Open Catalog`: selects the local or fallback catalog CSV.

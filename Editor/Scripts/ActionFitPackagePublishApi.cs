@@ -44,6 +44,7 @@ public sealed class ActionFitPackagePublishPlan
     public string RepositoryUrl;
     public string PlanId;
     public string RequiredApprovalText;
+    public ActionFitPackageContractDiagnostic[] ContractDiagnostics = Array.Empty<ActionFitPackageContractDiagnostic>();
     public string[] PlannedActions = Array.Empty<string>();
     public string[] Warnings = Array.Empty<string>();
 }
@@ -105,6 +106,12 @@ public static class ActionFitPackagePublishApi
             string packagePath = ActionFitPackagePaths.PackagePath(request.PackageId);
             ActionFitPackageFileUtility.ValidateLocalPackageFolder(request.PackageId, packagePath);
             plan.PackagePath = ActionFitPackagePaths.ToProjectRelativePath(packagePath);
+
+            ActionFitPackageContractValidationResult contract =
+                ActionFitPackageContractValidator.ValidatePackage(request.PackageId);
+            plan.ContractDiagnostics = contract.Diagnostics;
+            if (!contract.Success)
+                return Fail(plan, contract.Code, contract.Message);
 
             ActionFitPackageCatalogSettings_SO settings = ActionFitPackageCatalogSettingsProvider.FindOrCreate();
             if (request.RefreshCatalog &&

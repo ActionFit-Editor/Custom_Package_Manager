@@ -92,7 +92,9 @@ public static class ActionFitPackageInfoUtility
             if (!File.Exists(existingPackageJson))
                 throw new InvalidOperationException($"Package already exists without package.json: {packageRoot}");
 
-            return CreateOrUpdatePackageInfo(packageRoot, request);
+            ActionFitPackageInfo_SO existingInfo = CreateOrUpdatePackageInfo(packageRoot, request);
+            ValidatePackageContract(request.PackageId);
+            return existingInfo;
         }
 
         Directory.CreateDirectory(fullPackageRoot);
@@ -116,7 +118,19 @@ public static class ActionFitPackageInfoUtility
 
         AssetDatabase.SaveAssets();
         AssetDatabase.Refresh();
-        return AssetDatabase.LoadAssetAtPath<ActionFitPackageInfo_SO>(GetPackageInfoAssetPath(packageRoot));
+        ActionFitPackageInfo_SO createdInfo = AssetDatabase.LoadAssetAtPath<ActionFitPackageInfo_SO>(GetPackageInfoAssetPath(packageRoot));
+        ValidatePackageContract(request.PackageId);
+        return createdInfo;
+    }
+
+    internal static void ValidatePackageContract(string packageId)
+    {
+        ActionFitPackageContractValidationResult result = ActionFitPackageContractValidator.ValidatePackage(packageId);
+        if (result.Success) return;
+
+        string diagnostics = string.Join("\n", ActionFitPackageContractValidator.DiagnosticSummaries(result));
+        string detail = string.IsNullOrWhiteSpace(diagnostics) ? result.Message : $"{result.Message}\n{diagnostics}";
+        throw new InvalidOperationException($"{result.Code}: Generated package contract validation failed. {detail}");
     }
 
     private static ActionFitPackageInfo_SO CreateOrUpdatePackageInfo(string packageRoot, ActionFitPackageCreateRequest request)

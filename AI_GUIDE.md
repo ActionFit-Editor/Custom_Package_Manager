@@ -7,7 +7,7 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.custompackagemanager`
 - Display name: Custom Package Manager
 - Repository: `https://github.com/ActionFit-Editor/Custom_Package_Manager.git`
-- Current package version at generation time: `1.1.65`
+- Current package version at generation time: `1.1.66`
 - Unity version: `6000.2`
 
 ## Purpose
@@ -133,6 +133,9 @@ Read this file when:
 ## Package Contract Validation
 
 - Run `python Packages/com.actionfit.custompackagemanager/Tools~/package_contract_validator.py --package <package-id>` for one package, `--changed --base-ref <ref>` for Git-diff selection and version-bump enforcement, or `--all` for the embedded baseline.
+- `ActionFitPackageInfoUtility.CreatePackage` runs the same package-owned validator after writing and importing the generated skeleton, so a create request succeeds only when its round-trip package contract passes.
+- `ActionFitPackagePublishApi.Prepare` runs contract validation before catalog refresh, credential lookup, or GitHub checks. Contract failures return structured diagnostics and must stop publish preparation without external requests.
+- `Tools/AI/validate_ai_docs.py` delegates changed ActionFit package checks to this validator so local AI documentation validation and publish preparation share one contract implementation.
 - `--package` and `--all` also enforce changed-package version bumps when `--base-ref` is supplied. Without a base ref they validate only the current package state.
 - The JSON result schema is shared by local AI and CI callers. Every diagnostic has `code`, `severity`, `path`, `line`, `message`, and `suggestedFix`; exit codes are `0` success, `1` contract failure, and `2` infrastructure failure.
 - Contract checks cover package.json fields and JSON, SemVer, changed-package version increases, README Git UPM install tags, AI guide identity/version/router entries, PackageInfo identity/required metadata, and package-owned asmdefs.
