@@ -7,7 +7,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.67"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.68"
   }
 }
 ```
@@ -191,7 +191,7 @@ If an AI assistant reads this package documentation before the automatic router 
 ## Manager Console
 
 - `1. Create Package`: requires an explicit `Public` or `Private` repository visibility choice, then creates the `Packages/com.actionfit.*` package skeleton, README, AI guide, README-only package menu file, asmdef, and PackageInfo SO. Creation validation rejects requests that omit the explicit choice, and the completed skeleton must pass the package-owned round-trip contract validator before creation returns successfully.
-- `2. Publish Changed`: normal publish path. It finds packages whose local `package.json` version is higher than the catalog latest version, includes newly created packages that are not yet registered, prepares local publish clones, creates missing repositories, pushes package contents/tags, and appends catalog rows. `Publish All Changed` runs repository publishes up to 4 packages at once, then appends all catalog rows by one batch request when the Web App supports it. Each package's `Repository Visibility` in `ActionFitPackageInfo_SO` selects the public/private GitHub profile for both new and already registered package publishes.
+- `2. Publish Changed`: normal publish path. It finds top-level `Packages/com.actionfit.*` packages whose local `package.json` version is higher than the catalog latest version, includes newly created packages that are not yet registered, prepares local publish clones, creates missing repositories, pushes package contents/tags, and appends catalog rows. Nested `package.json` files under test fixtures or package content are not publish candidates. `Publish All Changed` runs repository publishes up to 4 packages at once, then appends all catalog rows by one batch request when the Web App supports it. Each package's `Repository Visibility` in `ActionFitPackageInfo_SO` selects the public/private GitHub profile for both new and already registered package publishes.
 - `Publish Package`: manual publish path for an already registered package version when you need to type a specific version before publishing.
 - `Open Catalog`: selects the local or fallback catalog CSV.
 - `Open Manifest`: opens the project `Packages/manifest.json`.

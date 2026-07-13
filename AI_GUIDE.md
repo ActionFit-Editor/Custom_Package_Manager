@@ -7,7 +7,7 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.custompackagemanager`
 - Display name: Custom Package Manager
 - Repository: `https://github.com/ActionFit-Editor/Custom_Package_Manager.git`
-- Current package version at generation time: `1.1.67`
+- Current package version at generation time: `1.1.68`
 - Unity version: `6000.2`
 
 ## Purpose
@@ -79,6 +79,7 @@ Read this file when:
 - Package Manager reads the local catalog when present, otherwise the embedded package catalog.
 - It manages internal UPM package install/update/remove, repository creation, changelog/history display, AI guide routing, and manual publish flows.
 - Manager Console exposes `1. Create Package`, `2. Publish Changed`, `Publish Package`, catalog/manifest access, and AI guide router refresh. Package README and settings SO access must stay in Unity top-menu package entries such as `Tools/Package/<Package Name>/README` and `Tools/Package/<Package Name>/Setting SO`, not in `Project Files` or Package Manager package rows.
+- Publish-window discovery must enumerate only immediate `Packages/com.actionfit.*` directories. Never recursively treat nested `package.json` files, including `Tests/Shell/Fixtures~` validator packages, as publish candidates or pass them to `ActionFitPackageInfoUtility.CreateOrUpdate`.
 - Each package's `ActionFitPackageInfo_SO` stores `Repository Visibility`. Publish flows use that package-local value to choose the public/private GitHub profile for both new and already registered packages, so `Publish All Changed` can safely publish mixed public/private packages in one run.
 - New package creation and `Fork as New` must ask the user to choose `Public` or `Private`; never infer `Public` from an enum default. `ActionFitPackageCreateRequest.RepositoryVisibilitySpecified` must be true, and create validation must reject a missing or invalid choice. Internal metadata refreshes for an existing package may preserve an already-known value without showing a creation prompt.
 - `Publish All Changed` must create publish request snapshots on the Unity main thread, run only repository publish work in parallel with `ActionFitPackagePublisher.DefaultMaxParallelPublishes`, and append catalog rows only after all repository publishes succeed.

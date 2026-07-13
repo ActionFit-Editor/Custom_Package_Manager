@@ -97,6 +97,43 @@ public sealed class ActionFitPackagePublishApiTests
         }
     }
 
+    [Test]
+    public void FindTopLevelActionFitPackageJsonPaths_IgnoresNestedFixturePackages()
+    {
+        string operationRoot = Path.Combine(
+            ActionFitPackagePaths.ProjectRoot,
+            "Temp",
+            "ActionFitPackageManagerTests",
+            Guid.NewGuid().ToString("N"));
+        string packagesRoot = Path.Combine(operationRoot, "Packages");
+        string realPackageJson = Path.Combine(packagesRoot, "com.actionfit.real", "package.json");
+        string fixturePackageJson = Path.Combine(
+            packagesRoot,
+            "com.actionfit.real",
+            "Tests",
+            "Shell",
+            "Fixtures~",
+            "valid-package",
+            "package.json");
+
+        Directory.CreateDirectory(Path.GetDirectoryName(realPackageJson));
+        Directory.CreateDirectory(Path.GetDirectoryName(fixturePackageJson));
+        File.WriteAllText(realPackageJson, "{}");
+        File.WriteAllText(fixturePackageJson, "{}");
+
+        try
+        {
+            string[] results = ActionFitPackagePublishWindow.FindTopLevelActionFitPackageJsonPaths(packagesRoot);
+
+            Assert.That(results, Is.EqualTo(new[] { realPackageJson }));
+        }
+        finally
+        {
+            if (Directory.Exists(operationRoot))
+                DeleteDirectory(operationRoot);
+        }
+    }
+
     private static void DeleteDirectory(string path)
     {
         foreach (string file in Directory.GetFiles(path, "*", SearchOption.AllDirectories))

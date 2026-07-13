@@ -591,10 +591,9 @@ public class ActionFitPackagePublishWindow : EditorWindow
         _entries.Clear();
         var catalog = ReadCatalogSnapshot();
         var registered = catalog.LatestVersions;
-        foreach (string packageJsonPath in Directory.GetFiles(ProjectRelativeFullPath("Packages"), "package.json", SearchOption.AllDirectories))
+        foreach (string packageJsonPath in FindTopLevelActionFitPackageJsonPaths(ProjectRelativeFullPath("Packages")))
         {
             string packageRoot = ToProjectRelativePath(Path.GetDirectoryName(packageJsonPath));
-            if (!packageRoot.StartsWith("Packages/com.actionfit.", StringComparison.OrdinalIgnoreCase)) continue;
 
             string relativePackageJsonPath = Path.Combine(packageRoot, "package.json").Replace("\\", "/");
             var manifest = ActionFitPackageManifest.Read(relativePackageJsonPath);
@@ -627,6 +626,17 @@ public class ActionFitPackagePublishWindow : EditorWindow
         }
 
         _entries.Sort((a, b) => string.Compare(a.DisplayName, b.DisplayName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    internal static string[] FindTopLevelActionFitPackageJsonPaths(string packagesPath)
+    {
+        if (string.IsNullOrWhiteSpace(packagesPath) || !Directory.Exists(packagesPath))
+            return Array.Empty<string>();
+
+        return Directory.GetDirectories(packagesPath, "com.actionfit.*", SearchOption.TopDirectoryOnly)
+            .Select(packageRoot => Path.Combine(packageRoot, "package.json"))
+            .Where(File.Exists)
+            .ToArray();
     }
 
     private static string ToProjectRelativePath(string fullPath)
