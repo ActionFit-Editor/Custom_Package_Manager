@@ -103,15 +103,15 @@ public static class ActionFitPackagePublishApi
             if (!request.PackageId.StartsWith("com.actionfit.", StringComparison.Ordinal))
                 throw new InvalidOperationException("Publish API is limited to com.actionfit.* packages.");
 
-            string packagePath = ActionFitPackagePaths.PackagePath(request.PackageId);
-            ActionFitPackageFileUtility.ValidateLocalPackageFolder(request.PackageId, packagePath);
-            plan.PackagePath = ActionFitPackagePaths.ToProjectRelativePath(packagePath);
-
             ActionFitPackageContractValidationResult contract =
                 ActionFitPackageContractValidator.ValidatePackage(request.PackageId);
             plan.ContractDiagnostics = contract.Diagnostics;
             if (!contract.Success)
                 return Fail(plan, contract.Code, contract.Message);
+
+            string packagePath = ActionFitPackagePaths.PackagePath(request.PackageId);
+            ActionFitPackageFileUtility.ValidateLocalPackageFolder(request.PackageId, packagePath);
+            plan.PackagePath = ActionFitPackagePaths.ToProjectRelativePath(packagePath);
 
             ActionFitPackageCatalogSettings_SO settings = ActionFitPackageCatalogSettingsProvider.FindOrCreate();
             if (request.RefreshCatalog &&

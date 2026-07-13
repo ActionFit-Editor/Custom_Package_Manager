@@ -1060,8 +1060,14 @@ def package_ids_from_paths(paths: Iterable[str]) -> set[str]:
     package_ids: set[str] = set()
     for path in paths:
         parts = path.split("/")
-        if len(parts) >= 2 and parts[0] == "Packages" and PACKAGE_ID_PATTERN.fullmatch(parts[1]):
-            package_ids.add(parts[1])
+        if len(parts) < 2 or parts[0] != "Packages":
+            continue
+
+        candidate = parts[1]
+        if len(parts) == 2 and candidate.endswith(".meta"):
+            candidate = candidate[:-5]
+        if PACKAGE_ID_PATTERN.fullmatch(candidate):
+            package_ids.add(candidate)
     return package_ids
 
 

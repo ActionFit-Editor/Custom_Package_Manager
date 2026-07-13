@@ -377,6 +377,33 @@ class PackageContractValidatorTests(unittest.TestCase):
         self.assertEqual(0, code)
         self.assertTrue(result["success"])
 
+    def test_changed_mode_maps_package_folder_meta_to_owning_package(self) -> None:
+        temporary, repo_root, package_root = self.make_repo("valid-package")
+        self.addCleanup(temporary.cleanup)
+        self.git(repo_root, "init")
+        self.git(repo_root, "config", "user.email", "package-contract-test@example.invalid")
+        self.git(repo_root, "config", "user.name", "Package Contract Test")
+        self.git(repo_root, "add", "Packages")
+        self.git(repo_root, "commit", "-m", "fixture base")
+
+        (repo_root / "Packages" / f"{PACKAGE_ID}.meta").write_text(
+            "fileFormatVersion: 2\nguid: 1234567890abcdef1234567890abcdef\n",
+            encoding="utf-8",
+        )
+        replacements = (
+            (package_root / "package.json", '"version": "1.2.3"', '"version": "1.2.4"'),
+            (package_root / "README.md", "#1.2.3", "#1.2.4"),
+            (package_root / "AI_GUIDE.md", "`1.2.3`", "`1.2.4`"),
+        )
+        for path, before, after in replacements:
+            path.write_text(path.read_text(encoding="utf-8").replace(before, after), encoding="utf-8")
+
+        code, result = self.run_cli(repo_root, "--changed", "--base-ref", "HEAD")
+
+        self.assertEqual(0, code)
+        self.assertTrue(result["success"])
+        self.assertEqual([PACKAGE_ID], [item["packageId"] for item in result["packages"]])
+
     def test_output_file_matches_stdout_contract(self) -> None:
         temporary, repo_root, _ = self.make_repo("valid-package")
         self.addCleanup(temporary.cleanup)

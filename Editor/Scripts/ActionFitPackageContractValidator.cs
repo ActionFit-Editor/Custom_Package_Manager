@@ -110,14 +110,22 @@ internal static class ActionFitPackageContractValidator
                 return InfrastructureFailure($"Contract validation is limited to com.actionfit.* packages: {packageId}");
             }
 
-            string scriptPath = ResolveValidatorPath();
+            string packageRoot = ResolvePackageRoot();
+            string scriptPath = Path.Combine(packageRoot, "Tools~", "package_contract_validator.py");
             if (!File.Exists(scriptPath))
                 return InfrastructureFailure($"Package contract validator was not found: {scriptPath}");
+            string repositoryRoot = ResolveRepositoryRoot(packageRoot);
 
             var launchErrors = new List<string>();
             foreach (InterpreterCandidate candidate in GetInterpreterCandidates())
             {
-                if (TryRun(candidate, scriptPath, packageId, out ActionFitPackageContractValidationResult result, out string error))
+                if (TryRun(
+                        candidate,
+                        scriptPath,
+                        packageId,
+                        repositoryRoot,
+                        out ActionFitPackageContractValidationResult result,
+                        out string error))
                     return result;
                 launchErrors.Add(error);
             }
@@ -138,6 +146,7 @@ internal static class ActionFitPackageContractValidator
         InterpreterCandidate candidate,
         string scriptPath,
         string packageId,
+        string repositoryRoot,
         out ActionFitPackageContractValidationResult result,
         out string error)
     {
@@ -150,7 +159,7 @@ internal static class ActionFitPackageContractValidator
             "--package",
             Quote(packageId),
             "--repo-root",
-            Quote(ActionFitPackagePaths.ProjectRoot),
+            Quote(repositoryRoot),
         }.Where(value => !string.IsNullOrWhiteSpace(value)));
 
         try
@@ -268,7 +277,7 @@ internal static class ActionFitPackageContractValidator
         return true;
     }
 
-    private static string ResolveValidatorPath()
+    private static string ResolvePackageRoot()
     {
         const string packageJsonPath = "Packages/com.actionfit.custompackagemanager/package.json";
         UnityEditor.PackageManager.PackageInfo package =
@@ -276,7 +285,19 @@ internal static class ActionFitPackageContractValidator
         string packageRoot = package?.resolvedPath;
         if (string.IsNullOrWhiteSpace(packageRoot))
             packageRoot = ActionFitPackagePaths.ProjectRelativeFullPath($"Packages/{PackageId}");
-        return Path.Combine(packageRoot, "Tools~", "package_contract_validator.py");
+        return Path.GetFullPath(packageRoot);
+    }
+
+    private static string ResolveRepositoryRoot(string packageRoot)
+    {
+        DirectoryInfo packagesDirectory = Directory.GetParent(packageRoot);
+        if (packagesDirectory?.Parent != null &&
+            string.Equals(packagesDirectory.Name, "Packages", StringComparison.OrdinalIgnoreCase))
+        {
+            return packagesDirectory.Parent.FullName;
+        }
+
+        return ActionFitPackagePaths.ProjectRoot;
     }
 
     private static IEnumerable<InterpreterCandidate> GetInterpreterCandidates()

@@ -7,7 +7,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.72"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.75"
   }
 }
 ```
@@ -91,6 +91,8 @@ Exit codes are stable for local automation and CI:
 - `2`: the validator could not run reliably because of arguments, Git, repository, or result-output infrastructure.
 
 `--changed` requires `--base-ref`. `--package` and `--all` can run without Git comparison, but version-bump enforcement is enabled only when `--base-ref` is supplied. The validator does not inspect catalogs, GitHub remotes, credentials, Unity compilation, or package tests.
+
+When Unity invokes the package-owned validator from an isolated `file:` dependency, the Editor adapter resolves the real package repository root from the installed package path instead of assuming the disposable project's virtual `Packages` path is physical. Publish preparation also returns contract diagnostics before requiring a physical embedded folder or inspecting catalog, credential, and remote state.
 
 ## Package Manager
 

@@ -47,9 +47,13 @@ Do not silently create `Docs/AI/PROJECT.md` or any other AI entry point in a pro
 - `Packages/com.actionfit.findfolder/AI_GUIDE.md` - Find Folder manages saved folder/file focus shortcuts. Read when changing GUID/path tracking, shortcut storage, migration, or Project window focusing.
 - `Packages/com.actionfit.githubauth/AI_GUIDE.md` - AI GitHub provides shared GitHub credential diagnostics and user guidance for ActionFit Unity editor automation packages. Read when changing local GitHub authentication checks, push preflight behavior, token/credential guidance, or packages that depend on GitHub push/publish access.
 - `Packages/com.actionfit.identity/AI_GUIDE.md` - ActionFit Identity resolves and persists a stable installation ID. Read when changing installation ID storage, ordered legacy identity migration, explicit recovery replacement, or project identity adapters.
+- `Packages/com.actionfit.inbox/AI_GUIDE.md` - ActionFit Inbox owns backend-neutral message models, durable idempotent claim receipts, cache flow, retry, and restart recovery contracts.
 - `Packages/com.actionfit.playmodelogsaver/AI_GUIDE.md` - Play Mode Log Saver saves editor play mode logs. Read when changing log capture, save paths, or play mode log settings.
 - `Packages/com.actionfit.sosingleton/AI_GUIDE.md` - SO Singleton provides ScriptableObject singleton loading conventions. Read when changing singleton load paths, Resources/SO behavior, or singleton base APIs.
 - `Packages/com.actionfit.texturebatchimporter/AI_GUIDE.md` - Texture Batch Importer manages batch texture and atlas import settings. Read when changing texture importer presets, sprite import settings, or atlas batch workflows.
+- `Packages/com.actionfit.time/AI_GUIDE.md` - ActionFit Time provides UTC clocks, deterministic test time, explicit time-zone conversion, and persisted offset adapters. Read when changing clock contracts, offset persistence, date-boundary rules, or project time-provider integration.
+- `Packages/com.actionfit.ui.foundation/AI_GUIDE.md` - UI Foundation owns reusable global UGUI wrappers, serialization/GUID compatibility, project button service contracts, optional animation integration, and sliced-fill behavior. Read when changing its runtime, editors, tests, metadata, migration, or release behavior.
+- `Packages/com.actionfit.ui.prefabs/AI_GUIDE.md` - UI Prefabs owns Foundation-based prefab authoring menus, project-owned `UIPrefabsSO` settings, and neutral starter samples. Read when changing those menus, settings lookup, samples, package metadata, tests, or release behavior.
 
 ## Generated Project Index
 
