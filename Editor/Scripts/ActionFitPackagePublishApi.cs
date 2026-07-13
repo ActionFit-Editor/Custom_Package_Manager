@@ -1,11 +1,13 @@
 #if UNITY_EDITOR
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using UnityEditor;
 using UnityEngine;
+using Debug = UnityEngine.Debug;
 
 /// <summary>
 /// Read-only request that prepares an immutable package publish plan.
@@ -47,6 +49,9 @@ public sealed class ActionFitPackagePublishPlan
     public ActionFitPackageContractDiagnostic[] ContractDiagnostics = Array.Empty<ActionFitPackageContractDiagnostic>();
     public string[] PlannedActions = Array.Empty<string>();
     public string[] Warnings = Array.Empty<string>();
+
+    [NonSerialized]
+    internal bool ContractValidatedInProcess;
 }
 
 /// <summary>
@@ -59,6 +64,7 @@ public sealed class ActionFitPackagePublishExecuteRequest
     public string ExpectedPlanId;
     public string ApprovalText;
     public bool ApproveRepositoryCreation;
+    public ActionFitPackagePublishPlan ApprovedPlan;
 }
 
 /// <summary>
@@ -91,6 +97,31 @@ public static class ActionFitPackagePublishApi
     /// </summary>
     public static ActionFitPackagePublishPlan Prepare(ActionFitPackagePublishPrepareRequest request)
     {
+        var stopwatch = Stopwatch.StartNew();
+        ActionFitPackagePublishPlan plan = PrepareLocal(request, true, out ActionFitPackagePublisher.PublishRequest publishRequest);
+        if (!plan.Success)
+            return LogPreparedPlan(plan, stopwatch);
+        if (!request.CheckRemoteState)
+            return LogPreparedPlan(
+                Fail(plan, "REMOTE_CHECK_REQUIRED", "GitHub remote state must be checked before a publish plan can be approved."),
+                stopwatch);
+        if (!ActionFitPackagePublisher.TryGetRemoteState(
+                publishRequest,
+                out ActionFitPackagePublisher.RemoteState remote,
+                out string remoteError))
+        {
+            return LogPreparedPlan(Fail(plan, "REMOTE_CHECK_FAILED", remoteError), stopwatch);
+        }
+
+        return LogPreparedPlan(CompleteRemotePreflight(plan, remote), stopwatch);
+    }
+
+    internal static ActionFitPackagePublishPlan PrepareLocal(
+        ActionFitPackagePublishPrepareRequest request,
+        bool validateContract,
+        out ActionFitPackagePublisher.PublishRequest publishRequest)
+    {
+        publishRequest = null;
         var plan = new ActionFitPackagePublishPlan
         {
             PackageId = request?.PackageId ?? "",
@@ -103,11 +134,15 @@ public static class ActionFitPackagePublishApi
             if (!request.PackageId.StartsWith("com.actionfit.", StringComparison.Ordinal))
                 throw new InvalidOperationException("Publish API is limited to com.actionfit.* packages.");
 
-            ActionFitPackageContractValidationResult contract =
-                ActionFitPackageContractValidator.ValidatePackage(request.PackageId);
-            plan.ContractDiagnostics = contract.Diagnostics;
-            if (!contract.Success)
-                return Fail(plan, contract.Code, contract.Message);
+            if (validateContract)
+            {
+                ActionFitPackageContractValidationResult contract =
+                    ActionFitPackageContractValidator.ValidatePackage(request.PackageId);
+                plan.ContractDiagnostics = contract.Diagnostics;
+                if (!contract.Success)
+                    return Fail(plan, contract.Code, contract.Message);
+                plan.ContractValidatedInProcess = true;
+            }
 
             string packagePath = ActionFitPackagePaths.PackagePath(request.PackageId);
             ActionFitPackageFileUtility.ValidateLocalPackageFolder(request.PackageId, packagePath);
@@ -155,7 +190,7 @@ public static class ActionFitPackagePublishApi
                     settings,
                     info,
                     info.RepositoryVisibility,
-                    out ActionFitPackagePublisher.PublishRequest publishRequest,
+                    out publishRequest,
                     out string requestError))
             {
                 return Fail(plan, "PUBLISH_REQUEST_INVALID", requestError);
@@ -165,40 +200,49 @@ public static class ActionFitPackagePublishApi
             plan.RepositoryName = publishRequest.RepoName;
             plan.RepositoryVisibility = publishRequest.GitHubIsPrivate ? "Private" : "Public";
             plan.RepositoryUrl = $"https://github.com/{publishRequest.GitHubOrganization}/{publishRequest.RepoName}.git";
-
-            if (!request.CheckRemoteState)
-                return Fail(plan, "REMOTE_CHECK_REQUIRED", "GitHub remote state must be checked before a publish plan can be approved.");
-            if (!ActionFitPackagePublisher.TryGetRemoteState(publishRequest, out ActionFitPackagePublisher.RemoteState remote, out string remoteError))
-                return Fail(plan, "REMOTE_CHECK_FAILED", remoteError);
-
-            plan.RepositoryExists = remote.RepositoryExists;
-            plan.RemoteTagExists = remote.TagExists;
-            plan.WillCreateRepository = !remote.RepositoryExists;
-            if (plan.RemoteTagExists)
-                return Fail(plan, "REMOTE_TAG_ALREADY_EXISTS", $"Remote tag {plan.Version} already exists. Published tags are immutable; bump package.json.");
-
-            plan.PlannedActions = new[]
-            {
-                plan.WillCreateRepository ? $"Create {plan.RepositoryVisibility} repository {plan.GitHubOrganization}/{plan.RepositoryName}" : $"Use existing repository {plan.GitHubOrganization}/{plan.RepositoryName}",
-                $"Push package content to main for {plan.PackageId}@{plan.Version}",
-                $"Create and push immutable tag {plan.Version}",
-                $"Upsert catalog row {plan.PackageId}@{plan.Version}",
-                "Refresh the shared package catalog",
-            };
-            plan.PlanId = ComputePlanId(plan);
-            plan.RequiredApprovalText = $"PUBLISH {plan.PackageId}@{plan.Version} PLAN {plan.PlanId}";
-            plan.ReadyToPublish = true;
-            plan.Success = true;
-            plan.Code = "READY_TO_PUBLISH";
-            plan.Message = $"Publish plan is ready for {plan.PackageId}@{plan.Version}. No external state was changed.";
             if (string.IsNullOrWhiteSpace(info.ReleaseNote))
                 plan.Warnings = new[] { "Package release note is empty." };
+            plan.Success = true;
+            plan.Code = "LOCAL_PREFLIGHT_READY";
+            plan.Message = $"Local publish preflight is ready for {plan.PackageId}@{plan.Version}.";
             return plan;
         }
         catch (Exception ex)
         {
             return Fail(plan, "PREPARE_FAILED", ex.Message);
         }
+    }
+
+    internal static ActionFitPackagePublishPlan CompleteRemotePreflight(
+        ActionFitPackagePublishPlan plan,
+        ActionFitPackagePublisher.RemoteState remote)
+    {
+        if (plan == null || !plan.Success)
+            return plan ?? Fail(new ActionFitPackagePublishPlan(), "PREPARE_FAILED", "Local publish preflight is missing.");
+        if (remote == null)
+            return Fail(plan, "REMOTE_CHECK_FAILED", "GitHub remote state is missing.");
+
+        plan.RepositoryExists = remote.RepositoryExists;
+        plan.RemoteTagExists = remote.TagExists;
+        plan.WillCreateRepository = !remote.RepositoryExists;
+        if (plan.RemoteTagExists)
+            return Fail(plan, "REMOTE_TAG_ALREADY_EXISTS", $"Remote tag {plan.Version} already exists. Published tags are immutable; bump package.json.");
+
+        plan.PlannedActions = new[]
+        {
+            plan.WillCreateRepository ? $"Create {plan.RepositoryVisibility} repository {plan.GitHubOrganization}/{plan.RepositoryName}" : $"Use existing repository {plan.GitHubOrganization}/{plan.RepositoryName}",
+            $"Push package content to main for {plan.PackageId}@{plan.Version}",
+            $"Create and push immutable tag {plan.Version}",
+            $"Upsert catalog row {plan.PackageId}@{plan.Version}",
+            "Refresh the shared package catalog",
+        };
+        plan.PlanId = ComputePlanId(plan);
+        plan.RequiredApprovalText = $"PUBLISH {plan.PackageId}@{plan.Version} PLAN {plan.PlanId}";
+        plan.ReadyToPublish = true;
+        plan.Success = true;
+        plan.Code = "READY_TO_PUBLISH";
+        plan.Message = $"Publish plan is ready for {plan.PackageId}@{plan.Version}. No external state was changed.";
+        return plan;
     }
 
     /// <summary>
@@ -211,12 +255,50 @@ public static class ActionFitPackagePublishApi
         if (string.IsNullOrWhiteSpace(request.ExpectedPlanId) || string.IsNullOrWhiteSpace(request.ApprovalText))
             return ExecutionFailure(request, "APPROVAL_REQUIRED", "ExpectedPlanId and exact ApprovalText from Prepare are required.");
 
-        ActionFitPackagePublishPlan current = Prepare(new ActionFitPackagePublishPrepareRequest
+        ActionFitPackagePublishPlan current;
+        if (request.ApprovedPlan != null &&
+            !ApprovedPlanMatches(
+                request.ApprovedPlan,
+                request.PackageId,
+                request.ExpectedPlanId,
+                request.ApprovalText))
         {
-            PackageId = request.PackageId,
-            RefreshCatalog = true,
-            CheckRemoteState = true,
-        });
+            return ExecutionFailure(
+                request,
+                "APPROVED_PLAN_MISMATCH",
+                "ApprovedPlan must match PackageId, ExpectedPlanId, and ApprovalText from Prepare.");
+        }
+
+        if (request.ApprovedPlan?.ContractValidatedInProcess == true)
+        {
+            current = PrepareLocal(
+                new ActionFitPackagePublishPrepareRequest
+                {
+                    PackageId = request.PackageId,
+                    RefreshCatalog = true,
+                    CheckRemoteState = true,
+                },
+                false,
+                out ActionFitPackagePublisher.PublishRequest revalidatedRequest);
+            if (current.Success)
+            {
+                current = ActionFitPackagePublisher.TryGetRemoteState(
+                    revalidatedRequest,
+                    out ActionFitPackagePublisher.RemoteState remote,
+                    out string remoteError)
+                    ? CompleteRemotePreflight(current, remote)
+                    : Fail(current, "REMOTE_CHECK_FAILED", remoteError);
+            }
+        }
+        else
+        {
+            current = Prepare(new ActionFitPackagePublishPrepareRequest
+            {
+                PackageId = request.PackageId,
+                RefreshCatalog = true,
+                CheckRemoteState = true,
+            });
+        }
         if (!current.Success || !current.ReadyToPublish)
             return ExecutionFailure(request, "PREFLIGHT_FAILED", current.Message, current);
         if (!string.Equals(current.PlanId, request.ExpectedPlanId, StringComparison.Ordinal))
@@ -351,6 +433,31 @@ public static class ActionFitPackagePublishApi
             if (info != null && string.Equals(info.PackageId, packageId, StringComparison.Ordinal)) return info;
         }
         return null;
+    }
+
+    internal static bool ApprovedPlanMatches(
+        ActionFitPackagePublishPlan plan,
+        string packageId,
+        string expectedPlanId,
+        string approvalText)
+    {
+        return plan != null &&
+               plan.Success &&
+               plan.ReadyToPublish &&
+               string.Equals(plan.PackageId, packageId, StringComparison.Ordinal) &&
+               string.Equals(plan.PlanId, expectedPlanId, StringComparison.Ordinal) &&
+               string.Equals(plan.RequiredApprovalText, approvalText, StringComparison.Ordinal);
+    }
+
+    private static ActionFitPackagePublishPlan LogPreparedPlan(
+        ActionFitPackagePublishPlan plan,
+        Stopwatch stopwatch)
+    {
+        string outcome = plan != null && plan.Success ? "complete" : "failed";
+        Debug.Log(
+            $"[ActionFitPackageManager] Publish preflight {outcome}: {plan?.PackageId ?? "<unknown>"} " +
+            $"({stopwatch.ElapsedMilliseconds} ms, code={plan?.Code ?? "UNKNOWN"})");
+        return plan;
     }
 
     private static string ComputePlanId(ActionFitPackagePublishPlan plan)

@@ -43,6 +43,107 @@ public sealed class ActionFitPackagePublishApiTests
         Assert.That(forward, Has.Length.EqualTo(20));
     }
 
+    [TestCase(0, 0)]
+    [TestCase(1, 1)]
+    [TestCase(4, 4)]
+    [TestCase(5, 4)]
+    [TestCase(20, 4)]
+    public void GetWorkerCount_BoundsPublishAndRemotePreflightConcurrency(int requestCount, int expected)
+    {
+        Assert.That(ActionFitPackageBulkPublishApi.GetWorkerCount(requestCount), Is.EqualTo(expected));
+    }
+
+    [Test]
+    public void ApprovedBulkPlanMatches_RequiresUntamperedPlanAndApproval()
+    {
+        var package = new ActionFitPackagePublishPlan
+        {
+            Success = true,
+            ReadyToPublish = true,
+            PackageId = "com.actionfit.alpha",
+            Version = "1.0.1",
+            PlanId = "PACKAGE_PLAN",
+        };
+        string planId = ActionFitPackageBulkPublishApi.ComputePlanId(new[] { package });
+        var plan = new ActionFitPackageBulkPublishPlan
+        {
+            Success = true,
+            ReadyToPublish = true,
+            PackageIds = new[] { package.PackageId },
+            Packages = new[] { package },
+            PlanId = planId,
+            RequiredApprovalText = $"PUBLISH ALL 1 PACKAGES PLAN {planId}",
+        };
+        var request = new ActionFitPackageBulkPublishExecuteRequest
+        {
+            PackageIds = plan.PackageIds,
+            ExpectedPlanId = plan.PlanId,
+            ApprovalText = plan.RequiredApprovalText,
+            ApprovedPlan = plan,
+        };
+
+        Assert.That(ActionFitPackageBulkPublishApi.ApprovedPlanMatches(request), Is.True);
+
+        package.PlanId = "TAMPERED";
+        Assert.That(ActionFitPackageBulkPublishApi.ApprovedPlanMatches(request), Is.False);
+    }
+
+    [Test]
+    public void ApprovedSinglePlanMatches_RequiresExactIdentityAndApproval()
+    {
+        var plan = new ActionFitPackagePublishPlan
+        {
+            Success = true,
+            ReadyToPublish = true,
+            PackageId = "com.actionfit.alpha",
+            PlanId = "PLAN",
+            RequiredApprovalText = "APPROVE",
+        };
+
+        Assert.That(
+            ActionFitPackagePublishApi.ApprovedPlanMatches(plan, plan.PackageId, plan.PlanId, plan.RequiredApprovalText),
+            Is.True);
+        Assert.That(
+            ActionFitPackagePublishApi.ApprovedPlanMatches(plan, plan.PackageId, "OTHER", plan.RequiredApprovalText),
+            Is.False);
+    }
+
+    [Test]
+    public void ContractValidationReceipt_IsNotSerializedWithApprovedPlan()
+    {
+        var plan = new ActionFitPackagePublishPlan
+        {
+            Success = true,
+            ReadyToPublish = true,
+            ContractValidatedInProcess = true,
+        };
+
+        string json = UnityEngine.JsonUtility.ToJson(plan);
+        ActionFitPackagePublishPlan deserialized =
+            UnityEngine.JsonUtility.FromJson<ActionFitPackagePublishPlan>(json);
+
+        Assert.That(deserialized.ContractValidatedInProcess, Is.False);
+    }
+
+    [TestCase("Catalog request timed out after 30 seconds.", false)]
+    [TestCase("Catalog append was canceled.", false)]
+    [TestCase("Catalog batch append did not return success.", true)]
+    public void ShouldAttemptSerialFallback_SkipsAmbiguousTimeoutsAndCancellation(string message, bool expected)
+    {
+        Assert.That(ActionFitPackageBulkPublishApi.ShouldAttemptSerialFallback(message), Is.EqualTo(expected));
+    }
+
+    [Test]
+    public void ConfigureHttpRequest_AppliesBoundedTimeouts()
+    {
+        var request = (HttpWebRequest)WebRequest.Create("https://example.invalid/");
+
+        ActionFitPackagePublisher.ConfigureHttpRequest(request);
+
+        Assert.That(request.Timeout, Is.EqualTo(ActionFitPackagePublisher.DefaultHttpTimeoutMilliseconds));
+        Assert.That(request.ReadWriteTimeout, Is.EqualTo(ActionFitPackagePublisher.DefaultHttpTimeoutMilliseconds));
+    }
+
     [TestCase(HttpStatusCode.NotFound, false, true)]
     [TestCase(HttpStatusCode.NotFound, true, true)]
     [TestCase(HttpStatusCode.Conflict, true, true)]

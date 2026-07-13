@@ -7,7 +7,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.76"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.79"
   }
 }
 ```
@@ -275,7 +275,9 @@ If an AI assistant reads this package documentation before the automatic router 
 
 Publish preflight also supports a repository that exists but has no first commit yet. GitHub's empty-repository conflict response from the tag lookup is treated as an available tag while the repository remains classified as existing. Git command output streams are drained concurrently so large warning output, including line-ending warnings, cannot block publication.
 
-`Publish All Changed` snapshots the selected packages before upload, runs only the GitHub repository publish step in parallel, and appends catalog rows after every repository publish succeeds. The catalog Web App should support `upsertPackageVersions` and return either a matching `count` or per-item confirmations. If the Web App does not support that batch action yet, the tool falls back to serial `upsertPackageVersion` requests. If repository publish succeeds but catalog append fails, the window keeps those rows and shows `Retry Catalog Append` so the spreadsheet update can be retried without pushing repositories again.
+`Publish All Changed` validates package contracts once before approval, reuses the same in-process approved plan during execution, and rechecks the mutable catalog, content hash, version, repository, and tag state immediately before upload. Deserialized/API-supplied plan data cannot bypass contract validation because its validation receipt is not serialized. GitHub remote preflight and repository publishing run with up to 4 workers. The progress dialog identifies local validation, GitHub checks, repository publishing, catalog batch/fallback, and final refresh stages and can cancel before mutation or stop before catalog registration after repository publishing completes.
+
+Catalog and GitHub HTTP requests use a 30-second connection/read timeout. The catalog Web App should support `upsertPackageVersions` and return either a matching `count` or per-item confirmations. Unsupported batch responses fall back to serial `upsertPackageVersion`; timeout and cancellation failures do not start a potentially long serial fallback. If repository publishing succeeds but catalog append fails or is canceled, the window keeps those rows and shows `Retry Catalog Append` so the spreadsheet update can be retried without pushing repositories again. The Unity Console logs elapsed milliseconds for catalog refresh, GitHub preflight, repository publish, batch append, serial fallback, and total bulk execution.
 
 `Settings` stores one GitHub token in `GitHub Publish Default` and separate repository creation organizations for public and private repositories. Fill `_githubToken` once, then set `Repo Creation - Public` and `Repo Creation - Private` org values when the repository owners differ. Private catalog entries can point at private GitHub repositories, so consuming projects still need GitHub access to install them.
 

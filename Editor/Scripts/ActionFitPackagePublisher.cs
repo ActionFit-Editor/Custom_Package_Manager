@@ -7,6 +7,7 @@ using System.Linq;
 using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using UnityEditor;
 using UnityEngine;
@@ -18,6 +19,7 @@ public static class ActionFitPackagePublisher
     private const string CatalogBatchAppendAction = "upsertPackageVersions";
 
     public const int DefaultMaxParallelPublishes = 4;
+    public const int DefaultHttpTimeoutMilliseconds = 30000;
 
     public static bool Publish(ActionFitPackageCatalogSettings_SO settings, ActionFitPackageInfo_SO info, out string message)
     {
@@ -48,6 +50,7 @@ public static class ActionFitPackagePublisher
     {
         if (request == null) return PublishResult.Failed(null, "Publish request is missing.");
 
+        var stopwatch = Stopwatch.StartNew();
         try
         {
             Debug.Log(
@@ -57,6 +60,9 @@ public static class ActionFitPackagePublisher
             Debug.Log($"[ActionFitPackageManager] Repository ready: {request.GitHubOrganization}/{request.RepoName}");
 
             PublishGitRepository(request);
+            Debug.Log(
+                $"[ActionFitPackageManager] Repository publish complete: {request.PackageId}@{request.Version} " +
+                $"({stopwatch.ElapsedMilliseconds} ms)");
 
             return PublishResult.Succeeded(
                 request,
@@ -64,6 +70,9 @@ public static class ActionFitPackagePublisher
         }
         catch (Exception ex)
         {
+            Debug.LogWarning(
+                $"[ActionFitPackageManager] Repository publish failed: {request.PackageId}@{request.Version} " +
+                $"({stopwatch.ElapsedMilliseconds} ms)\n{ex.Message}");
             return PublishResult.Failed(request, ex.Message);
         }
     }
@@ -81,6 +90,7 @@ public static class ActionFitPackagePublisher
             return false;
         }
 
+        var stopwatch = Stopwatch.StartNew();
         try
         {
             string repoPath = $"{request.GitHubOrganization}/{request.RepoName}";
@@ -98,16 +108,28 @@ public static class ActionFitPackagePublisher
                     ? $"Repository and tag {request.Version} already exist."
                     : $"Repository exists and tag {request.Version} is available."
                 : "Repository does not exist and would be created during publish.";
+            Debug.Log(
+                $"[ActionFitPackageManager] GitHub preflight complete: {request.PackageId}@{request.Version} " +
+                $"({stopwatch.ElapsedMilliseconds} ms)");
             return true;
         }
         catch (Exception ex)
         {
             message = $"GitHub remote preflight failed: {ex.Message}";
+            Debug.LogWarning(
+                $"[ActionFitPackageManager] GitHub preflight failed: {request.PackageId}@{request.Version} " +
+                $"({stopwatch.ElapsedMilliseconds} ms)\n{message}");
             return false;
         }
     }
 
     public static bool TryAppendCatalogBatch(IReadOnlyList<CatalogAppendItem> items, out string message)
+        => TryAppendCatalogBatch(items, CancellationToken.None, out message);
+
+    internal static bool TryAppendCatalogBatch(
+        IReadOnlyList<CatalogAppendItem> items,
+        CancellationToken cancellationToken,
+        out string message)
     {
         message = "";
         if (items == null || items.Count == 0)
@@ -116,20 +138,31 @@ public static class ActionFitPackagePublisher
             return true;
         }
 
+        var stopwatch = Stopwatch.StartNew();
         try
         {
-            AppendCatalogBatch(items);
-            message = $"{items.Count} catalog row(s) appended by batch request.";
+            Debug.Log($"[ActionFitPackageManager] Catalog batch append start: {items.Count} row(s)");
+            AppendCatalogBatch(items, cancellationToken);
+            message = $"{items.Count} catalog row(s) appended by batch request in {stopwatch.ElapsedMilliseconds} ms.";
+            Debug.Log($"[ActionFitPackageManager] Catalog batch append complete: {message}");
             return true;
         }
         catch (Exception ex)
         {
             message = ex.Message;
+            Debug.LogWarning(
+                $"[ActionFitPackageManager] Catalog batch append failed after {stopwatch.ElapsedMilliseconds} ms.\n{message}");
             return false;
         }
     }
 
     public static bool TryAppendCatalogSerial(IReadOnlyList<CatalogAppendItem> items, out string message)
+        => TryAppendCatalogSerial(items, CancellationToken.None, out message);
+
+    internal static bool TryAppendCatalogSerial(
+        IReadOnlyList<CatalogAppendItem> items,
+        CancellationToken cancellationToken,
+        out string message)
     {
         message = "";
         if (items == null || items.Count == 0)
@@ -139,22 +172,28 @@ public static class ActionFitPackagePublisher
         }
 
         var appended = new List<string>();
+        var stopwatch = Stopwatch.StartNew();
+        Debug.Log($"[ActionFitPackageManager] Catalog serial fallback start: {items.Count} row(s)");
         foreach (var item in items)
         {
             try
             {
-                AppendCatalog(item);
+                cancellationToken.ThrowIfCancellationRequested();
+                AppendCatalog(item, cancellationToken);
                 appended.Add(item.CatalogId);
             }
             catch (Exception ex)
             {
                 message =
                     $"Catalog serial append stopped.\n\nSucceeded:\n{string.Join("\n", appended)}\n\nFailed:\n{item.CatalogId}\n{ex.Message}";
+                Debug.LogWarning(
+                    $"[ActionFitPackageManager] Catalog serial fallback failed after {stopwatch.ElapsedMilliseconds} ms.\n{message}");
                 return false;
             }
         }
 
-        message = $"{items.Count} catalog row(s) appended one by one.";
+        message = $"{items.Count} catalog row(s) appended one by one in {stopwatch.ElapsedMilliseconds} ms.";
+        Debug.Log($"[ActionFitPackageManager] Catalog serial fallback complete: {message}");
         return true;
     }
 
@@ -314,6 +353,7 @@ public static class ActionFitPackagePublisher
         request.UserAgent = "ActionFitPackageManager";
         request.Headers["Authorization"] = $"Bearer {token}";
         request.Headers["X-GitHub-Api-Version"] = "2022-11-28";
+        ConfigureHttpRequest(request);
         return request;
     }
 
@@ -388,7 +428,7 @@ public static class ActionFitPackagePublisher
         }
     }
 
-    private static void AppendCatalog(CatalogAppendItem item)
+    private static void AppendCatalog(CatalogAppendItem item, CancellationToken cancellationToken = default)
     {
         ValidateCatalogSettings(item);
 
@@ -400,12 +440,14 @@ public static class ActionFitPackagePublisher
             BuildCatalogPayloadJson(item) +
             "}";
 
-        string text = PostCatalogRequest(item, body);
+        string text = PostCatalogRequest(item, body, cancellationToken);
         var result = JsonUtility.FromJson<CatalogAppendResponse>(text);
         ValidateCatalogAppendResponse(result, item, text);
     }
 
-    private static void AppendCatalogBatch(IReadOnlyList<CatalogAppendItem> items)
+    private static void AppendCatalogBatch(
+        IReadOnlyList<CatalogAppendItem> items,
+        CancellationToken cancellationToken = default)
     {
         if (items == null || items.Count == 0) return;
         var first = items[0];
@@ -429,7 +471,7 @@ public static class ActionFitPackagePublisher
             "]" +
             "}";
 
-        string text = PostCatalogRequest(first, body);
+        string text = PostCatalogRequest(first, body, cancellationToken);
         var result = JsonUtility.FromJson<CatalogBatchAppendResponse>(text);
         ValidateCatalogBatchAppendResponse(result, items, text);
     }
@@ -454,21 +496,41 @@ public static class ActionFitPackagePublisher
             "}";
     }
 
-    private static string PostCatalogRequest(CatalogAppendItem item, string body)
+    private static string PostCatalogRequest(
+        CatalogAppendItem item,
+        string body,
+        CancellationToken cancellationToken)
     {
         string url = $"{item.WebAppUrl}?token={Uri.EscapeDataString(item.FetchToken)}&ssId={Uri.EscapeDataString(item.SpreadsheetId)}";
         var request = (HttpWebRequest)WebRequest.Create(url);
         request.Method = "POST";
         request.ContentType = "application/json; charset=utf-8";
-        WriteBody(request, body);
+        ConfigureHttpRequest(request);
 
-        using var response = (HttpWebResponse)request.GetResponse();
-        using var reader = new StreamReader(response.GetResponseStream(), Encoding.UTF8);
-        string text = reader.ReadToEnd();
-        if ((int)response.StatusCode < 200 || (int)response.StatusCode >= 300)
-            throw new InvalidOperationException($"Catalog append failed: {text}");
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            using var registration = cancellationToken.Register(request.Abort);
+            WriteBody(request, body);
 
-        return text;
+            using var response = (HttpWebResponse)request.GetResponse();
+            using var reader = new StreamReader(response.GetResponseStream(), Encoding.UTF8);
+            string text = reader.ReadToEnd();
+            if ((int)response.StatusCode < 200 || (int)response.StatusCode >= 300)
+                throw new InvalidOperationException($"Catalog append failed: {text}");
+
+            return text;
+        }
+        catch (WebException ex) when (cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException("Catalog append was canceled.", ex, cancellationToken);
+        }
+        catch (WebException ex) when (ex.Status == WebExceptionStatus.Timeout)
+        {
+            throw new TimeoutException(
+                $"Catalog request timed out after {DefaultHttpTimeoutMilliseconds / 1000} seconds.",
+                ex);
+        }
     }
 
     private static void ValidateCatalogSettings(CatalogAppendItem item)
@@ -568,6 +630,13 @@ public static class ActionFitPackagePublisher
         request.ContentLength = bytes.Length;
         using var stream = request.GetRequestStream();
         stream.Write(bytes, 0, bytes.Length);
+    }
+
+    internal static void ConfigureHttpRequest(HttpWebRequest request)
+    {
+        if (request == null) throw new ArgumentNullException(nameof(request));
+        request.Timeout = DefaultHttpTimeoutMilliseconds;
+        request.ReadWriteTimeout = DefaultHttpTimeoutMilliseconds;
     }
 
     private static void ClearDirectoryExceptGit(string path)

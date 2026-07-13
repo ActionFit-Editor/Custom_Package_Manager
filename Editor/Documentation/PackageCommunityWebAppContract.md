@@ -133,7 +133,7 @@ Response:
 
 ### `upsertPackageVersions`
 
-`Publish All Changed` sends this batch action after all repository publishes succeed. The Web App should upsert every item in one request and return either `count` matching the request item count or per-item confirmations. If the Unity client does not receive one of those confirmations, it treats the batch action as unsupported and falls back to serial `upsertPackageVersion`.
+`Publish All Changed` sends this batch action after all repository publishes succeed. The Web App should upsert every item in one request and return either `count` matching the request item count or per-item confirmations. If the Unity client receives an unsupported response contract, it falls back to serial `upsertPackageVersion`. Requests use a 30-second connection/read timeout; timeout or user cancellation retains retryable catalog rows and skips serial fallback because the batch mutation outcome may be ambiguous.
 
 Request:
 

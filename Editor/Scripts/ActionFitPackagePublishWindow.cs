@@ -242,12 +242,26 @@ public class ActionFitPackagePublishWindow : EditorWindow
         var targets = _entries.ToArray();
         if (targets.Length == 0) return;
 
-        ActionFitPackageBulkPublishPlan plan = ActionFitPackageBulkPublishApi.PrepareAllChanged(new ActionFitPackageBulkPublishPrepareRequest
+        ActionFitPackageBulkPublishPlan plan;
+        using (var preflightCancellation = new CancellationTokenSource())
         {
-            PackageIds = targets.Select(entry => entry.PackageId).ToArray(),
-            RefreshCatalog = true,
-            CheckRemoteState = true,
-        });
+            try
+            {
+                plan = ActionFitPackageBulkPublishApi.PrepareAllChanged(
+                    new ActionFitPackageBulkPublishPrepareRequest
+                    {
+                        PackageIds = targets.Select(entry => entry.PackageId).ToArray(),
+                        RefreshCatalog = true,
+                        CheckRemoteState = true,
+                    },
+                    CreateProgressReporter(preflightCancellation),
+                    preflightCancellation.Token);
+            }
+            finally
+            {
+                EditorUtility.ClearProgressBar();
+            }
+        }
         if (!plan.Success || !plan.ReadyToPublish)
         {
             Debug.LogWarning($"[ActionFitPackageManager] Bulk publish preflight failed: {plan.Message}");
@@ -268,13 +282,28 @@ public class ActionFitPackagePublishWindow : EditorWindow
                 "Cancel"))
             return;
 
-        ActionFitPackageBulkPublishExecutionResult result = ActionFitPackageBulkPublishApi.ExecuteAll(new ActionFitPackageBulkPublishExecuteRequest
+        ActionFitPackageBulkPublishExecutionResult result;
+        using (var executionCancellation = new CancellationTokenSource())
         {
-            PackageIds = plan.PackageIds,
-            ExpectedPlanId = plan.PlanId,
-            ApprovalText = plan.RequiredApprovalText,
-            ApprovedRepositoryCreationPackageIds = plan.RepositoryCreationPackageIds,
-        });
+            try
+            {
+                result = ActionFitPackageBulkPublishApi.ExecuteAll(
+                    new ActionFitPackageBulkPublishExecuteRequest
+                    {
+                        PackageIds = plan.PackageIds,
+                        ExpectedPlanId = plan.PlanId,
+                        ApprovalText = plan.RequiredApprovalText,
+                        ApprovedRepositoryCreationPackageIds = plan.RepositoryCreationPackageIds,
+                        ApprovedPlan = plan,
+                    },
+                    CreateProgressReporter(executionCancellation),
+                    executionCancellation.Token);
+            }
+            finally
+            {
+                EditorUtility.ClearProgressBar();
+            }
+        }
 
         _pendingCatalogAppendItems.Clear();
         if (result.RetryCatalogItems != null)
@@ -295,6 +324,22 @@ public class ActionFitPackagePublishWindow : EditorWindow
         foreach (string warning in result.Warnings ?? Array.Empty<string>())
             Debug.LogWarning($"[ActionFitPackageManager] {warning}");
         ScheduleReload();
+    }
+
+    private static Action<ActionFitPackageBulkPublishProgress> CreateProgressReporter(
+        CancellationTokenSource cancellation)
+    {
+        return progress =>
+        {
+            if (progress == null) return;
+            if (EditorUtility.DisplayCancelableProgressBar(
+                    "ActionFit Package Publish",
+                    progress.Message,
+                    Mathf.Clamp01(progress.Fraction)))
+            {
+                cancellation.Cancel();
+            }
+        };
     }
 
     private void RetryPendingCatalogAppend()

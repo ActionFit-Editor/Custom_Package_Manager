@@ -1,6 +1,7 @@
 #if UNITY_EDITOR
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -8,6 +9,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using UnityEngine;
+using Debug = UnityEngine.Debug;
 
 [Serializable]
 public sealed class ActionFitPackageBulkPublishPrepareRequest
@@ -40,6 +42,16 @@ public sealed class ActionFitPackageBulkPublishExecuteRequest
     public string ExpectedPlanId;
     public string ApprovalText;
     public string[] ApprovedRepositoryCreationPackageIds = Array.Empty<string>();
+    public ActionFitPackageBulkPublishPlan ApprovedPlan;
+}
+
+public sealed class ActionFitPackageBulkPublishProgress
+{
+    public string Stage;
+    public string Message;
+    public int Completed;
+    public int Total;
+    public float Fraction;
 }
 
 [Serializable]
@@ -77,8 +89,22 @@ public sealed class ActionFitPackageBulkPublishExecutionResult
 public static class ActionFitPackageBulkPublishApi
 {
     public static ActionFitPackageBulkPublishPlan PrepareAllChanged(ActionFitPackageBulkPublishPrepareRequest request)
+        => PrepareAllChanged(request, null, CancellationToken.None);
+
+    public static ActionFitPackageBulkPublishPlan PrepareAllChanged(
+        ActionFitPackageBulkPublishPrepareRequest request,
+        Action<ActionFitPackageBulkPublishProgress> onProgress,
+        CancellationToken cancellationToken)
+        => PrepareAllChangedCore(request, true, onProgress, cancellationToken);
+
+    private static ActionFitPackageBulkPublishPlan PrepareAllChangedCore(
+        ActionFitPackageBulkPublishPrepareRequest request,
+        bool validateContract,
+        Action<ActionFitPackageBulkPublishProgress> onProgress,
+        CancellationToken cancellationToken)
     {
         var plan = new ActionFitPackageBulkPublishPlan();
+        var stopwatch = Stopwatch.StartNew();
         try
         {
             request ??= new ActionFitPackageBulkPublishPrepareRequest();
@@ -87,36 +113,80 @@ public static class ActionFitPackageBulkPublishApi
 
             if (request.RefreshCatalog)
             {
+                ReportProgress(onProgress, "catalog-refresh", "Refreshing catalog before preflight...", 0, 1, 0.05f);
+                cancellationToken.ThrowIfCancellationRequested();
                 ActionFitPackageCatalogSettings_SO settings = ActionFitPackageCatalogSettingsProvider.FindOrCreate();
                 if (!ActionFitPackageCatalogUpdater.UpdateCatalog(settings, out string refreshError, false))
-                    return Fail(plan, "CATALOG_REFRESH_FAILED", $"Catalog refresh failed; bulk publishing was not prepared: {refreshError}");
+                    return LogPreparedPlan(
+                        Fail(plan, "CATALOG_REFRESH_FAILED", $"Catalog refresh failed; bulk publishing was not prepared: {refreshError}"),
+                        stopwatch);
             }
 
             string[] packageIds = NormalizePackageIds(request.PackageIds);
             if (packageIds.Length == 0)
                 packageIds = DiscoverChangedPackageIds();
             if (packageIds.Length == 0)
-                return Fail(plan, "NO_CHANGED_PACKAGES", "No changed embedded ActionFit packages are ready to publish.");
+                return LogPreparedPlan(
+                    Fail(plan, "NO_CHANGED_PACKAGES", "No changed embedded ActionFit packages are ready to publish."),
+                    stopwatch);
 
             var packages = new List<ActionFitPackagePublishPlan>();
-            foreach (string packageId in packageIds)
+            var publishRequests = new List<ActionFitPackagePublisher.PublishRequest>();
+            for (int index = 0; index < packageIds.Length; index++)
             {
-                ActionFitPackagePublishPlan packagePlan = ActionFitPackagePublishApi.Prepare(new ActionFitPackagePublishPrepareRequest
-                {
-                    PackageId = packageId,
-                    RefreshCatalog = false,
-                    CheckRemoteState = true,
-                });
+                cancellationToken.ThrowIfCancellationRequested();
+                string packageId = packageIds[index];
+                ReportProgress(
+                    onProgress,
+                    "local-preflight",
+                    $"Validating local package {index + 1}/{packageIds.Length}: {packageId}",
+                    index,
+                    packageIds.Length,
+                    0.1f + 0.25f * index / packageIds.Length);
+                ActionFitPackagePublishPlan packagePlan = ActionFitPackagePublishApi.PrepareLocal(
+                    new ActionFitPackagePublishPrepareRequest
+                    {
+                        PackageId = packageId,
+                        RefreshCatalog = false,
+                        CheckRemoteState = true,
+                    },
+                    validateContract,
+                    out ActionFitPackagePublisher.PublishRequest publishRequest);
                 packages.Add(packagePlan);
+                publishRequests.Add(publishRequest);
             }
 
             plan.PackageIds = packageIds;
             plan.Packages = packages.ToArray();
-            ActionFitPackagePublishPlan[] failed = packages.Where(item => !item.Success || !item.ReadyToPublish).ToArray();
+            ActionFitPackagePublishPlan[] failed = packages.Where(item => !item.Success).ToArray();
             if (failed.Length > 0)
             {
                 string details = string.Join("\n", failed.Select(item => $"- {item.PackageId}: {item.Code} - {item.Message}"));
-                return Fail(plan, "PACKAGE_PREFLIGHT_FAILED", $"Bulk publish preflight failed. No external state was changed.\n{details}");
+                return LogPreparedPlan(
+                    Fail(plan, "PACKAGE_PREFLIGHT_FAILED", $"Bulk publish preflight failed. No external state was changed.\n{details}"),
+                    stopwatch);
+            }
+
+            RemotePreflightResult[] remoteResults = CheckRemoteStatesParallel(
+                publishRequests,
+                onProgress,
+                cancellationToken);
+            for (int index = 0; index < packages.Count; index++)
+            {
+                RemotePreflightResult remoteResult = remoteResults[index];
+                packages[index] = remoteResult.Success
+                    ? ActionFitPackagePublishApi.CompleteRemotePreflight(packages[index], remoteResult.State)
+                    : FailPackage(packages[index], "REMOTE_CHECK_FAILED", remoteResult.Message);
+            }
+
+            plan.Packages = packages.ToArray();
+            failed = packages.Where(item => !item.Success || !item.ReadyToPublish).ToArray();
+            if (failed.Length > 0)
+            {
+                string details = string.Join("\n", failed.Select(item => $"- {item.PackageId}: {item.Code} - {item.Message}"));
+                return LogPreparedPlan(
+                    Fail(plan, "PACKAGE_PREFLIGHT_FAILED", $"Bulk publish preflight failed. No external state was changed.\n{details}"),
+                    stopwatch);
             }
 
             plan.RepositoryCreationPackageIds = packages
@@ -131,50 +201,94 @@ public static class ActionFitPackageBulkPublishApi
             plan.ReadyToPublish = true;
             plan.Code = "READY_TO_PUBLISH";
             plan.Message = $"Bulk publish plan is ready for {packages.Count} package(s). No external state was changed.";
-            return plan;
+            ReportProgress(onProgress, "preflight-complete", plan.Message, packages.Count, packages.Count, 0.5f);
+            return LogPreparedPlan(plan, stopwatch);
+        }
+        catch (OperationCanceledException)
+        {
+            return LogPreparedPlan(Fail(plan, "CANCELED", "Bulk publish preflight was canceled."), stopwatch);
         }
         catch (Exception ex)
         {
-            return Fail(plan, "PREPARE_FAILED", ex.Message);
+            return LogPreparedPlan(Fail(plan, "PREPARE_FAILED", ex.Message), stopwatch);
         }
     }
 
     public static ActionFitPackageBulkPublishExecutionResult ExecuteAll(ActionFitPackageBulkPublishExecuteRequest request)
-    {
-        if (request == null)
-            return ExecutionFailure(null, "INVALID_REQUEST", "Bulk publish execute request is missing.");
-        if (string.IsNullOrWhiteSpace(request.ExpectedPlanId) || string.IsNullOrWhiteSpace(request.ApprovalText))
-            return ExecutionFailure(request, "APPROVAL_REQUIRED", "ExpectedPlanId and exact ApprovalText from PrepareAllChanged are required.");
+        => ExecuteAll(request, null, CancellationToken.None);
 
-        ActionFitPackageBulkPublishPlan current = PrepareAllChanged(new ActionFitPackageBulkPublishPrepareRequest
+    public static ActionFitPackageBulkPublishExecutionResult ExecuteAll(
+        ActionFitPackageBulkPublishExecuteRequest request,
+        Action<ActionFitPackageBulkPublishProgress> onProgress,
+        CancellationToken cancellationToken)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        if (request == null)
+            return LogExecutionResult(
+                ExecutionFailure(null, "INVALID_REQUEST", "Bulk publish execute request is missing."),
+                stopwatch);
+        if (string.IsNullOrWhiteSpace(request.ExpectedPlanId) || string.IsNullOrWhiteSpace(request.ApprovalText))
+            return LogExecutionResult(
+                ExecutionFailure(request, "APPROVAL_REQUIRED", "ExpectedPlanId and exact ApprovalText from PrepareAllChanged are required."),
+                stopwatch);
+
+        bool hasApprovedPlan = request.ApprovedPlan != null;
+        if (hasApprovedPlan && !ApprovedPlanMatches(request))
         {
-            PackageIds = request.PackageIds,
-            RefreshCatalog = true,
-            CheckRemoteState = true,
-        });
+            return LogExecutionResult(
+                ExecutionFailure(
+                    request,
+                    "APPROVED_PLAN_MISMATCH",
+                    "ApprovedPlan must exactly match PackageIds, ExpectedPlanId, ApprovalText, and the package plans returned by PrepareAllChanged."),
+                stopwatch);
+        }
+        bool reuseApprovedPlan = hasApprovedPlan &&
+                                 request.ApprovedPlan.Packages.All(
+                                     item => item.ContractValidatedInProcess);
+
+        ActionFitPackageBulkPublishPlan current = PrepareAllChangedCore(
+            new ActionFitPackageBulkPublishPrepareRequest
+            {
+                PackageIds = request.PackageIds,
+                RefreshCatalog = true,
+                CheckRemoteState = true,
+            },
+            !reuseApprovedPlan,
+            onProgress,
+            cancellationToken);
         if (!current.Success || !current.ReadyToPublish)
-            return ExecutionFailure(request, "PREFLIGHT_FAILED", current.Message, current);
+            return LogExecutionResult(ExecutionFailure(request, "PREFLIGHT_FAILED", current.Message, current), stopwatch);
         if (!string.Equals(current.PlanId, request.ExpectedPlanId, StringComparison.Ordinal))
-            return ExecutionFailure(request, "PLAN_CHANGED", $"Bulk publish state changed after approval. Expected plan {request.ExpectedPlanId}, current plan {current.PlanId}. Prepare and approve again.", current);
+            return LogExecutionResult(
+                ExecutionFailure(request, "PLAN_CHANGED", $"Bulk publish state changed after approval. Expected plan {request.ExpectedPlanId}, current plan {current.PlanId}. Prepare and approve again.", current),
+                stopwatch);
         if (!string.Equals(current.RequiredApprovalText, request.ApprovalText, StringComparison.Ordinal))
-            return ExecutionFailure(request, "APPROVAL_TEXT_MISMATCH", "ApprovalText does not exactly match the prepared bulk publish plan.", current);
+            return LogExecutionResult(
+                ExecutionFailure(request, "APPROVAL_TEXT_MISMATCH", "ApprovalText does not exactly match the prepared bulk publish plan.", current),
+                stopwatch);
 
         string[] approvedCreates = NormalizePackageIds(request.ApprovedRepositoryCreationPackageIds);
         if (!new HashSet<string>(current.RepositoryCreationPackageIds, StringComparer.Ordinal).SetEquals(approvedCreates))
         {
-            return ExecutionFailure(
-                request,
-                "REPOSITORY_CREATION_APPROVAL_REQUIRED",
-                "ApprovedRepositoryCreationPackageIds must exactly match the repositories marked for creation by PrepareAllChanged.",
-                current);
+            return LogExecutionResult(
+                ExecutionFailure(
+                    request,
+                    "REPOSITORY_CREATION_APPROVAL_REQUIRED",
+                    "ApprovedRepositoryCreationPackageIds must exactly match the repositories marked for creation by PrepareAllChanged.",
+                    current),
+                stopwatch);
         }
 
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            ReportProgress(onProgress, "snapshot", "Creating immutable publish snapshots...", 0, current.Packages.Length, 0.52f);
             ActionFitPackageCatalogSettings_SO settings = ActionFitPackageCatalogSettingsProvider.FindOrCreate();
             var publishRequests = new List<ActionFitPackagePublisher.PublishRequest>();
-            foreach (ActionFitPackagePublishPlan packagePlan in current.Packages)
+            for (int index = 0; index < current.Packages.Length; index++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                ActionFitPackagePublishPlan packagePlan = current.Packages[index];
                 ActionFitPackageInfo_SO info = ActionFitPackagePublishApi.FindPackageInfo(packagePlan.PackageId);
                 if (!ActionFitPackagePublisher.TryCreatePublishRequest(
                         settings,
@@ -183,12 +297,17 @@ public static class ActionFitPackageBulkPublishApi
                         out ActionFitPackagePublisher.PublishRequest publishRequest,
                         out string requestError))
                 {
-                    return ExecutionFailure(request, "PUBLISH_REQUEST_INVALID", $"{packagePlan.PackageId}: {requestError}", current);
+                    return LogExecutionResult(
+                        ExecutionFailure(request, "PUBLISH_REQUEST_INVALID", $"{packagePlan.PackageId}: {requestError}", current),
+                        stopwatch);
                 }
                 publishRequests.Add(publishRequest);
             }
 
-            ActionFitPackagePublisher.PublishResult[] repositoryResults = PublishRepositoriesParallel(publishRequests);
+            ActionFitPackagePublisher.PublishResult[] repositoryResults = PublishRepositoriesParallel(
+                publishRequests,
+                onProgress,
+                cancellationToken);
             ActionFitPackagePublisher.PublishResult[] succeeded = repositoryResults.Where(item => item.Success).ToArray();
             ActionFitPackagePublisher.PublishResult[] failed = repositoryResults.Where(item => !item.Success).ToArray();
             ActionFitPackageBulkPublishPackageResult[] packageResults = repositoryResults.Select(ToPackageResult).ToArray();
@@ -197,44 +316,70 @@ public static class ActionFitPackageBulkPublishApi
             if (failed.Length > 0)
             {
                 string details = string.Join("\n", failed.Select(item => $"- {item.Request?.PackageId ?? "<unknown>"}: {item.Message}"));
-                return new ActionFitPackageBulkPublishExecutionResult
+                return LogExecutionResult(new ActionFitPackageBulkPublishExecutionResult
                 {
                     Success = false,
                     AllRepositoriesPublished = false,
                     CatalogAppended = false,
                     RetryCatalogAppendAvailable = successfulCatalogItems.Length > 0,
-                    Code = "REPOSITORY_PUBLISH_FAILED",
-                    Message = $"One or more repository publishes failed. Catalog rows were not appended.\n{details}",
+                    Code = cancellationToken.IsCancellationRequested
+                        ? "REPOSITORY_PUBLISH_CANCELED"
+                        : "REPOSITORY_PUBLISH_FAILED",
+                    Message = cancellationToken.IsCancellationRequested
+                        ? $"Repository publishing was canceled. Active Git operations finished safely; queued packages were not started. Catalog rows were not appended.\n{details}"
+                        : $"One or more repository publishes failed. Catalog rows were not appended.\n{details}",
                     PlanId = current.PlanId,
                     Packages = packageResults,
                     RetryCatalogPackageIds = successfulCatalogItems.Select(item => item.PackageId).ToArray(),
                     RetryCatalogItems = successfulCatalogItems,
-                };
+                }, stopwatch);
             }
 
-            bool catalogAppended = TryAppendCatalogWithFallback(successfulCatalogItems, out string catalogMessage);
-            if (!catalogAppended)
+            if (cancellationToken.IsCancellationRequested)
             {
-                return new ActionFitPackageBulkPublishExecutionResult
+                return LogExecutionResult(new ActionFitPackageBulkPublishExecutionResult
                 {
                     Success = false,
                     AllRepositoriesPublished = true,
                     CatalogAppended = false,
                     RetryCatalogAppendAvailable = true,
-                    Code = "CATALOG_APPEND_FAILED",
-                    Message = catalogMessage,
+                    Code = "CANCELED_AFTER_REPOSITORY_PUBLISH",
+                    Message = "Repository publishing completed, but catalog append was canceled. Retry the retained catalog rows without publishing repositories again.",
                     PlanId = current.PlanId,
                     Packages = packageResults,
                     RetryCatalogPackageIds = successfulCatalogItems.Select(item => item.PackageId).ToArray(),
                     RetryCatalogItems = successfulCatalogItems,
-                };
+                }, stopwatch);
+            }
+
+            CatalogAppendOutcome catalogOutcome = AppendCatalogWithProgress(
+                successfulCatalogItems,
+                onProgress,
+                cancellationToken);
+            if (!catalogOutcome.Success)
+            {
+                return LogExecutionResult(new ActionFitPackageBulkPublishExecutionResult
+                {
+                    Success = false,
+                    AllRepositoriesPublished = true,
+                    CatalogAppended = false,
+                    RetryCatalogAppendAvailable = true,
+                    Code = cancellationToken.IsCancellationRequested ? "CATALOG_APPEND_CANCELED" : "CATALOG_APPEND_FAILED",
+                    Message = catalogOutcome.Message,
+                    PlanId = current.PlanId,
+                    Packages = packageResults,
+                    RetryCatalogPackageIds = successfulCatalogItems.Select(item => item.PackageId).ToArray(),
+                    RetryCatalogItems = successfulCatalogItems,
+                }, stopwatch);
             }
 
             string[] warnings = Array.Empty<string>();
+            ReportProgress(onProgress, "catalog-refresh", "Refreshing catalog after publish...", 0, 1, 0.96f);
             if (!ActionFitPackageCatalogUpdater.UpdateCatalog(settings, out string refreshMessage, false))
                 warnings = new[] { $"Bulk publish succeeded, but catalog refresh failed: {refreshMessage}" };
 
-            return new ActionFitPackageBulkPublishExecutionResult
+            ReportProgress(onProgress, "complete", "Bulk publish complete.", publishRequests.Count, publishRequests.Count, 1f);
+            return LogExecutionResult(new ActionFitPackageBulkPublishExecutionResult
             {
                 Success = true,
                 AllRepositoriesPublished = true,
@@ -244,11 +389,17 @@ public static class ActionFitPackageBulkPublishApi
                 PlanId = current.PlanId,
                 Packages = packageResults,
                 Warnings = warnings,
-            };
+            }, stopwatch);
+        }
+        catch (OperationCanceledException)
+        {
+            return LogExecutionResult(
+                ExecutionFailure(request, "CANCELED", "Bulk publish execution was canceled before repository changes completed.", current),
+                stopwatch);
         }
         catch (Exception ex)
         {
-            return ExecutionFailure(request, "EXECUTION_FAILED", ex.Message, current);
+            return LogExecutionResult(ExecutionFailure(request, "EXECUTION_FAILED", ex.Message, current), stopwatch);
         }
     }
 
@@ -318,17 +469,71 @@ public static class ActionFitPackageBulkPublishApi
         return result.Distinct(StringComparer.Ordinal).OrderBy(value => value, StringComparer.Ordinal).ToArray();
     }
 
-    private static ActionFitPackagePublisher.PublishResult[] PublishRepositoriesParallel(IReadOnlyList<ActionFitPackagePublisher.PublishRequest> requests)
+    private static RemotePreflightResult[] CheckRemoteStatesParallel(
+        IReadOnlyList<ActionFitPackagePublisher.PublishRequest> requests,
+        Action<ActionFitPackageBulkPublishProgress> onProgress,
+        CancellationToken cancellationToken)
+    {
+        var results = new RemotePreflightResult[requests.Count];
+        if (requests.Count == 0) return results;
+
+        int nextIndex = -1;
+        int completed = 0;
+        int workerCount = GetWorkerCount(requests.Count);
+        Task[] workers = Enumerable.Range(0, workerCount).Select(_ => Task.Run(() =>
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                int index = Interlocked.Increment(ref nextIndex);
+                if (index >= requests.Count) break;
+
+                bool success = ActionFitPackagePublisher.TryGetRemoteState(
+                    requests[index],
+                    out ActionFitPackagePublisher.RemoteState state,
+                    out string message);
+                results[index] = new RemotePreflightResult(success, state, message);
+                Interlocked.Increment(ref completed);
+            }
+        })).ToArray();
+
+        Task allWorkers = Task.WhenAll(workers);
+        while (!allWorkers.Wait(100))
+        {
+            ReportProgress(
+                onProgress,
+                "remote-preflight",
+                $"Checking GitHub state... {completed}/{requests.Count}",
+                completed,
+                requests.Count,
+                0.35f + 0.15f * completed / requests.Count);
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+        ReportProgress(
+            onProgress,
+            "remote-preflight",
+            $"GitHub state checked: {requests.Count}/{requests.Count}",
+            requests.Count,
+            requests.Count,
+            0.5f);
+        return results;
+    }
+
+    private static ActionFitPackagePublisher.PublishResult[] PublishRepositoriesParallel(
+        IReadOnlyList<ActionFitPackagePublisher.PublishRequest> requests,
+        Action<ActionFitPackageBulkPublishProgress> onProgress,
+        CancellationToken cancellationToken)
     {
         var results = new ActionFitPackagePublisher.PublishResult[requests.Count];
         if (requests.Count == 0) return results;
 
         int nextIndex = -1;
-        int workerCount = Math.Min(ActionFitPackagePublisher.DefaultMaxParallelPublishes, requests.Count);
+        int completed = 0;
+        int workerCount = GetWorkerCount(requests.Count);
         Task[] workers = Enumerable.Range(0, workerCount).Select(_ => Task.Run(() =>
         {
             while (true)
             {
+                if (cancellationToken.IsCancellationRequested) break;
                 int index = Interlocked.Increment(ref nextIndex);
                 if (index >= requests.Count) break;
                 try
@@ -339,23 +544,101 @@ public static class ActionFitPackageBulkPublishApi
                 {
                     results[index] = ActionFitPackagePublisher.PublishResult.Failed(requests[index], ex.Message);
                 }
+                finally
+                {
+                    Interlocked.Increment(ref completed);
+                }
             }
         })).ToArray();
-        Task.WhenAll(workers).GetAwaiter().GetResult();
+        Task allWorkers = Task.WhenAll(workers);
+        while (!allWorkers.Wait(100))
+        {
+            ReportProgress(
+                onProgress,
+                "repository-publish",
+                $"Publishing repositories... {completed}/{requests.Count}",
+                completed,
+                requests.Count,
+                0.55f + 0.25f * completed / requests.Count);
+        }
+
+        for (int index = 0; index < results.Length; index++)
+        {
+            results[index] ??= ActionFitPackagePublisher.PublishResult.Failed(
+                requests[index],
+                "Canceled before repository publish started.");
+        }
+        ReportProgress(
+            onProgress,
+            "repository-publish",
+            cancellationToken.IsCancellationRequested
+                ? $"Repository publishing canceled: {completed}/{requests.Count} completed"
+                : $"Repository publishing complete: {requests.Count}/{requests.Count}",
+            completed,
+            requests.Count,
+            0.8f);
         return results;
     }
 
     private static bool TryAppendCatalogWithFallback(
         IReadOnlyList<ActionFitPackagePublisher.CatalogAppendItem> items,
+        CancellationToken cancellationToken,
         out string message)
     {
-        if (ActionFitPackagePublisher.TryAppendCatalogBatch(items, out message)) return true;
+        if (ActionFitPackagePublisher.TryAppendCatalogBatch(items, cancellationToken, out message)) return true;
         string batchMessage = message;
-        bool success = ActionFitPackagePublisher.TryAppendCatalogSerial(items, out string serialMessage);
+        if (cancellationToken.IsCancellationRequested)
+        {
+            message = $"Catalog batch append was canceled. {batchMessage}";
+            return false;
+        }
+        if (!ShouldAttemptSerialFallback(batchMessage))
+        {
+            message =
+                $"Catalog batch append failed: {batchMessage} " +
+                "Serial fallback was skipped because the batch request timed out or was canceled; retry the retained catalog rows after checking the Web App.";
+            return false;
+        }
+
+        Debug.LogWarning(
+            $"[ActionFitPackageManager] Catalog batch action was unavailable or failed; starting serial fallback.\n{batchMessage}");
+        bool success = ActionFitPackagePublisher.TryAppendCatalogSerial(items, cancellationToken, out string serialMessage);
         message = success
             ? $"Catalog batch append failed, but serial fallback succeeded. Batch: {batchMessage} Serial: {serialMessage}"
             : $"Catalog batch append failed: {batchMessage} Serial fallback failed: {serialMessage}";
         return success;
+    }
+
+    private static CatalogAppendOutcome AppendCatalogWithProgress(
+        IReadOnlyList<ActionFitPackagePublisher.CatalogAppendItem> items,
+        Action<ActionFitPackageBulkPublishProgress> onProgress,
+        CancellationToken cancellationToken)
+    {
+        ReportProgress(onProgress, "catalog-batch", "Appending catalog rows by batch request...", 0, items.Count, 0.82f);
+        Task<CatalogAppendOutcome> task = Task.Run(() =>
+        {
+            bool success = TryAppendCatalogWithFallback(items, cancellationToken, out string message);
+            return new CatalogAppendOutcome(success, message);
+        });
+
+        while (!task.Wait(100))
+        {
+            string stage = cancellationToken.IsCancellationRequested ? "catalog-cancel" : "catalog-batch";
+            string message = cancellationToken.IsCancellationRequested
+                ? "Canceling catalog request..."
+                : "Waiting for catalog batch/fallback response...";
+            ReportProgress(onProgress, stage, message, 0, items.Count, 0.9f);
+        }
+
+        CatalogAppendOutcome outcome = task.GetAwaiter().GetResult();
+        ReportProgress(
+            onProgress,
+            outcome.Success ? "catalog-complete" : "catalog-failed",
+            outcome.Message,
+            outcome.Success ? items.Count : 0,
+            items.Count,
+            0.95f);
+        return outcome;
     }
 
     private static ActionFitPackageBulkPublishPackageResult ToPackageResult(ActionFitPackagePublisher.PublishResult result)
@@ -381,6 +664,102 @@ public static class ActionFitPackageBulkPublishApi
             .ToArray();
     }
 
+    internal static int GetWorkerCount(int requestCount)
+    {
+        return Math.Min(ActionFitPackagePublisher.DefaultMaxParallelPublishes, Math.Max(0, requestCount));
+    }
+
+    internal static bool ShouldAttemptSerialFallback(string batchMessage)
+    {
+        string value = batchMessage ?? "";
+        return value.IndexOf("timed out", StringComparison.OrdinalIgnoreCase) < 0 &&
+               value.IndexOf("canceled", StringComparison.OrdinalIgnoreCase) < 0 &&
+               value.IndexOf("cancelled", StringComparison.OrdinalIgnoreCase) < 0;
+    }
+
+    internal static bool ApprovedPlanMatches(ActionFitPackageBulkPublishExecuteRequest request)
+    {
+        ActionFitPackageBulkPublishPlan plan = request?.ApprovedPlan;
+        if (plan == null || !plan.Success || !plan.ReadyToPublish || plan.Packages == null)
+            return false;
+        if (!string.Equals(plan.PlanId, request.ExpectedPlanId, StringComparison.Ordinal) ||
+            !string.Equals(plan.RequiredApprovalText, request.ApprovalText, StringComparison.Ordinal))
+            return false;
+
+        string[] requestIds = NormalizePackageIds(request.PackageIds);
+        string[] planIds = NormalizePackageIds(plan.PackageIds);
+        string[] packageIds = NormalizePackageIds(plan.Packages.Select(item => item?.PackageId));
+        if (!requestIds.SequenceEqual(planIds, StringComparer.Ordinal) ||
+            !planIds.SequenceEqual(packageIds, StringComparer.Ordinal))
+        {
+            return false;
+        }
+
+        if (plan.Packages.Any(item =>
+                item == null ||
+                !item.Success ||
+                !item.ReadyToPublish ||
+                string.IsNullOrWhiteSpace(item.PlanId)))
+        {
+            return false;
+        }
+
+        return string.Equals(ComputePlanId(plan.Packages), plan.PlanId, StringComparison.Ordinal);
+    }
+
+    private static void ReportProgress(
+        Action<ActionFitPackageBulkPublishProgress> onProgress,
+        string stage,
+        string message,
+        int completed,
+        int total,
+        float fraction)
+    {
+        onProgress?.Invoke(new ActionFitPackageBulkPublishProgress
+        {
+            Stage = stage,
+            Message = message,
+            Completed = completed,
+            Total = total,
+            Fraction = Math.Max(0f, Math.Min(1f, fraction)),
+        });
+    }
+
+    private static ActionFitPackageBulkPublishPlan LogPreparedPlan(
+        ActionFitPackageBulkPublishPlan plan,
+        Stopwatch stopwatch)
+    {
+        string outcome = plan != null && plan.Success ? "complete" : "failed";
+        Debug.Log(
+            $"[ActionFitPackageManager] Bulk publish preflight {outcome} " +
+            $"({stopwatch.ElapsedMilliseconds} ms, code={plan?.Code ?? "UNKNOWN"})");
+        return plan;
+    }
+
+    private static ActionFitPackageBulkPublishExecutionResult LogExecutionResult(
+        ActionFitPackageBulkPublishExecutionResult result,
+        Stopwatch stopwatch)
+    {
+        string outcome = result != null && result.Success ? "complete" : "failed";
+        Debug.Log(
+            $"[ActionFitPackageManager] Bulk publish execution {outcome} " +
+            $"({stopwatch.ElapsedMilliseconds} ms, code={result?.Code ?? "UNKNOWN"})");
+        return result;
+    }
+
+    private static ActionFitPackagePublishPlan FailPackage(
+        ActionFitPackagePublishPlan plan,
+        string code,
+        string message)
+    {
+        plan ??= new ActionFitPackagePublishPlan();
+        plan.Success = false;
+        plan.ReadyToPublish = false;
+        plan.Code = code;
+        plan.Message = message;
+        return plan;
+    }
+
     private static ActionFitPackageBulkPublishPlan Fail(ActionFitPackageBulkPublishPlan plan, string code, string message)
     {
         plan ??= new ActionFitPackageBulkPublishPlan();
@@ -404,6 +783,35 @@ public static class ActionFitPackageBulkPublishApi
             Message = message,
             PlanId = plan?.PlanId ?? request?.ExpectedPlanId ?? "",
         };
+    }
+
+    private sealed class RemotePreflightResult
+    {
+        public RemotePreflightResult(
+            bool success,
+            ActionFitPackagePublisher.RemoteState state,
+            string message)
+        {
+            Success = success;
+            State = state;
+            Message = message;
+        }
+
+        public bool Success { get; }
+        public ActionFitPackagePublisher.RemoteState State { get; }
+        public string Message { get; }
+    }
+
+    private sealed class CatalogAppendOutcome
+    {
+        public CatalogAppendOutcome(bool success, string message)
+        {
+            Success = success;
+            Message = message;
+        }
+
+        public bool Success { get; }
+        public string Message { get; }
     }
 }
 

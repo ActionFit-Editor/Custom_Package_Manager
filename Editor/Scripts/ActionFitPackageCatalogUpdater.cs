@@ -1,5 +1,6 @@
 #if UNITY_EDITOR
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -7,6 +8,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using UnityEditor;
 using UnityEngine;
+using Debug = UnityEngine.Debug;
 
 public static class ActionFitPackageCatalogUpdater
 {
@@ -32,10 +34,13 @@ public static class ActionFitPackageCatalogUpdater
     /// </summary>
     public static bool UpdateCatalog(ActionFitPackageCatalogSettings_SO settings, out string message, bool showProgress)
     {
+        var stopwatch = Stopwatch.StartNew();
+        Debug.Log("[ActionFitPackageManager] Catalog refresh start");
         message = "";
         if (settings == null)
         {
             message = "Catalog settings asset is missing.";
+            Debug.LogWarning($"[ActionFitPackageManager] Catalog refresh failed ({stopwatch.ElapsedMilliseconds} ms): {message}");
             return false;
         }
 
@@ -44,6 +49,7 @@ public static class ActionFitPackageCatalogUpdater
             string.IsNullOrWhiteSpace(settings.FetchToken))
         {
             message = "Spreadsheet URL, Web App URL, and Token must all be set.";
+            Debug.LogWarning($"[ActionFitPackageManager] Catalog refresh failed ({stopwatch.ElapsedMilliseconds} ms): {message}");
             return false;
         }
 
@@ -51,6 +57,7 @@ public static class ActionFitPackageCatalogUpdater
         if (string.IsNullOrWhiteSpace(ssId))
         {
             message = "Spreadsheet URL is invalid.";
+            Debug.LogWarning($"[ActionFitPackageManager] Catalog refresh failed ({stopwatch.ElapsedMilliseconds} ms): {message}");
             return false;
         }
 
@@ -64,6 +71,7 @@ public static class ActionFitPackageCatalogUpdater
         catch (Exception ex)
         {
             message = $"Request failed: {ex.Message}";
+            Debug.LogWarning($"[ActionFitPackageManager] Catalog refresh failed ({stopwatch.ElapsedMilliseconds} ms): {message}");
             return false;
         }
         finally
@@ -72,7 +80,11 @@ public static class ActionFitPackageCatalogUpdater
                 EditorUtility.ClearProgressBar();
         }
 
-        if (!TryFindCatalogCsv(json, out string csv, out bool hasCommentCsv, out string commentCsv, out message)) return false;
+        if (!TryFindCatalogCsv(json, out string csv, out bool hasCommentCsv, out string commentCsv, out message))
+        {
+            Debug.LogWarning($"[ActionFitPackageManager] Catalog refresh failed ({stopwatch.ElapsedMilliseconds} ms): {message}");
+            return false;
+        }
 
         ActionFitPackageCatalogSettingsProvider.EnsureLocalCatalogFolder();
         string path = ActionFitPackageCatalogSettingsProvider.LocalCatalogPath;
@@ -85,6 +97,7 @@ public static class ActionFitPackageCatalogUpdater
             message = commentsChanged
                 ? $"Catalog is already up to date and comments cache updated: {path}"
                 : $"Catalog is already up to date: {path}";
+            Debug.Log($"[ActionFitPackageManager] Catalog refresh complete ({stopwatch.ElapsedMilliseconds} ms): {message}");
             return true;
         }
 
@@ -92,6 +105,7 @@ public static class ActionFitPackageCatalogUpdater
         AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
         AssetDatabase.SaveAssets();
         message = commentsChanged ? $"Catalog and comments cache updated: {path}" : $"Catalog updated: {path}";
+        Debug.Log($"[ActionFitPackageManager] Catalog refresh complete ({stopwatch.ElapsedMilliseconds} ms): {message}");
         return true;
     }
 
@@ -365,6 +379,7 @@ public static class ActionFitPackageCatalogUpdater
         var req = (HttpWebRequest)WebRequest.Create(url);
         req.Method = "GET";
         req.AllowAutoRedirect = true;
+        ActionFitPackagePublisher.ConfigureHttpRequest(req);
         using var resp = (HttpWebResponse)req.GetResponse();
         using var sr = new StreamReader(resp.GetResponseStream(), Encoding.UTF8);
         return sr.ReadToEnd();
