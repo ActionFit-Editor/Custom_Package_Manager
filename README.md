@@ -7,7 +7,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.70"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.72"
   }
 }
 ```
@@ -15,9 +15,10 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ## Menu
 
 - `Tools > Package > Custom Package Manager > Package Manager`: install, apply versions, remove packages, inspect package details, and check updates.
-- `Tools > Package > Custom Package Manager > Manager Console`: create packages, publish changed package versions, publish selected package versions, open catalog/manifest files, and refresh the AI guide router.
+- `Tools > Package > Custom Package Manager > Manager Console`: create packages, add schema v2 agent skills, publish changed or selected package versions, open catalog/manifest files, and refresh the AI guide router.
 - `Tools > Package > Custom Package Manager > Install or Refresh Agent Skills`: discovers registered skills from installed ActionFit packages and safely synchronizes their managed project-local copies.
 - `Tools > Package > Custom Package Manager > Remove Managed Agent Skills`: removes only unchanged managed copies and disables automatic recreation until an explicit refresh.
+- `Tools > Package > Custom Package Manager > Add Agent Skill`: adds a schema v2 skill to an editable embedded package and creates its mandatory package help skill on first use.
 - `Tools > Package > <Package Name> > README`: opens that package's README in an editor window.
 - `Tools > Package > <Package Name> > Setting SO`: focuses that package's settings ScriptableObject when the package has one.
 
@@ -27,22 +28,35 @@ An ActionFit package can register Codex and Claude skills with `Skills~/manifest
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
+  "skillPrefix": "sample",
+  "helpSkill": "sample-help",
   "skills": [
     {
-      "name": "sample-skill",
+      "name": "sample-help",
       "agents": ["codex", "claude"],
-      "includeShared": true
+      "includeShared": false,
+      "access": "read-only"
+    },
+    {
+      "name": "sample-run",
+      "agents": ["codex", "claude"],
+      "includeShared": true,
+      "access": "write-capable"
     }
   ]
 }
 ```
 
-Place sources at `Skills~/Codex/<skill-name>` and `Skills~/Claude/<skill-name>`. Each source must contain a `SKILL.md` whose frontmatter `name` matches the registration and whose `description` is non-empty. Optional package-wide files under `Skills~/Shared` are overlaid only when `includeShared` is true; shared and agent sources must not contain the same relative file.
+Schema v2 requires an explicit lowercase `skillPrefix`, `helpSkill` equal to `<skillPrefix>-help`, and a registered help skill whose agents cover every agent used by the package. Every skill name starts with `<skillPrefix>-`; `access` is explicitly `read-only` or `write-capable`. The runtime installer temporarily continues to read schema v1 packages, but the package contract validator rejects v1 for changed or newly published packages.
+
+Place sources at `Skills~/Codex/<skill-name>` and `Skills~/Claude/<skill-name>`. Each source must contain a `SKILL.md` whose frontmatter `name` matches the registration and whose `description` explains what the skill does and when to use it. Optional package-wide files under `Skills~/Shared` are overlaid only when `includeShared` is true; shared and agent sources must not contain the same relative file.
+
+During installation, the manager generates `PACKAGE_SKILLS.md` inside each installed help skill from `package.json`, the schema v2 manifest, and the target agent's frontmatter descriptions. The generated file is included in the managed hash and is the help skill's authoritative inventory for package identity, related skills, `$name` invocation, and access. Do not author `PACKAGE_SKILLS.md` in package sources.
 
 The manager installs registered sources into `.agents/skills/<skill-name>` and `.claude/skills/<skill-name>`. Installation runs after Editor load and package registration, but is skipped in batch mode. Managed ownership and hashes are stored in ignored `UserSettings/ActionFitPackageManager/skill-install-state.json`. Missing targets are installed, unchanged managed targets are updated, and unmanaged, modified, linked, or conflicting targets are preserved with a warning. Automatic synchronization never deletes a target when a package disappears; deletion is available only through the explicit removal menu and only for unchanged managed copies.
 
-The Package Manager detail view shows each package's aggregate `Agent Skills` state: registered, current, update available, missing, preserved, and conflict counts. Inspection is read-only and does not install, overwrite, or remove skills.
+The Package Manager detail view shows each package's aggregate `Agent Skills` state: registered, current, update available, missing, preserved, and conflict counts. Embedded package rows also expose `Add Agent Skill`; downloaded packages must be embedded before their sources can be edited. The same scaffolding window is available from Manager Console.
 
 Skill names are limited to lowercase letters, digits, and hyphens. The manifest cannot specify source or target paths, so packages cannot redirect installation outside the fixed package and project-local skill roots. Symbolic links and reparse points are rejected, and copied scripts are never executed during installation.
 
@@ -68,7 +82,7 @@ python Packages/com.actionfit.custompackagemanager/Tools~/package_contract_valid
 python Packages/com.actionfit.custompackagemanager/Tools~/package_contract_validator.py --all
 ```
 
-The validator checks `package.json`, SemVer and changed-package version bumps, README install tags, `AI_GUIDE.md` identity/version/router entries, registered `Skills~/manifest.json` sources and `SKILL.md` frontmatter, `ActionFitPackageInfo_SO`, and package asmdefs. It writes the same JSON schema to stdout and optional `--output`; every diagnostic includes `code`, `severity`, `path`, `line`, `message`, and `suggestedFix`.
+The validator checks `package.json`, SemVer and changed-package version bumps, README install tags, `AI_GUIDE.md` identity/version/router entries, schema v2 prefix/help/access rules, registered skill sources and `SKILL.md` frontmatter, `ActionFitPackageInfo_SO`, and package asmdefs. It writes the same JSON schema to stdout and optional `--output`; every diagnostic includes `code`, `severity`, `path`, `line`, `message`, and `suggestedFix`.
 
 Exit codes are stable for local automation and CI:
 
@@ -147,6 +161,7 @@ Package Manager composes `History` and `Changes` from separate catalog version r
 - Package root: `Tools > Package > Custom Package Manager`.
 - Install or refresh agent skills: `Tools > Package > Custom Package Manager > Install or Refresh Agent Skills`.
 - Remove managed agent skills: `Tools > Package > Custom Package Manager > Remove Managed Agent Skills`.
+- Add a schema v2 agent skill: `Tools > Package > Custom Package Manager > Add Agent Skill`.
 - README: `Tools > Package > Custom Package Manager > README`.
 - Setting SO: `Tools > Package > Custom Package Manager > Setting SO`.
 - Package commands stay under the same package root and appear above the separated README/Setting SO entries when those entries exist.
@@ -187,6 +202,16 @@ ActionFitPackageEmbedApi.EmbedForEditAsync(new ActionFitPackageEmbedRequest
     PackageId = "com.actionfit.example",
     Resolve = true,
 }, embed => Debug.Log($"{embed.Code}: {embed.Message}"));
+
+var skill = ActionFitPackageSkillScaffoldApi.Add(new ActionFitPackageSkillScaffoldRequest
+{
+    PackageId = "com.actionfit.example",
+    SkillPrefix = "example",
+    SkillName = "example-run",
+    Description = "Run the example package workflow when explicitly requested.",
+    Agents = new[] { "codex", "claude" },
+    Access = "write-capable",
+});
 ```
 
 - `ActionFitPackageWorkflowApi.Inspect`: optionally refreshes the shared spreadsheet without confirmation UI, reads the latest catalog row, compares it with the installed version, reports embedded change state, and returns safe workflow options.
@@ -197,6 +222,7 @@ ActionFitPackageEmbedApi.EmbedForEditAsync(new ActionFitPackageEmbedRequest
 - `ActionFitPackageEmbedApi.EmbedForEdit`: start-oriented convenience API. Downloaded packages return `EMBED_STARTED`; callers that require final success must use the async overload or inspect package state afterward.
 - `ActionFitPackageEmbedApi.ExecuteJson`: JSON start-result wrapper for Unity connectors and AI tools. A returned `EMBED_STARTED` is not the final conversion result.
 - `ActionFitPackageEmbedApi.RecoverPendingTransactions`: explicit recovery entry point in addition to automatic Editor-load recovery.
+- `ActionFitPackageSkillScaffoldApi.Add` / `AddJson`: adds a schema v2 package skill to an embedded package without overwriting existing sources. The first addition creates `<skillPrefix>-help` for Codex and Claude plus Codex `agents/openai.yaml` metadata.
 - `ActionFitPackagePublishApi.Prepare`: runs the local package contract first, then refreshes the catalog, blocks reused versions, validates package metadata/authentication, checks the GitHub repository and immutable tag, and returns a content-bound plan ID without changing external state. Contract failures include structured diagnostics and stop before catalog, credential, or GitHub requests.
 - `ActionFitPackagePublishApi.Execute`: re-runs every preflight and requires the same plan ID plus the exact `RequiredApprovalText` before repository push, tag push, and catalog upsert.
 - `ActionFitPackagePublishApi.PrepareJson` / `ExecuteJson`: JSON wrappers for AI connectors. Execution never infers approval from preparation.
@@ -222,6 +248,7 @@ If an AI assistant reads this package documentation before the automatic router 
 ## Manager Console
 
 - `1. Create Package`: requires an explicit `Public` or `Private` repository visibility choice, then creates the `Packages/com.actionfit.*` package skeleton, README, AI guide, README-only package menu file, asmdef, and PackageInfo SO. Creation validation rejects requests that omit the explicit choice, and the completed skeleton must pass the package-owned round-trip contract validator before creation returns successfully.
+- `Add Agent Skill`: opens the same no-overwrite schema v2 scaffolding window used by embedded package detail rows. The first addition creates the mandatory help sources for Codex and Claude; later additions update only the manifest and newly requested source paths.
 - `2. Publish Changed`: normal publish path. It finds top-level `Packages/com.actionfit.*` packages whose local `package.json` version is higher than the catalog latest version, includes newly created packages that are not yet registered, prepares local publish clones, creates missing repositories, pushes package contents/tags, and appends catalog rows. Nested `package.json` files under test fixtures or package content are not publish candidates. `Publish All Changed` runs repository publishes up to 4 packages at once, then appends all catalog rows by one batch request when the Web App supports it. Each package's `Repository Visibility` in `ActionFitPackageInfo_SO` selects the public/private GitHub profile for both new and already registered package publishes.
 - `Publish Package`: manual publish path for an already registered package version when you need to type a specific version before publishing.
 - `Open Catalog`: selects the local or fallback catalog CSV.

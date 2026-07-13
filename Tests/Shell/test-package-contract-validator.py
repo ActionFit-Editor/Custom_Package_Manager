@@ -101,9 +101,18 @@ class PackageContractValidatorTests(unittest.TestCase):
         temporary, repo_root, package_root = self.make_repo("valid-package")
         self.addCleanup(temporary.cleanup)
         skills_root = package_root / "Skills~"
+        (skills_root / "Codex" / "sample-help").mkdir(parents=True)
+        (skills_root / "Claude" / "sample-help").mkdir(parents=True)
         (skills_root / "Codex" / "sample-skill").mkdir(parents=True)
         (skills_root / "Claude" / "sample-skill").mkdir(parents=True)
         (skills_root / "Shared" / "scripts").mkdir(parents=True)
+        help_text = (
+            "---\n"
+            "name: sample-help\n"
+            "description: Explain the sample package and its related skills.\n"
+            "---\n\n"
+            "# Sample Help\n\nRead PACKAGE_SKILLS.md before answering.\n"
+        )
         skill_text = (
             "---\n"
             "name: sample-skill\n"
@@ -111,18 +120,29 @@ class PackageContractValidatorTests(unittest.TestCase):
             "---\n\n"
             "# Sample Skill\n"
         )
+        (skills_root / "Codex" / "sample-help" / "SKILL.md").write_text(help_text, encoding="utf-8")
+        (skills_root / "Claude" / "sample-help" / "SKILL.md").write_text(help_text, encoding="utf-8")
         (skills_root / "Codex" / "sample-skill" / "SKILL.md").write_text(skill_text, encoding="utf-8")
         (skills_root / "Claude" / "sample-skill" / "SKILL.md").write_text(skill_text, encoding="utf-8")
         (skills_root / "Shared" / "scripts" / "helper.py").write_text("print('ok')\n", encoding="utf-8")
         (skills_root / "manifest.json").write_text(
             json.dumps(
                 {
-                    "schemaVersion": 1,
+                    "schemaVersion": 2,
+                    "skillPrefix": "sample",
+                    "helpSkill": "sample-help",
                     "skills": [
+                        {
+                            "name": "sample-help",
+                            "agents": ["codex", "claude"],
+                            "includeShared": False,
+                            "access": "read-only",
+                        },
                         {
                             "name": "sample-skill",
                             "agents": ["codex", "claude"],
                             "includeShared": True,
+                            "access": "read-only",
                         }
                     ],
                 }
@@ -139,6 +159,12 @@ class PackageContractValidatorTests(unittest.TestCase):
         temporary, repo_root, package_root = self.make_repo("valid-package")
         self.addCleanup(temporary.cleanup)
         skills_root = package_root / "Skills~"
+        help_root = skills_root / "Codex" / "sample-help"
+        help_root.mkdir(parents=True)
+        (help_root / "SKILL.md").write_text(
+            "---\nname: sample-help\ndescription: Explain sample skills.\n---\n\nRead PACKAGE_SKILLS.md.\n",
+            encoding="utf-8",
+        )
         source_root = skills_root / "Codex" / "safe-skill"
         source_root.mkdir(parents=True)
         (source_root / "SKILL.md").write_text(
@@ -148,13 +174,22 @@ class PackageContractValidatorTests(unittest.TestCase):
         (skills_root / "manifest.json").write_text(
             json.dumps(
                 {
-                    "schemaVersion": 1,
+                    "schemaVersion": 2,
+                    "skillPrefix": "sample",
+                    "helpSkill": "sample-help",
                     "skills": [
                         {"name": "../escape", "agents": ["codex"]},
+                        {
+                            "name": "sample-help",
+                            "agents": ["codex"],
+                            "includeShared": False,
+                            "access": "read-only",
+                        },
                         {
                             "name": "safe-skill",
                             "agents": ["unknown", "codex", "codex"],
                             "includeShared": True,
+                            "access": "read-only",
                         },
                     ],
                 }
@@ -187,6 +222,83 @@ class PackageContractValidatorTests(unittest.TestCase):
         self.assertEqual(1, code)
         self.assertIn("SKILL_MANIFEST_MISSING", {item["code"] for item in result["diagnostics"]})
 
+    def test_schema_v1_is_runtime_compatible_but_rejected_for_package_contract(self) -> None:
+        temporary, repo_root, package_root = self.make_repo("valid-package")
+        self.addCleanup(temporary.cleanup)
+        skill_root = package_root / "Skills~" / "Codex" / "legacy-skill"
+        skill_root.mkdir(parents=True)
+        (skill_root / "SKILL.md").write_text(
+            "---\nname: legacy-skill\ndescription: Legacy runtime compatibility.\n---\n",
+            encoding="utf-8",
+        )
+        (package_root / "Skills~" / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "skills": [{"name": "legacy-skill", "agents": ["codex"]}],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        code, result = self.run_cli(repo_root, "--package", PACKAGE_ID)
+
+        self.assertEqual(1, code)
+        self.assertIn("SKILL_MANIFEST_SCHEMA_UNSUPPORTED", {item["code"] for item in result["diagnostics"]})
+
+    def test_schema_v2_requires_help_prefix_access_and_agent_coverage(self) -> None:
+        temporary, repo_root, package_root = self.make_repo("valid-package")
+        self.addCleanup(temporary.cleanup)
+        skills_root = package_root / "Skills~"
+        for agent, directory in (("codex", "Codex"), ("claude", "Claude")):
+            source = skills_root / directory / "sample-run"
+            source.mkdir(parents=True)
+            (source / "SKILL.md").write_text(
+                "---\nname: sample-run\ndescription: Run sample changes.\n---\n",
+                encoding="utf-8",
+            )
+        help_root = skills_root / "Codex" / "sample-help"
+        help_root.mkdir(parents=True)
+        (help_root / "SKILL.md").write_text(
+            "---\nname: sample-help\ndescription: Explain sample skills.\n---\n\nNo inventory reference.\n",
+            encoding="utf-8",
+        )
+        (skills_root / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 2,
+                    "skillPrefix": "sample",
+                    "helpSkill": "sample-help",
+                    "skills": [
+                        {
+                            "name": "sample-help",
+                            "agents": ["codex"],
+                            "includeShared": False,
+                            "access": "read-only",
+                        },
+                        {
+                            "name": "sample-run",
+                            "agents": ["codex", "claude"],
+                            "includeShared": False,
+                        },
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        code, result = self.run_cli(repo_root, "--package", PACKAGE_ID)
+
+        self.assertEqual(1, code)
+        codes = {item["code"] for item in result["diagnostics"]}
+        self.assertTrue(
+            {
+                "SKILL_ACCESS_INVALID",
+                "SKILL_HELP_AGENTS_INCOMPLETE",
+                "SKILL_HELP_INVENTORY_REFERENCE_MISSING",
+            }.issubset(codes)
+        )
+
     @unittest.skipIf(os.name == "nt", "Windows symlink creation requires developer-mode privileges")
     def test_linked_skill_source_is_rejected(self) -> None:
         temporary, repo_root, package_root = self.make_repo("valid-package")
@@ -201,12 +313,31 @@ class PackageContractValidatorTests(unittest.TestCase):
         outside = repo_root / "outside.txt"
         outside.write_text("outside", encoding="utf-8")
         (source_root / "linked.txt").symlink_to(outside)
+        help_root = skills_root / "Codex" / "linked-help"
+        help_root.mkdir(parents=True)
+        (help_root / "SKILL.md").write_text(
+            "---\nname: linked-help\ndescription: Explain linked skills.\n---\n\nRead PACKAGE_SKILLS.md.\n",
+            encoding="utf-8",
+        )
         (skills_root / "manifest.json").write_text(
             json.dumps(
                 {
-                    "schemaVersion": 1,
+                    "schemaVersion": 2,
+                    "skillPrefix": "linked",
+                    "helpSkill": "linked-help",
                     "skills": [
-                        {"name": "linked-skill", "agents": ["codex"], "includeShared": False}
+                        {
+                            "name": "linked-help",
+                            "agents": ["codex"],
+                            "includeShared": False,
+                            "access": "read-only",
+                        },
+                        {
+                            "name": "linked-skill",
+                            "agents": ["codex"],
+                            "includeShared": False,
+                            "access": "read-only",
+                        },
                     ],
                 }
             ),

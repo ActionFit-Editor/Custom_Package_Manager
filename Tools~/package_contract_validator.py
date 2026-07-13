@@ -30,6 +30,8 @@ AI_GUIDE_VERSION_PATTERN = re.compile(
 )
 SKILL_NAME_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 SKILL_AGENTS = {"codex": "Codex", "claude": "Claude"}
+SKILL_ACCESS = {"read-only", "write-capable"}
+GENERATED_SKILL_INVENTORY = "PACKAGE_SKILLS.md"
 
 
 class InfrastructureError(RuntimeError):
@@ -476,7 +478,7 @@ def validate_skills(
                     "SKILL_MANIFEST_MISSING",
                     relative_path(repo_root, manifest_path),
                     f"{package_id} ships skill sources without Skills~/manifest.json.",
-                    "Register package skills in a schemaVersion 1 Skills~/manifest.json file.",
+                    "Register package skills in a schemaVersion 2 Skills~/manifest.json file with a mandatory help skill.",
                 )
             )
         return
@@ -508,14 +510,40 @@ def validate_skills(
     if manifest is None or text is None:
         return
     rel_manifest = relative_path(repo_root, manifest_path)
-    if manifest.get("schemaVersion") != 1:
+    if manifest.get("schemaVersion") != 2:
         diagnostics.append(
             diagnostic(
                 "SKILL_MANIFEST_SCHEMA_UNSUPPORTED",
                 rel_manifest,
-                "Skills~/manifest.json must declare schemaVersion 1.",
-                'Set "schemaVersion" to 1 and use the supported skill registration fields.',
+                "Published or changed package skills must declare schemaVersion 2.",
+                'Set "schemaVersion" to 2 and add skillPrefix, helpSkill, and access fields.',
                 line=line_for(text, '"schemaVersion"'),
+            )
+        )
+
+    skill_prefix = manifest.get("skillPrefix")
+    if not isinstance(skill_prefix, str) or not SKILL_NAME_PATTERN.fullmatch(skill_prefix):
+        diagnostics.append(
+            diagnostic(
+                "SKILL_PREFIX_INVALID",
+                rel_manifest,
+                f"Skills~/manifest.json has invalid skillPrefix {skill_prefix!r}.",
+                "Use an explicit lowercase letters/digits/hyphens prefix; do not infer it from the package ID.",
+                line=line_for(text, '"skillPrefix"'),
+            )
+        )
+        skill_prefix = None
+
+    help_skill = manifest.get("helpSkill")
+    expected_help = f"{skill_prefix}-help" if skill_prefix else None
+    if not isinstance(help_skill, str) or help_skill != expected_help:
+        diagnostics.append(
+            diagnostic(
+                "SKILL_HELP_NAME_INVALID",
+                rel_manifest,
+                f"helpSkill must be exactly {expected_help or '<skillPrefix>-help'!r}.",
+                "Set helpSkill to <skillPrefix>-help and register that skill in the skills array.",
+                line=line_for(text, '"helpSkill"'),
             )
         )
 
@@ -533,6 +561,8 @@ def validate_skills(
         return
 
     targets: set[tuple[str, str]] = set()
+    registered_names: set[str] = set()
+    agents_by_skill: dict[str, set[str]] = {}
     shared_valid: bool | None = None
     for index, skill in enumerate(skills):
         if not isinstance(skill, dict):
@@ -559,6 +589,29 @@ def validate_skills(
             )
             continue
 
+        if name in registered_names:
+            diagnostics.append(
+                diagnostic(
+                    "SKILL_NAME_DUPLICATE",
+                    rel_manifest,
+                    f"Skill {name} is registered more than once.",
+                    "Keep one registration per skill name and list its agents in that registration.",
+                    line=line_for(text, f'"name": "{name}"'),
+                )
+            )
+        registered_names.add(name)
+
+        if skill_prefix and not name.startswith(f"{skill_prefix}-"):
+            diagnostics.append(
+                diagnostic(
+                    "SKILL_PREFIX_MISMATCH",
+                    rel_manifest,
+                    f"Skill {name} does not start with the declared {skill_prefix}- prefix.",
+                    f"Rename the skill to start with {skill_prefix}- or choose the correct explicit skillPrefix.",
+                    line=line_for(text, f'"name": "{name}"'),
+                )
+            )
+
         agents = skill.get("agents")
         if not isinstance(agents, list) or not agents:
             diagnostics.append(
@@ -582,6 +635,28 @@ def validate_skills(
                 )
             )
             include_shared = False
+
+        access = skill.get("access")
+        if access not in SKILL_ACCESS:
+            diagnostics.append(
+                diagnostic(
+                    "SKILL_ACCESS_INVALID",
+                    rel_manifest,
+                    f"Skill {name} access must be one of {sorted(SKILL_ACCESS)}, not {access!r}.",
+                    'Set access to "read-only" or "write-capable" so package help can state its safety boundary.',
+                    line=line_for(text, '"access"'),
+                )
+            )
+        if name == help_skill and access != "read-only":
+            diagnostics.append(
+                diagnostic(
+                    "SKILL_HELP_ACCESS_INVALID",
+                    rel_manifest,
+                    f"Help skill {name} must be read-only.",
+                    'Set the help skill access to "read-only".',
+                    line=line_for(text, f'"name": "{name}"'),
+                )
+            )
 
         shared_root = skills_root / "Shared"
         if include_shared and shared_valid is None:
@@ -609,6 +684,8 @@ def validate_skills(
                     )
                 )
                 continue
+
+            agents_by_skill.setdefault(name, set()).add(agent)
 
             target = (agent, name)
             if target in targets:
@@ -675,6 +752,27 @@ def validate_skills(
                     )
                 )
 
+            if name == help_skill:
+                inventory_path = source_root / GENERATED_SKILL_INVENTORY
+                if inventory_path.exists():
+                    diagnostics.append(
+                        diagnostic(
+                            "SKILL_GENERATED_INVENTORY_RESERVED",
+                            relative_path(repo_root, inventory_path),
+                            f"{GENERATED_SKILL_INVENTORY} is generated during installation and must not be package-authored.",
+                            f"Delete the source file and make {name}/SKILL.md read the installed generated inventory.",
+                        )
+                    )
+                if GENERATED_SKILL_INVENTORY not in skill_text:
+                    diagnostics.append(
+                        diagnostic(
+                            "SKILL_HELP_INVENTORY_REFERENCE_MISSING",
+                            relative_path(repo_root, skill_path),
+                            f"Help skill {name} does not read {GENERATED_SKILL_INVENTORY}.",
+                            f"Require the help workflow to read {GENERATED_SKILL_INVENTORY} before describing package skills.",
+                        )
+                    )
+
             if include_shared and shared_valid:
                 source_files = {
                     path.relative_to(source_root).as_posix()
@@ -696,6 +794,47 @@ def validate_skills(
                             "Keep each installed relative file in either the agent source or Shared, not both.",
                         )
                     )
+
+    if isinstance(help_skill, str) and help_skill not in registered_names:
+        diagnostics.append(
+            diagnostic(
+                "SKILL_HELP_REGISTRATION_MISSING",
+                rel_manifest,
+                f"Mandatory help skill {help_skill} is not registered.",
+                "Add the help skill to skills and provide Codex/Claude sources for every agent used by the package.",
+                line=line_for(text, '"helpSkill"'),
+            )
+        )
+    elif isinstance(help_skill, str):
+        help_agents = agents_by_skill.get(help_skill, set())
+        related_agents = {
+            agent
+            for name, skill_agents in agents_by_skill.items()
+            if name != help_skill
+            for agent in skill_agents
+        }
+        missing_help_agents = sorted(related_agents - help_agents)
+        if missing_help_agents:
+            diagnostics.append(
+                diagnostic(
+                    "SKILL_HELP_AGENTS_INCOMPLETE",
+                    rel_manifest,
+                    f"Help skill {help_skill} does not cover agents: {', '.join(missing_help_agents)}.",
+                    "Register the help skill for the union of agents used by all related package skills.",
+                    line=line_for(text, f'"name": "{help_skill}"'),
+                )
+            )
+
+    shared_inventory = skills_root / "Shared" / GENERATED_SKILL_INVENTORY
+    if shared_inventory.exists():
+        diagnostics.append(
+            diagnostic(
+                "SKILL_GENERATED_INVENTORY_RESERVED",
+                relative_path(repo_root, shared_inventory),
+                f"Shared/{GENERATED_SKILL_INVENTORY} would collide with the generated help inventory.",
+                "Delete the shared source file; Custom Package Manager generates it only in each installed help skill.",
+            )
+        )
 
 
 def yaml_scalar(text: str, field: str) -> tuple[str | None, int]:

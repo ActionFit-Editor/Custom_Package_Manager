@@ -50,6 +50,63 @@ public class ActionFitPackageSkillInstallServiceTests
     }
 
     [Test]
+    public void SchemaV2HelpInstallGeneratesDeterministicPackageInventory()
+    {
+        string packageRoot = CreateSchemaV2Package(
+            "com.actionfit.skill-one", "sample", "sample-todo", "read-only", "codex", "claude");
+
+        ActionFitPackageSkillInstallResult first = Install(packageRoot);
+        ActionFitPackageSkillInstallResult second = Install(packageRoot);
+
+        Assert.That(first.Installed, Is.EqualTo(4));
+        Assert.That(second.Unchanged, Is.EqualTo(4));
+        string inventory = File.ReadAllText(Target(".agents", "sample-help", "PACKAGE_SKILLS.md"));
+        Assert.That(inventory, Does.Contain("com.actionfit.skill-one"));
+        Assert.That(inventory, Does.Contain("Skill One"));
+        Assert.That(inventory, Does.Contain("A package used by installer tests."));
+        Assert.That(inventory, Does.Contain("`$sample-help`"));
+        Assert.That(inventory, Does.Contain("`$sample-todo`"));
+        Assert.That(inventory, Does.Contain("read-only"));
+        Assert.That(Inspect(packageRoot).Packages.Single().Current, Is.EqualTo(4));
+    }
+
+    [Test]
+    public void SchemaV2RelatedDescriptionChangeRefreshesGeneratedHelpInventory()
+    {
+        string packageRoot = CreateSchemaV2Package(
+            "com.actionfit.skill-one", "sample", "sample-run", "write-capable", "codex");
+        Install(packageRoot);
+        WriteFile(
+            Path.Combine(packageRoot, "Skills~", "Codex", "sample-run", "SKILL.md"),
+            "---\nname: sample-run\ndescription: Run the updated package workflow only after explicit approval.\n---\n\n# Run\n");
+
+        ActionFitPackageSkillInstallResult result = Install(packageRoot);
+
+        Assert.That(result.Updated, Is.EqualTo(2));
+        string inventory = File.ReadAllText(Target(".agents", "sample-help", "PACKAGE_SKILLS.md"));
+        Assert.That(inventory, Does.Contain("Run the updated package workflow only after explicit approval."));
+        Assert.That(inventory, Does.Contain("write-capable"));
+    }
+
+    [Test]
+    public void InvalidSchemaV2WithoutMandatoryHelpRejectsEntirePackage()
+    {
+        string packageRoot = CreatePackageRoot("com.actionfit.skill-one");
+        WriteSkill(packageRoot, "Codex", "sample-todo", "instructions");
+        WriteManifest(packageRoot,
+            "{\n  \"schemaVersion\": 2,\n  \"skillPrefix\": \"sample\",\n  \"helpSkill\": \"sample-help\",\n"
+            + "  \"skills\": [\n"
+            + "    { \"name\": \"sample-todo\", \"agents\": [\"codex\"], \"includeShared\": false, \"access\": \"read-only\" }\n"
+            + "  ]\n}");
+
+        ActionFitPackageSkillInstallResult result = Install(packageRoot);
+
+        Assert.That(result.Installed, Is.Zero);
+        Assert.That(result.Warnings.Any(message => message.Contains("help skill is not registered")), Is.True);
+        Assert.That(Directory.Exists(Target(".agents", "sample-todo")), Is.False);
+    }
+
+    [Test]
     public void PackageUpdateRefreshesOnlyUnmodifiedManagedSkill()
     {
         string packageRoot = CreatePackage("com.actionfit.skill-one", "update-skill", false, "codex", "claude");
@@ -285,6 +342,32 @@ public class ActionFitPackageSkillInstallServiceTests
         return CreatePackageAt(Path.Combine(_root, packageId), packageId, skillName, includeShared, agents);
     }
 
+    private string CreateSchemaV2Package(
+        string packageId,
+        string prefix,
+        string skillName,
+        string access,
+        params string[] agents)
+    {
+        string packageRoot = CreatePackageRoot(packageId);
+        string helpName = prefix + "-help";
+        string agentJson = string.Join(", ", Array.ConvertAll(agents, agent => $"\"{agent}\""));
+        WriteManifest(packageRoot,
+            "{\n  \"schemaVersion\": 2,\n"
+            + $"  \"skillPrefix\": \"{prefix}\",\n  \"helpSkill\": \"{helpName}\",\n"
+            + "  \"skills\": [\n"
+            + $"    {{ \"name\": \"{helpName}\", \"agents\": [{agentJson}], \"includeShared\": false, \"access\": \"read-only\" }},\n"
+            + $"    {{ \"name\": \"{skillName}\", \"agents\": [{agentJson}], \"includeShared\": false, \"access\": \"{access}\" }}\n"
+            + "  ]\n}");
+        foreach (string agent in agents)
+        {
+            string sourceDirectory = agent == "codex" ? "Codex" : "Claude";
+            WriteSkill(packageRoot, sourceDirectory, helpName, "Read PACKAGE_SKILLS.md before answering.");
+            WriteSkill(packageRoot, sourceDirectory, skillName, agent + " instructions");
+        }
+        return packageRoot;
+    }
+
     private string CreatePackageAt(
         string packageRoot,
         string packageId,
@@ -314,7 +397,9 @@ public class ActionFitPackageSkillInstallServiceTests
 
     private static string CreatePackageRoot(string packageRoot, string packageId)
     {
-        WriteFile(Path.Combine(packageRoot, "package.json"), $"{{ \"name\": \"{packageId}\" }}");
+        WriteFile(
+            Path.Combine(packageRoot, "package.json"),
+            $"{{ \"name\": \"{packageId}\", \"displayName\": \"Skill One\", \"description\": \"A package used by installer tests.\" }}");
         return packageRoot;
     }
 

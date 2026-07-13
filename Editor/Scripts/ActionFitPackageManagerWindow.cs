@@ -260,8 +260,20 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
             DrawDependencyDetails(selectedVersion);
 
-            if (_skillStatusesByPackage.TryGetValue(package.Id, out ActionFitPackageSkillStatus skillStatus))
-                EditorGUILayout.LabelField("Agent Skills", skillStatus.Summary, EditorStyles.miniLabel);
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                string skillSummary = _skillStatusesByPackage.TryGetValue(
+                    package.Id,
+                    out ActionFitPackageSkillStatus skillStatus)
+                    ? skillStatus.Summary
+                    : "not registered";
+                EditorGUILayout.LabelField("Agent Skills", skillSummary, EditorStyles.miniLabel);
+                GUILayout.FlexibleSpace();
+                EditorGUI.BeginDisabledGroup(!installed.IsEmbedded);
+                if (GUILayout.Button("Add Agent Skill", GUILayout.Width(125)))
+                    ActionFitPackageSkillScaffoldWindow.Open(package.Id);
+                EditorGUI.EndDisabledGroup();
+            }
 
             string updateStatus = GetUpdateStatus(package, installed);
             if (!string.IsNullOrWhiteSpace(updateStatus))

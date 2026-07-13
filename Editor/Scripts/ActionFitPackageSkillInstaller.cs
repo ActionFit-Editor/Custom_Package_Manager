@@ -52,7 +52,10 @@ public sealed class ActionFitPackageSkillInspectionResult
 
 public static class ActionFitPackageSkillInstallService
 {
-    private const int SupportedSchemaVersion = 1;
+    private const int LegacyManifestSchemaVersion = 1;
+    private const int CurrentManifestSchemaVersion = 2;
+    private const int StateSchemaVersion = 1;
+    private const string GeneratedInventoryFileName = "PACKAGE_SKILLS.md";
     private static readonly Regex PackageIdPattern = new Regex(
         @"^com\.actionfit\.[a-z0-9]+(?:[._-][a-z0-9]+)*$",
         RegexOptions.CultureInvariant);
@@ -246,16 +249,22 @@ public static class ActionFitPackageSkillInstallService
         return ComputeFileMapHash(files);
     }
 
-    private static string ComputeFileMapHash(IReadOnlyDictionary<string, string> files)
+    private static string ComputeFileMapHash(
+        IReadOnlyDictionary<string, string> files,
+        IReadOnlyDictionary<string, byte[]> generatedFiles = null)
     {
         using var payload = new MemoryStream();
-        foreach (KeyValuePair<string, string> file in files.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+        var relativePaths = new HashSet<string>(files.Keys, StringComparer.Ordinal);
+        if (generatedFiles != null) relativePaths.UnionWith(generatedFiles.Keys);
+        foreach (string relativePath in relativePaths.OrderBy(value => value, StringComparer.Ordinal))
         {
-            byte[] nameBytes = Encoding.UTF8.GetBytes(file.Key + "\n");
+            byte[] nameBytes = Encoding.UTF8.GetBytes(relativePath + "\n");
             payload.Write(nameBytes, 0, nameBytes.Length);
-            byte[] lengthBytes = BitConverter.GetBytes(new FileInfo(file.Value).Length);
+            byte[] contentBytes = generatedFiles != null && generatedFiles.TryGetValue(relativePath, out byte[] generated)
+                ? generated
+                : File.ReadAllBytes(files[relativePath]);
+            byte[] lengthBytes = BitConverter.GetBytes((long)contentBytes.Length);
             payload.Write(lengthBytes, 0, lengthBytes.Length);
-            byte[] contentBytes = File.ReadAllBytes(file.Value);
             payload.Write(contentBytes, 0, contentBytes.Length);
         }
 
@@ -280,7 +289,13 @@ public static class ActionFitPackageSkillInstallService
                 files.Add(relative, path);
             }
         }
-        return ComputeFileMapHash(files);
+        IReadOnlyDictionary<string, byte[]> generatedFiles = string.IsNullOrEmpty(candidate.InventoryMarkdown)
+            ? null
+            : new Dictionary<string, byte[]>(StringComparer.Ordinal)
+            {
+                [GeneratedInventoryFileName] = new UTF8Encoding(false).GetBytes(candidate.InventoryMarkdown),
+            };
+        return ComputeFileMapHash(files, generatedFiles);
     }
 
     private static List<SkillCandidate> ReadCandidates(
@@ -306,7 +321,8 @@ public static class ActionFitPackageSkillInstallService
                 continue;
             }
 
-            string packageId = ReadPackageId(rootValue);
+            PackageManifest package = ReadPackageManifest(rootValue);
+            string packageId = package?.name;
             if (!PackageIdPattern.IsMatch(packageId ?? string.Empty))
             {
                 result.Warnings.Add($"Skill package has an invalid ActionFit package ID: {rootValue}");
@@ -339,14 +355,23 @@ public static class ActionFitPackageSkillInstallService
                 continue;
             }
 
-            if (manifest == null || manifest.schemaVersion != SupportedSchemaVersion
-                                 || manifest.skills == null || manifest.skills.Length == 0)
+            if (manifest == null
+                || (manifest.schemaVersion != LegacyManifestSchemaVersion
+                    && manifest.schemaVersion != CurrentManifestSchemaVersion)
+                || manifest.skills == null || manifest.skills.Length == 0)
             {
                 result.Warnings.Add($"Unsupported or incomplete skill manifest for {packageId}");
                 continue;
             }
 
+            if (manifest.schemaVersion == CurrentManifestSchemaVersion
+                && !ValidateSchemaV2Manifest(packageId, manifest, result))
+            {
+                continue;
+            }
+
             var registeredTargets = new HashSet<string>(StringComparer.Ordinal);
+            var packageCandidates = new List<SkillCandidate>();
             foreach (SkillManifestEntry skill in manifest.skills)
             {
                 if (skill == null || !SkillNamePattern.IsMatch(skill.name ?? string.Empty))
@@ -378,17 +403,53 @@ public static class ActionFitPackageSkillInstallService
 
                     string sourcePath = Path.Combine(skillsRoot, sourceDirectory, skill.name);
                     string sharedPath = skill.includeShared ? Path.Combine(skillsRoot, "Shared") : null;
-                    if (!ValidateSkillSource(packageId, skill.name, sourcePath, sharedPath, result)) continue;
+                    if (!ValidateSkillSource(
+                            packageId,
+                            skill.name,
+                            sourcePath,
+                            sharedPath,
+                            result,
+                            out string description))
+                    {
+                        continue;
+                    }
 
-                    candidates.Add(new SkillCandidate(
+                    packageCandidates.Add(new SkillCandidate(
                         packageId,
+                        package?.displayName,
+                        package?.description,
                         agent,
                         skill.name,
+                        description,
+                        skill.access,
                         sourcePath,
                         sharedPath,
-                        targetRelativePath));
+                        targetRelativePath,
+                        manifest.schemaVersion == CurrentManifestSchemaVersion
+                        && string.Equals(skill.name, manifest.helpSkill, StringComparison.Ordinal)));
                 }
             }
+
+            if (manifest.schemaVersion == CurrentManifestSchemaVersion)
+            {
+                SkillCandidate reservedInventory = packageCandidates.FirstOrDefault(candidate => candidate.IsHelp
+                    && (File.Exists(Path.Combine(candidate.SourcePath, GeneratedInventoryFileName))
+                        || (!string.IsNullOrEmpty(candidate.SharedPath)
+                            && File.Exists(Path.Combine(candidate.SharedPath, GeneratedInventoryFileName)))));
+                if (reservedInventory != null)
+                {
+                    result.Warnings.Add($"Schema v2 package source uses reserved {GeneratedInventoryFileName}: {packageId}");
+                    continue;
+                }
+                int registeredCandidateCount = manifest.skills.Sum(skill => skill?.agents?.Length ?? 0);
+                if (packageCandidates.Count != registeredCandidateCount)
+                {
+                    result.Warnings.Add($"Schema v2 package was rejected because one or more skill sources are invalid: {packageId}");
+                    continue;
+                }
+                PopulateHelpInventories(packageCandidates);
+            }
+            candidates.AddRange(packageCandidates);
         }
 
         return candidates;
@@ -399,8 +460,10 @@ public static class ActionFitPackageSkillInstallService
         string skillName,
         string sourcePath,
         string sharedPath,
-        ActionFitPackageSkillInstallResult result)
+        ActionFitPackageSkillInstallResult result,
+        out string description)
     {
+        description = null;
         if (!Directory.Exists(sourcePath))
         {
             result.Warnings.Add($"Registered skill source was not found: {packageId}/{skillName} at {sourcePath}");
@@ -444,7 +507,7 @@ public static class ActionFitPackageSkillInstallService
         }
 
         string text = File.ReadAllText(skillPath, Encoding.UTF8).Replace("\r\n", "\n");
-        if (!TryReadSkillFrontmatter(text, out string declaredName, out string description)
+        if (!TryReadSkillFrontmatter(text, out string declaredName, out description)
             || !string.Equals(declaredName, skillName, StringComparison.Ordinal)
             || string.IsNullOrWhiteSpace(description))
         {
@@ -453,6 +516,162 @@ public static class ActionFitPackageSkillInstallService
         }
 
         return true;
+    }
+
+    private static bool ValidateSchemaV2Manifest(
+        string packageId,
+        SkillManifest manifest,
+        ActionFitPackageSkillInstallResult result)
+    {
+        bool valid = true;
+        if (!SkillNamePattern.IsMatch(manifest.skillPrefix ?? string.Empty))
+        {
+            result.Warnings.Add($"Schema v2 skillPrefix is invalid for {packageId}");
+            valid = false;
+        }
+
+        string expectedHelp = string.IsNullOrWhiteSpace(manifest.skillPrefix)
+            ? null
+            : manifest.skillPrefix + "-help";
+        if (!string.Equals(manifest.helpSkill, expectedHelp, StringComparison.Ordinal))
+        {
+            result.Warnings.Add($"Schema v2 helpSkill must be {expectedHelp ?? "<skillPrefix>-help"} for {packageId}");
+            valid = false;
+        }
+
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        var relatedAgents = new HashSet<string>(StringComparer.Ordinal);
+        SkillManifestEntry help = null;
+        int helpCount = 0;
+        foreach (SkillManifestEntry skill in manifest.skills)
+        {
+            if (skill == null)
+            {
+                result.Warnings.Add($"Schema v2 contains an empty skill registration for {packageId}");
+                valid = false;
+                continue;
+            }
+            if (!SkillNamePattern.IsMatch(skill.name ?? string.Empty))
+            {
+                result.Warnings.Add($"Schema v2 skill name is invalid: {packageId}/{skill.name ?? "<missing>"}");
+                valid = false;
+            }
+            if (!names.Add(skill.name ?? string.Empty))
+            {
+                result.Warnings.Add($"Schema v2 skill name is registered more than once: {packageId}/{skill.name}");
+                valid = false;
+            }
+            if (!string.IsNullOrEmpty(manifest.skillPrefix)
+                && !(skill.name ?? string.Empty).StartsWith(manifest.skillPrefix + "-", StringComparison.Ordinal))
+            {
+                result.Warnings.Add($"Schema v2 skill must use prefix {manifest.skillPrefix}: {packageId}/{skill.name}");
+                valid = false;
+            }
+            if (skill.access != "read-only" && skill.access != "write-capable")
+            {
+                result.Warnings.Add($"Schema v2 skill access is invalid: {packageId}/{skill.name}");
+                valid = false;
+            }
+
+            var agents = new HashSet<string>(StringComparer.Ordinal);
+            if (skill.agents == null || skill.agents.Length == 0)
+            {
+                result.Warnings.Add($"Schema v2 skill has no registered agents: {packageId}/{skill.name}");
+                valid = false;
+            }
+            foreach (string agent in skill.agents ?? Array.Empty<string>())
+            {
+                if (!agents.Add(agent))
+                {
+                    result.Warnings.Add($"Schema v2 skill agent is registered more than once: {packageId}/{skill.name}/{agent}");
+                    valid = false;
+                }
+                if (agent != "codex" && agent != "claude")
+                {
+                    result.Warnings.Add($"Schema v2 skill agent is unsupported: {packageId}/{skill.name}/{agent}");
+                    valid = false;
+                }
+                if (!string.Equals(skill.name, manifest.helpSkill, StringComparison.Ordinal)) relatedAgents.Add(agent);
+            }
+
+            if (string.Equals(skill.name, manifest.helpSkill, StringComparison.Ordinal))
+            {
+                help = skill;
+                helpCount++;
+            }
+        }
+
+        if (help == null || helpCount != 1)
+        {
+            result.Warnings.Add($"Schema v2 help skill is not registered for {packageId}: {manifest.helpSkill}");
+            return false;
+        }
+        if (help.access != "read-only")
+        {
+            result.Warnings.Add($"Schema v2 help skill must be read-only for {packageId}: {manifest.helpSkill}");
+            valid = false;
+        }
+
+        var helpAgents = new HashSet<string>(help.agents ?? Array.Empty<string>(), StringComparer.Ordinal);
+        if (!relatedAgents.IsSubsetOf(helpAgents))
+        {
+            result.Warnings.Add($"Schema v2 help skill must cover every registered agent for {packageId}");
+            valid = false;
+        }
+        return valid;
+    }
+
+    private static void PopulateHelpInventories(IEnumerable<SkillCandidate> packageCandidates)
+    {
+        List<SkillCandidate> candidates = packageCandidates.ToList();
+        foreach (SkillCandidate help in candidates.Where(candidate => candidate.IsHelp))
+        {
+            List<SkillCandidate> related = candidates
+                .Where(candidate => string.Equals(candidate.Agent, help.Agent, StringComparison.Ordinal))
+                .OrderBy(candidate => candidate.SkillName, StringComparer.Ordinal)
+                .ToList();
+            help.InventoryMarkdown = BuildPackageSkillsMarkdown(help, related);
+        }
+    }
+
+    private static string BuildPackageSkillsMarkdown(SkillCandidate help, IEnumerable<SkillCandidate> related)
+    {
+        string displayName = string.IsNullOrWhiteSpace(help.PackageDisplayName)
+            ? help.PackageId
+            : help.PackageDisplayName.Trim();
+        string summary = string.IsNullOrWhiteSpace(help.PackageDescription)
+            ? "No package description was provided."
+            : help.PackageDescription.Trim();
+        var builder = new StringBuilder();
+        builder.AppendLine("# Package Skills");
+        builder.AppendLine();
+        builder.AppendLine("Generated by Custom Package Manager from the installed package manifest and SKILL.md frontmatter. Do not edit this managed file.");
+        builder.AppendLine();
+        builder.AppendLine("## Package");
+        builder.AppendLine();
+        builder.AppendLine($"- Package ID: `{help.PackageId}`");
+        builder.AppendLine($"- Display name: {EscapeMarkdown(displayName)}");
+        builder.AppendLine($"- Summary: {EscapeMarkdown(summary)}");
+        builder.AppendLine();
+        builder.AppendLine("## Related Skills");
+        builder.AppendLine();
+        builder.AppendLine("| Invocation | Access | Description and when to use |");
+        builder.AppendLine("| --- | --- | --- |");
+        foreach (SkillCandidate skill in related)
+        {
+            builder.AppendLine($"| `${skill.SkillName}` | {skill.Access} | {EscapeMarkdown(skill.Description)} |");
+        }
+        builder.AppendLine();
+        builder.AppendLine("Invoke a skill with its exact `$name`. Read that skill's SKILL.md for its full workflow and safety boundaries.");
+        return builder.ToString();
+    }
+
+    private static string EscapeMarkdown(string value)
+    {
+        return (value ?? string.Empty)
+            .Replace("\r", " ")
+            .Replace("\n", " ")
+            .Replace("|", "\\|");
     }
 
     private static bool TryReadSkillFrontmatter(string text, out string name, out string description)
@@ -546,6 +765,13 @@ public static class ActionFitPackageSkillInstallService
         {
             CopyDirectory(candidate.SourcePath, stagedPath);
             if (!string.IsNullOrEmpty(candidate.SharedPath)) CopyDirectory(candidate.SharedPath, stagedPath);
+            if (!string.IsNullOrEmpty(candidate.InventoryMarkdown))
+            {
+                File.WriteAllText(
+                    Path.Combine(stagedPath, GeneratedInventoryFileName),
+                    candidate.InventoryMarkdown,
+                    new UTF8Encoding(false));
+            }
             string stagedHash = ComputeDirectoryHash(stagedPath);
             string targetPath = Path.Combine(projectRoot, ToNativePath(candidate.TargetRelativePath));
             SkillInstallEntry entry = state.Find(candidate.TargetRelativePath);
@@ -654,13 +880,13 @@ public static class ActionFitPackageSkillInstallService
         return false;
     }
 
-    private static string ReadPackageId(string packageRoot)
+    private static PackageManifest ReadPackageManifest(string packageRoot)
     {
         string path = Path.Combine(packageRoot, "package.json");
         if (!File.Exists(path) || IsReparsePoint(path)) return null;
         try
         {
-            return JsonUtility.FromJson<PackageManifest>(File.ReadAllText(path, Encoding.UTF8))?.name;
+            return JsonUtility.FromJson<PackageManifest>(File.ReadAllText(path, Encoding.UTF8));
         }
         catch
         {
@@ -873,12 +1099,16 @@ public static class ActionFitPackageSkillInstallService
     private sealed class PackageManifest
     {
         public string name;
+        public string displayName;
+        public string description;
     }
 
     [Serializable]
     private sealed class SkillManifest
     {
         public int schemaVersion;
+        public string skillPrefix;
+        public string helpSkill;
         public SkillManifestEntry[] skills;
     }
 
@@ -888,12 +1118,13 @@ public static class ActionFitPackageSkillInstallService
         public string name;
         public string[] agents;
         public bool includeShared;
+        public string access;
     }
 
     [Serializable]
     private sealed class SkillInstallState
     {
-        public int schemaVersion = SupportedSchemaVersion;
+        public int schemaVersion = StateSchemaVersion;
         public int autoInstallEnabled = 1;
         public List<SkillInstallEntry> entries = new List<SkillInstallEntry>();
 
@@ -968,26 +1199,42 @@ public static class ActionFitPackageSkillInstallService
     {
         public SkillCandidate(
             string packageId,
+            string packageDisplayName,
+            string packageDescription,
             string agent,
             string skillName,
+            string description,
+            string access,
             string sourcePath,
             string sharedPath,
-            string targetRelativePath)
+            string targetRelativePath,
+            bool isHelp)
         {
             PackageId = packageId;
+            PackageDisplayName = packageDisplayName;
+            PackageDescription = packageDescription;
             Agent = agent;
             SkillName = skillName;
+            Description = description;
+            Access = string.IsNullOrWhiteSpace(access) ? "unspecified" : access;
             SourcePath = sourcePath;
             SharedPath = sharedPath;
             TargetRelativePath = targetRelativePath;
+            IsHelp = isHelp;
         }
 
         public string PackageId { get; }
+        public string PackageDisplayName { get; }
+        public string PackageDescription { get; }
         public string Agent { get; }
         public string SkillName { get; }
+        public string Description { get; }
+        public string Access { get; }
         public string SourcePath { get; }
         public string SharedPath { get; }
         public string TargetRelativePath { get; }
+        public bool IsHelp { get; }
+        public string InventoryMarkdown { get; set; }
     }
 }
 

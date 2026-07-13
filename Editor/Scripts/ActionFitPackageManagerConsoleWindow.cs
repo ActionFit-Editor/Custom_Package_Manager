@@ -22,6 +22,9 @@ public class ActionFitPackageManagerConsoleWindow : EditorWindow
             if (GUILayout.Button("1. Create Package"))
                 ActionFitPackageCreateWindow.Open();
 
+            if (GUILayout.Button("Add Agent Skill"))
+                ActionFitPackageSkillScaffoldWindow.Open();
+
             if (GUILayout.Button("2. Publish Changed"))
                 ActionFitPackagePublishWindow.OpenChanged();
 

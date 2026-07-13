@@ -7,7 +7,7 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.custompackagemanager`
 - Display name: Custom Package Manager
 - Repository: `https://github.com/ActionFit-Editor/Custom_Package_Manager.git`
-- Current package version at generation time: `1.1.70`
+- Current package version at generation time: `1.1.72`
 - Unity version: `6000.2`
 
 ## Purpose
@@ -49,6 +49,7 @@ Read this file when:
 - `Editor/Scripts/ActionFitPackageCommunityClient.cs`: anonymous project vote ID, package vote/comment Web App requests, and local vote state.
 - `Editor/Scripts/ActionFitPackageAiGuideRouter.cs`: scans embedded and Git UPM package `AI_GUIDE.md` files, syncs `PACKAGE_AI_GUIDE_ROUTER.md`, and connects discovered AI entry points through adapter-style helpers.
 - `Editor/Scripts/ActionFitPackageSkillInstaller.cs`: discovers package `Skills~/manifest.json` registrations, safely synchronizes project-local Codex and Claude skills, preserves user modifications, and migrates legacy AI Jira ownership state.
+- `Editor/Scripts/ActionFitPackageSkillScaffold.cs`: public schema v2 skill-add API plus the embedded-package Editor window; creates the mandatory help skill and Codex metadata without overwriting existing sources.
 - `Tools~/package_contract_validator.py`: Unity-independent package contract CLI for package selection, changed-package discovery, SemVer/version-bump checks, metadata/document/asmdef validation, stable diagnostics, and JSON results.
 - `Tests/Shell/run-tests.sh`: Python fixture regression suite for valid, invalid, changed-version, output, and infrastructure result contracts.
 - `Editor/Documentation/PackageCommunityWebAppContract.md`: required spreadsheet sheets and Web App actions for package votes, comments, and batch catalog publish confirmation.
@@ -79,7 +80,7 @@ Read this file when:
 - Fallback catalog path: `Packages/com.actionfit.custompackagemanager/Editor/Catalog/package_catalog.csv`.
 - Package Manager reads the local catalog when present, otherwise the embedded package catalog.
 - It manages internal UPM package install/update/remove, repository creation, changelog/history display, AI guide routing, and manual publish flows.
-- Manager Console exposes `1. Create Package`, `2. Publish Changed`, `Publish Package`, catalog/manifest access, and AI guide router refresh. Package README and settings SO access must stay in Unity top-menu package entries such as `Tools/Package/<Package Name>/README` and `Tools/Package/<Package Name>/Setting SO`, not in `Project Files` or Package Manager package rows.
+- Manager Console exposes `1. Create Package`, `Add Agent Skill`, `2. Publish Changed`, `Publish Package`, catalog/manifest access, and AI guide router refresh. Package README and settings SO access must stay in Unity top-menu package entries such as `Tools/Package/<Package Name>/README` and `Tools/Package/<Package Name>/Setting SO`, not in `Project Files` or Package Manager package rows.
 - Publish-window discovery must enumerate only immediate `Packages/com.actionfit.*` directories. Never recursively treat nested `package.json` files, including `Tests/Shell/Fixtures~` validator packages, as publish candidates or pass them to `ActionFitPackageInfoUtility.CreateOrUpdate`.
 - Each package's `ActionFitPackageInfo_SO` stores `Repository Visibility`. Publish flows use that package-local value to choose the public/private GitHub profile for both new and already registered packages, so `Publish All Changed` can safely publish mixed public/private packages in one run.
 - New package creation and `Fork as New` must ask the user to choose `Public` or `Private`; never infer `Public` from an enum default. `ActionFitPackageCreateRequest.RepositoryVisibilitySpecified` must be true, and create validation must reject a missing or invalid choice. Internal metadata refreshes for an existing package may preserve an already-known value without showing a creation prompt.
@@ -100,6 +101,7 @@ Read this file when:
 - AI callers should run `ActionFitPackageWorkflowApi.Inspect` with `RefreshCatalog = true` before choosing a package workflow. The result must distinguish installed, embedded, behind-latest, matches-latest, ahead-of-catalog, and local modification states and should present current-source fork and latest-source update/embed options.
 - `ActionFitPackageWorkflowApi` is read/refresh/advice only. It must not push, tag, create repositories, or append catalog rows. Real publishing still requires an explicit user request.
 - `ActionFitPackageEmbedApi` is the public dialog-free entry point for candidates, validation, JSON execution, embedding, and explicit custom-transaction recovery. The Package Manager UI must call the same API instead of maintaining a separate conversion implementation. Downloaded embedding is asynchronous: UI and automation that require a final result must use `EmbedForEditAsync`. The synchronous `EmbedForEdit` and `ExecuteJson` APIs can return `EMBED_STARTED`, which means only that Unity accepted the request. The embed CLI waits for the callback, writes the final result, and exits Unity itself, so callers must not pass Unity's `-quit` option.
+- `ActionFitPackageSkillScaffoldApi.Add` / `AddJson` is the public dialog-free entry point for adding schema v2 skills to physical embedded packages. It validates fixed package/skill paths, never edits downloaded cache sources, rejects existing registrations or files, and creates Codex `agents/openai.yaml` metadata together with each new Codex skill.
 - PackageInfo refresh, AI router refresh, baseline creation, and other destination post-processing must run only after the official embed request has succeeded and the physical embedded package has been validated. Post-processing warnings must not delete or roll back a successfully embedded package.
 - AI publishing must use `ActionFitPackagePublishApi.Prepare` before `Execute`. Preparation is read-only and must refresh the catalog, reject an already registered version, require a version newer than the catalog latest, validate credentials without exposing them, and check the remote repository/tag.
 - `Execute` must require the exact prepared plan ID and approval text, re-run preparation, reject content/catalog/remote changes, and require `ApproveRepositoryCreation` for a missing repository. Never infer publish approval from an earlier edit, embed, inspection, or preparation request.
@@ -140,7 +142,7 @@ Read this file when:
 - `Tools/AI/validate_ai_docs.py` delegates changed ActionFit package checks to this validator so local AI documentation validation and publish preparation share one contract implementation.
 - `--package` and `--all` also enforce changed-package version bumps when `--base-ref` is supplied. Without a base ref they validate only the current package state.
 - The JSON result schema is shared by local AI and CI callers. Every diagnostic has `code`, `severity`, `path`, `line`, `message`, and `suggestedFix`; exit codes are `0` success, `1` contract failure, and `2` infrastructure failure.
-- Contract checks cover package.json fields and JSON, SemVer, changed-package version increases, README Git UPM install tags, AI guide identity/version/router entries, registered skill manifests and `SKILL.md` frontmatter, PackageInfo identity/required metadata, and package-owned asmdefs.
+- Contract checks cover package.json fields and JSON, SemVer, changed-package version increases, README Git UPM install tags, AI guide identity/version/router entries, schema v2 skill prefix/help/access/inventory rules, registered sources and `SKILL.md` frontmatter, PackageInfo identity/required metadata, and package-owned asmdefs.
 - Directories whose names end in `~`, including validator fixtures and `Tools~`, are excluded from asmdef discovery because Unity does not import them as package assemblies.
 - The validator is standard-library Python and must remain independent of Unity, network APIs, catalogs, credentials, publishing, and package compilation/test execution.
 - Run `bash Packages/com.actionfit.custompackagemanager/Tests/Shell/run-tests.sh` after changing validator behavior or its stable result contract.
@@ -162,14 +164,18 @@ Read this file when:
 
 ## Agent Skill Distribution Rule
 
-- Packages opt in with `Skills~/manifest.json` schema version 1. Each entry contains a lowercase hyphenated `name`, an `agents` array limited to `codex` and `claude`, and optional `includeShared`.
+- New or changed packages opt in with `Skills~/manifest.json` schema version 2. Runtime installation temporarily accepts schema v1 for compatibility, but the package contract/publish gate requires v2.
+- Schema v2 declares an explicit lowercase-hyphenated `skillPrefix` and `helpSkill` exactly equal to `<skillPrefix>-help`; do not infer the prefix from the package ID. Every registered name starts with `<skillPrefix>-`.
+- The help skill is mandatory, read-only, included in `skills`, and registered for the union of `codex`/`claude` agents used by all related skills. Each entry declares `access` as `read-only` or `write-capable` plus optional `includeShared`.
 - Source paths are fixed at `Skills~/Codex/<name>` and `Skills~/Claude/<name>`; targets are fixed at `.agents/skills/<name>` and `.claude/skills/<name>`. Do not add manifest-defined paths.
 - Every registered source must contain `SKILL.md` with matching `name` and a non-empty `description`. Codex skills should follow the project `skill-creator` contract and may include `agents/openai.yaml`.
+- During staging, generate `PACKAGE_SKILLS.md` only inside the installed help skill from package ID/display name/description, the v2 registration list, target-agent frontmatter descriptions, `$name` invocations, and access values. Include it in the managed hash and require the help `SKILL.md` to read it instead of duplicating a related-skill list. Reject package-authored copies of this reserved file.
 - `Skills~/Shared` is overlaid only for registrations with `includeShared: true`. Shared files must not collide with agent-specific relative paths.
 - Reject invalid manifests, duplicate registrations, unsupported agents, linked sources, and package-to-package target conflicts. Never execute bundled scripts during installation.
 - Automatic synchronization runs after Editor load and package registration outside batch mode. It installs missing targets and refreshes only unchanged managed targets; it never overwrites unmanaged, modified, file-backed, or linked targets.
 - Keep ownership hashes in ignored `UserSettings/ActionFitPackageManager/skill-install-state.json`. Read the old `UserSettings/AIJira/skill-install-state.json` only as preserved migration input and adopt an existing target only when its current hash matches the recorded legacy hash.
 - The Package Manager detail view reports per-package registered/current/update-available/missing/preserved/conflict counts through the read-only `InspectRegisteredSkills` path.
+- Embedded package rows and Manager Console expose `Add Agent Skill`; first use creates schema v2 plus `<skillPrefix>-help` for Codex and Claude, and later additions preserve all existing source files.
 - Package disappearance must not automatically delete installed skills. `Remove Managed Agent Skills` may delete only unchanged managed targets after confirmation and disables automatic recreation until explicit refresh.
 
 ## UPM Package Release Preparation
@@ -225,6 +231,7 @@ When updating a package version, write PackageInfo release notes using these sta
 - Keep package commands under this package root.
 - `Install or Refresh Agent Skills`: discovers all registered installed-package skills, synchronizes safe managed copies, and re-enables automatic installation.
 - `Remove Managed Agent Skills`: after confirmation, removes only unchanged managed copies and disables automatic recreation.
+- `Add Agent Skill`: opens the schema v2 scaffolding window for a physical embedded package; package detail rows disable it for downloaded packages.
 - `Tools/Package` top-level grouping is mandatory:
 - Package-wide manager first, including `Tools/Package/Custom Package Manager/Package Manager`.
 - Packages with executable tool commands next.
