@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -95,6 +96,127 @@ class PackageContractValidatorTests(unittest.TestCase):
 
         self.assertEqual(1, code)
         self.assertIn("PACKAGE_JSON_INVALID", {item["code"] for item in result["diagnostics"]})
+
+    def test_valid_registered_skills_pass_package_contract(self) -> None:
+        temporary, repo_root, package_root = self.make_repo("valid-package")
+        self.addCleanup(temporary.cleanup)
+        skills_root = package_root / "Skills~"
+        (skills_root / "Codex" / "sample-skill").mkdir(parents=True)
+        (skills_root / "Claude" / "sample-skill").mkdir(parents=True)
+        (skills_root / "Shared" / "scripts").mkdir(parents=True)
+        skill_text = (
+            "---\n"
+            "name: sample-skill\n"
+            "description: Validate a sample package skill.\n"
+            "---\n\n"
+            "# Sample Skill\n"
+        )
+        (skills_root / "Codex" / "sample-skill" / "SKILL.md").write_text(skill_text, encoding="utf-8")
+        (skills_root / "Claude" / "sample-skill" / "SKILL.md").write_text(skill_text, encoding="utf-8")
+        (skills_root / "Shared" / "scripts" / "helper.py").write_text("print('ok')\n", encoding="utf-8")
+        (skills_root / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "skills": [
+                        {
+                            "name": "sample-skill",
+                            "agents": ["codex", "claude"],
+                            "includeShared": True,
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        code, result = self.run_cli(repo_root, "--package", PACKAGE_ID)
+
+        self.assertEqual(0, code)
+        self.assertTrue(result["success"])
+
+    def test_invalid_registered_skills_report_stable_contract_codes(self) -> None:
+        temporary, repo_root, package_root = self.make_repo("valid-package")
+        self.addCleanup(temporary.cleanup)
+        skills_root = package_root / "Skills~"
+        source_root = skills_root / "Codex" / "safe-skill"
+        source_root.mkdir(parents=True)
+        (source_root / "SKILL.md").write_text(
+            "---\nname: wrong-skill\ndescription:\n---\n",
+            encoding="utf-8",
+        )
+        (skills_root / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "skills": [
+                        {"name": "../escape", "agents": ["codex"]},
+                        {
+                            "name": "safe-skill",
+                            "agents": ["unknown", "codex", "codex"],
+                            "includeShared": True,
+                        },
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        code, result = self.run_cli(repo_root, "--package", PACKAGE_ID)
+
+        self.assertEqual(1, code)
+        codes = {item["code"] for item in result["diagnostics"]}
+        self.assertTrue(
+            {
+                "SKILL_NAME_INVALID",
+                "SKILL_AGENT_UNSUPPORTED",
+                "SKILL_SHARED_SOURCE_MISSING",
+                "SKILL_TARGET_DUPLICATE",
+                "SKILL_FRONTMATTER_NAME_MISMATCH",
+                "SKILL_FRONTMATTER_DESCRIPTION_MISSING",
+            }.issubset(codes)
+        )
+
+    def test_skill_sources_require_explicit_manifest_registration(self) -> None:
+        temporary, repo_root, package_root = self.make_repo("valid-package")
+        self.addCleanup(temporary.cleanup)
+        (package_root / "Skills~" / "Codex" / "sample-skill").mkdir(parents=True)
+
+        code, result = self.run_cli(repo_root, "--package", PACKAGE_ID)
+
+        self.assertEqual(1, code)
+        self.assertIn("SKILL_MANIFEST_MISSING", {item["code"] for item in result["diagnostics"]})
+
+    @unittest.skipIf(os.name == "nt", "Windows symlink creation requires developer-mode privileges")
+    def test_linked_skill_source_is_rejected(self) -> None:
+        temporary, repo_root, package_root = self.make_repo("valid-package")
+        self.addCleanup(temporary.cleanup)
+        skills_root = package_root / "Skills~"
+        source_root = skills_root / "Codex" / "linked-skill"
+        source_root.mkdir(parents=True)
+        (source_root / "SKILL.md").write_text(
+            "---\nname: linked-skill\ndescription: Reject linked sources.\n---\n",
+            encoding="utf-8",
+        )
+        outside = repo_root / "outside.txt"
+        outside.write_text("outside", encoding="utf-8")
+        (source_root / "linked.txt").symlink_to(outside)
+        (skills_root / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "schemaVersion": 1,
+                    "skills": [
+                        {"name": "linked-skill", "agents": ["codex"], "includeShared": False}
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        code, result = self.run_cli(repo_root, "--package", PACKAGE_ID)
+
+        self.assertEqual(1, code)
+        self.assertIn("SKILL_SOURCE_LINK_REJECTED", {item["code"] for item in result["diagnostics"]})
 
     def test_changed_mode_detects_missing_and_valid_version_bumps(self) -> None:
         temporary, repo_root, package_root = self.make_repo("valid-package")

@@ -28,6 +28,8 @@ README_INSTALL_PATTERN = re.compile(
 AI_GUIDE_VERSION_PATTERN = re.compile(
     r"Current package version at generation time:\s*`(?P<version>[^`]+)`"
 )
+SKILL_NAME_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+SKILL_AGENTS = {"codex": "Codex", "claude": "Claude"}
 
 
 class InfrastructureError(RuntimeError):
@@ -406,6 +408,296 @@ def validate_ai_guide(
         )
 
 
+def skill_frontmatter(text: str) -> tuple[dict[str, str] | None, int]:
+    lines = text.replace("\r\n", "\n").split("\n")
+    if not lines or lines[0].strip() != "---":
+        return None, 1
+    fields: dict[str, str] = {}
+    for index, line in enumerate(lines[1:], start=2):
+        if line.strip() == "---":
+            return fields, index
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+        fields[key.strip()] = value
+    return None, 1
+
+
+def first_linked_path(root: Path) -> Path | None:
+    if root.is_symlink():
+        return root
+    try:
+        for path in root.rglob("*"):
+            if path.is_symlink():
+                return path
+    except OSError:
+        return root
+    return None
+
+
+def validate_skill_source_tree(
+    repo_root: Path,
+    source_root: Path,
+    diagnostics: list[Diagnostic],
+) -> bool:
+    linked_path = first_linked_path(source_root)
+    if linked_path is None:
+        return True
+    diagnostics.append(
+        diagnostic(
+            "SKILL_SOURCE_LINK_REJECTED",
+            relative_path(repo_root, linked_path),
+            "Registered skill sources must not contain symbolic links or reparse points.",
+            "Replace the linked entry with package-owned files under Skills~.",
+        )
+    )
+    return False
+
+
+def validate_skills(
+    repo_root: Path,
+    package_id: str,
+    package_root: Path,
+    diagnostics: list[Diagnostic],
+) -> None:
+    skills_root = package_root / "Skills~"
+    if not skills_root.exists():
+        return
+
+    manifest_path = skills_root / "manifest.json"
+    registered_source_exists = any((skills_root / name).is_dir() for name in (*SKILL_AGENTS.values(), "Shared"))
+    if not manifest_path.is_file():
+        if registered_source_exists:
+            diagnostics.append(
+                diagnostic(
+                    "SKILL_MANIFEST_MISSING",
+                    relative_path(repo_root, manifest_path),
+                    f"{package_id} ships skill sources without Skills~/manifest.json.",
+                    "Register package skills in a schemaVersion 1 Skills~/manifest.json file.",
+                )
+            )
+        return
+
+    if manifest_path.is_symlink():
+        diagnostics.append(
+            diagnostic(
+                "SKILL_MANIFEST_LINK_REJECTED",
+                relative_path(repo_root, manifest_path),
+                "Skills~/manifest.json must be a package-owned regular file.",
+                "Replace the linked manifest with a regular JSON file.",
+            )
+        )
+        return
+
+    linked_path = first_linked_path(skills_root)
+    if linked_path is not None:
+        diagnostics.append(
+            diagnostic(
+                "SKILL_SOURCE_LINK_REJECTED",
+                relative_path(repo_root, linked_path),
+                "Skills~ must not contain symbolic links or reparse points.",
+                "Replace the linked entry with package-owned files under Skills~.",
+            )
+        )
+        return
+
+    manifest, text = load_json(repo_root, manifest_path, diagnostics, "SKILL_MANIFEST_INVALID")
+    if manifest is None or text is None:
+        return
+    rel_manifest = relative_path(repo_root, manifest_path)
+    if manifest.get("schemaVersion") != 1:
+        diagnostics.append(
+            diagnostic(
+                "SKILL_MANIFEST_SCHEMA_UNSUPPORTED",
+                rel_manifest,
+                "Skills~/manifest.json must declare schemaVersion 1.",
+                'Set "schemaVersion" to 1 and use the supported skill registration fields.',
+                line=line_for(text, '"schemaVersion"'),
+            )
+        )
+
+    skills = manifest.get("skills")
+    if not isinstance(skills, list) or not skills:
+        diagnostics.append(
+            diagnostic(
+                "SKILL_MANIFEST_SKILLS_INVALID",
+                rel_manifest,
+                'Skills~/manifest.json field "skills" must be a non-empty array.',
+                "Add at least one skill registration object.",
+                line=line_for(text, '"skills"'),
+            )
+        )
+        return
+
+    targets: set[tuple[str, str]] = set()
+    shared_valid: bool | None = None
+    for index, skill in enumerate(skills):
+        if not isinstance(skill, dict):
+            diagnostics.append(
+                diagnostic(
+                    "SKILL_MANIFEST_ENTRY_INVALID",
+                    rel_manifest,
+                    f"Skill registration at index {index} must be an object.",
+                    "Replace the entry with name, agents, and optional includeShared fields.",
+                )
+            )
+            continue
+
+        name = skill.get("name")
+        if not isinstance(name, str) or not SKILL_NAME_PATTERN.fullmatch(name):
+            diagnostics.append(
+                diagnostic(
+                    "SKILL_NAME_INVALID",
+                    rel_manifest,
+                    f"Skill registration at index {index} has invalid name {name!r}.",
+                    "Use lowercase letters, digits, and single hyphens only.",
+                    line=line_for(text, f'"name": "{name}"') if isinstance(name, str) else 1,
+                )
+            )
+            continue
+
+        agents = skill.get("agents")
+        if not isinstance(agents, list) or not agents:
+            diagnostics.append(
+                diagnostic(
+                    "SKILL_AGENTS_INVALID",
+                    rel_manifest,
+                    f"Skill {name} must register at least one agent.",
+                    'Use an "agents" array containing "codex" and/or "claude".',
+                )
+            )
+            continue
+
+        include_shared = skill.get("includeShared", False)
+        if not isinstance(include_shared, bool):
+            diagnostics.append(
+                diagnostic(
+                    "SKILL_SHARED_FLAG_INVALID",
+                    rel_manifest,
+                    f"Skill {name} includeShared must be true or false.",
+                    "Replace includeShared with a JSON boolean.",
+                )
+            )
+            include_shared = False
+
+        shared_root = skills_root / "Shared"
+        if include_shared and shared_valid is None:
+            if not shared_root.is_dir():
+                diagnostics.append(
+                    diagnostic(
+                        "SKILL_SHARED_SOURCE_MISSING",
+                        relative_path(repo_root, shared_root),
+                        "A registered skill requests Shared resources, but Skills~/Shared is missing.",
+                        "Create Skills~/Shared or set includeShared to false.",
+                    )
+                )
+                shared_valid = False
+            else:
+                shared_valid = validate_skill_source_tree(repo_root, shared_root, diagnostics)
+
+        for agent in agents:
+            if not isinstance(agent, str) or agent not in SKILL_AGENTS:
+                diagnostics.append(
+                    diagnostic(
+                        "SKILL_AGENT_UNSUPPORTED",
+                        rel_manifest,
+                        f"Skill {name} registers unsupported agent {agent!r}.",
+                        'Use only "codex" or "claude".',
+                    )
+                )
+                continue
+
+            target = (agent, name)
+            if target in targets:
+                diagnostics.append(
+                    diagnostic(
+                        "SKILL_TARGET_DUPLICATE",
+                        rel_manifest,
+                        f"Skill target {agent}/{name} is registered more than once.",
+                        "Keep one registration for each agent and skill name.",
+                    )
+                )
+                continue
+            targets.add(target)
+
+            source_root = skills_root / SKILL_AGENTS[agent] / name
+            if not source_root.is_dir():
+                diagnostics.append(
+                    diagnostic(
+                        "SKILL_SOURCE_MISSING",
+                        relative_path(repo_root, source_root),
+                        f"Registered skill source is missing for {agent}/{name}.",
+                        f"Create Skills~/{SKILL_AGENTS[agent]}/{name}/SKILL.md.",
+                    )
+                )
+                continue
+            if not validate_skill_source_tree(repo_root, source_root, diagnostics):
+                continue
+
+            skill_path = source_root / "SKILL.md"
+            skill_text = read_text(repo_root, skill_path, diagnostics)
+            if skill_text is None:
+                continue
+            fields, _ = skill_frontmatter(skill_text)
+            if fields is None:
+                diagnostics.append(
+                    diagnostic(
+                        "SKILL_FRONTMATTER_INVALID",
+                        relative_path(repo_root, skill_path),
+                        "SKILL.md must start with closed YAML frontmatter.",
+                        "Add --- frontmatter containing name and description before the instructions.",
+                    )
+                )
+                continue
+            declared_name = fields.get("name")
+            description = fields.get("description")
+            if declared_name != name:
+                diagnostics.append(
+                    diagnostic(
+                        "SKILL_FRONTMATTER_NAME_MISMATCH",
+                        relative_path(repo_root, skill_path),
+                        f"SKILL.md name {declared_name!r} does not match registered name {name!r}.",
+                        f"Set the frontmatter name to {name}.",
+                        line=line_for(skill_text, "name:"),
+                    )
+                )
+            if not isinstance(description, str) or not description.strip():
+                diagnostics.append(
+                    diagnostic(
+                        "SKILL_FRONTMATTER_DESCRIPTION_MISSING",
+                        relative_path(repo_root, skill_path),
+                        "SKILL.md frontmatter must contain a non-empty description.",
+                        "Describe what the skill does and when it should trigger.",
+                        line=line_for(skill_text, "description:"),
+                    )
+                )
+
+            if include_shared and shared_valid:
+                source_files = {
+                    path.relative_to(source_root).as_posix()
+                    for path in source_root.rglob("*")
+                    if path.is_file()
+                }
+                shared_files = {
+                    path.relative_to(shared_root).as_posix()
+                    for path in shared_root.rglob("*")
+                    if path.is_file()
+                }
+                collisions = sorted(source_files & shared_files)
+                if collisions:
+                    diagnostics.append(
+                        diagnostic(
+                            "SKILL_SHARED_SOURCE_COLLISION",
+                            relative_path(repo_root, source_root / collisions[0]),
+                            f"Shared resources collide with agent skill files: {', '.join(collisions)}",
+                            "Keep each installed relative file in either the agent source or Shared, not both.",
+                        )
+                    )
+
+
 def yaml_scalar(text: str, field: str) -> tuple[str | None, int]:
     pattern = re.compile(rf"^\s*{re.escape(field)}:\s*(.*?)\s*$", re.MULTILINE)
     match = pattern.search(text)
@@ -710,6 +1002,7 @@ def validate_package(
     version_text = manifest.get("version") if manifest and isinstance(manifest.get("version"), str) else None
     validate_readme(repo_root, package_id, package_root, version_text, diagnostics)
     validate_ai_guide(repo_root, package_id, package_root, version_text, diagnostics)
+    validate_skills(repo_root, package_id, package_root, diagnostics)
     validate_package_info(repo_root, package_id, package_root, manifest, diagnostics)
     validate_asmdefs(repo_root, package_id, package_root, diagnostics)
     validate_version_bump(

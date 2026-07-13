@@ -7,7 +7,7 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.custompackagemanager`
 - Display name: Custom Package Manager
 - Repository: `https://github.com/ActionFit-Editor/Custom_Package_Manager.git`
-- Current package version at generation time: `1.1.68`
+- Current package version at generation time: `1.1.69`
 - Unity version: `6000.2`
 
 ## Purpose
@@ -48,6 +48,7 @@ Read this file when:
 - `Editor/Scripts/ActionFitPackageCatalogUpdater.cs`: spreadsheet/web-app catalog download.
 - `Editor/Scripts/ActionFitPackageCommunityClient.cs`: anonymous project vote ID, package vote/comment Web App requests, and local vote state.
 - `Editor/Scripts/ActionFitPackageAiGuideRouter.cs`: scans embedded and Git UPM package `AI_GUIDE.md` files, syncs `PACKAGE_AI_GUIDE_ROUTER.md`, and connects discovered AI entry points through adapter-style helpers.
+- `Editor/Scripts/ActionFitPackageSkillInstaller.cs`: discovers package `Skills~/manifest.json` registrations, safely synchronizes project-local Codex and Claude skills, preserves user modifications, and migrates legacy AI Jira ownership state.
 - `Tools~/package_contract_validator.py`: Unity-independent package contract CLI for package selection, changed-package discovery, SemVer/version-bump checks, metadata/document/asmdef validation, stable diagnostics, and JSON results.
 - `Tests/Shell/run-tests.sh`: Python fixture regression suite for valid, invalid, changed-version, output, and infrastructure result contracts.
 - `Editor/Documentation/PackageCommunityWebAppContract.md`: required spreadsheet sheets and Web App actions for package votes, comments, and batch catalog publish confirmation.
@@ -139,7 +140,7 @@ Read this file when:
 - `Tools/AI/validate_ai_docs.py` delegates changed ActionFit package checks to this validator so local AI documentation validation and publish preparation share one contract implementation.
 - `--package` and `--all` also enforce changed-package version bumps when `--base-ref` is supplied. Without a base ref they validate only the current package state.
 - The JSON result schema is shared by local AI and CI callers. Every diagnostic has `code`, `severity`, `path`, `line`, `message`, and `suggestedFix`; exit codes are `0` success, `1` contract failure, and `2` infrastructure failure.
-- Contract checks cover package.json fields and JSON, SemVer, changed-package version increases, README Git UPM install tags, AI guide identity/version/router entries, PackageInfo identity/required metadata, and package-owned asmdefs.
+- Contract checks cover package.json fields and JSON, SemVer, changed-package version increases, README Git UPM install tags, AI guide identity/version/router entries, registered skill manifests and `SKILL.md` frontmatter, PackageInfo identity/required metadata, and package-owned asmdefs.
 - Directories whose names end in `~`, including validator fixtures and `Tools~`, are excluded from asmdef discovery because Unity does not import them as package assemblies.
 - The validator is standard-library Python and must remain independent of Unity, network APIs, catalogs, credentials, publishing, and package compilation/test execution.
 - Run `bash Packages/com.actionfit.custompackagemanager/Tests/Shell/run-tests.sh` after changing validator behavior or its stable result contract.
@@ -158,6 +159,18 @@ Read this file when:
 - AI entry point discovery should prefer known project router paths (`Docs/AI/PROJECT.md`, `PROJECT.md`), then a single unambiguous `PROJECT.md` found elsewhere in the project, then fallback files such as `AGENTS.md`, `CLAUDE.md`, or `GEMINI.md`.
 - If multiple non-standard `PROJECT.md` files exist, do not choose one silently. Use a known fallback AI entry point if present; otherwise leave the package router refreshed and let the assistant ask the user where to register it.
 - Project-level compatibility pointer generation should be placed next to the discovered AI entry point, not hard-coded to `Docs/AI`.
+
+## Agent Skill Distribution Rule
+
+- Packages opt in with `Skills~/manifest.json` schema version 1. Each entry contains a lowercase hyphenated `name`, an `agents` array limited to `codex` and `claude`, and optional `includeShared`.
+- Source paths are fixed at `Skills~/Codex/<name>` and `Skills~/Claude/<name>`; targets are fixed at `.agents/skills/<name>` and `.claude/skills/<name>`. Do not add manifest-defined paths.
+- Every registered source must contain `SKILL.md` with matching `name` and a non-empty `description`. Codex skills should follow the project `skill-creator` contract and may include `agents/openai.yaml`.
+- `Skills~/Shared` is overlaid only for registrations with `includeShared: true`. Shared files must not collide with agent-specific relative paths.
+- Reject invalid manifests, duplicate registrations, unsupported agents, linked sources, and package-to-package target conflicts. Never execute bundled scripts during installation.
+- Automatic synchronization runs after Editor load and package registration outside batch mode. It installs missing targets and refreshes only unchanged managed targets; it never overwrites unmanaged, modified, file-backed, or linked targets.
+- Keep ownership hashes in ignored `UserSettings/ActionFitPackageManager/skill-install-state.json`. Read the old `UserSettings/AIJira/skill-install-state.json` only as preserved migration input and adopt an existing target only when its current hash matches the recorded legacy hash.
+- The Package Manager detail view reports per-package registered/current/update-available/missing/preserved/conflict counts through the read-only `InspectRegisteredSkills` path.
+- Package disappearance must not automatically delete installed skills. `Remove Managed Agent Skills` may delete only unchanged managed targets after confirmation and disables automatic recreation until explicit refresh.
 
 ## UPM Package Release Preparation
 
@@ -210,6 +223,8 @@ When updating a package version, write PackageInfo release notes using these sta
 
 - Unity menu root: `Tools/Package/Custom Package Manager/`.
 - Keep package commands under this package root.
+- `Install or Refresh Agent Skills`: discovers all registered installed-package skills, synchronizes safe managed copies, and re-enables automatic installation.
+- `Remove Managed Agent Skills`: after confirmation, removes only unchanged managed copies and disables automatic recreation.
 - `Tools/Package` top-level grouping is mandatory:
 - Package-wide manager first, including `Tools/Package/Custom Package Manager/Package Manager`.
 - Packages with executable tool commands next.

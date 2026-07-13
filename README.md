@@ -7,7 +7,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.68"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.69"
   }
 }
 ```
@@ -16,8 +16,37 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 
 - `Tools > Package > Custom Package Manager > Package Manager`: install, apply versions, remove packages, inspect package details, and check updates.
 - `Tools > Package > Custom Package Manager > Manager Console`: create packages, publish changed package versions, publish selected package versions, open catalog/manifest files, and refresh the AI guide router.
+- `Tools > Package > Custom Package Manager > Install or Refresh Agent Skills`: discovers registered skills from installed ActionFit packages and safely synchronizes their managed project-local copies.
+- `Tools > Package > Custom Package Manager > Remove Managed Agent Skills`: removes only unchanged managed copies and disables automatic recreation until an explicit refresh.
 - `Tools > Package > <Package Name> > README`: opens that package's README in an editor window.
 - `Tools > Package > <Package Name> > Setting SO`: focuses that package's settings ScriptableObject when the package has one.
+
+## Package Agent Skills
+
+An ActionFit package can register Codex and Claude skills with `Skills~/manifest.json`:
+
+```json
+{
+  "schemaVersion": 1,
+  "skills": [
+    {
+      "name": "sample-skill",
+      "agents": ["codex", "claude"],
+      "includeShared": true
+    }
+  ]
+}
+```
+
+Place sources at `Skills~/Codex/<skill-name>` and `Skills~/Claude/<skill-name>`. Each source must contain a `SKILL.md` whose frontmatter `name` matches the registration and whose `description` is non-empty. Optional package-wide files under `Skills~/Shared` are overlaid only when `includeShared` is true; shared and agent sources must not contain the same relative file.
+
+The manager installs registered sources into `.agents/skills/<skill-name>` and `.claude/skills/<skill-name>`. Installation runs after Editor load and package registration, but is skipped in batch mode. Managed ownership and hashes are stored in ignored `UserSettings/ActionFitPackageManager/skill-install-state.json`. Missing targets are installed, unchanged managed targets are updated, and unmanaged, modified, linked, or conflicting targets are preserved with a warning. Automatic synchronization never deletes a target when a package disappears; deletion is available only through the explicit removal menu and only for unchanged managed copies.
+
+The Package Manager detail view shows each package's aggregate `Agent Skills` state: registered, current, update available, missing, preserved, and conflict counts. Inspection is read-only and does not install, overwrite, or remove skills.
+
+Skill names are limited to lowercase letters, digits, and hyphens. The manifest cannot specify source or target paths, so packages cannot redirect installation outside the fixed package and project-local skill roots. Symbolic links and reparse points are rejected, and copied scripts are never executed during installation.
+
+Projects previously managed by AI Jira keep their old `UserSettings/AIJira/skill-install-state.json`. Custom Package Manager reads that file as migration input, adopts ownership only when the target still matches its recorded hash, preserves the legacy file, and respects a previously disabled automatic-install preference.
 
 ## Package Contract Validator
 
@@ -39,7 +68,7 @@ python Packages/com.actionfit.custompackagemanager/Tools~/package_contract_valid
 python Packages/com.actionfit.custompackagemanager/Tools~/package_contract_validator.py --all
 ```
 
-The validator checks `package.json`, SemVer and changed-package version bumps, README install tags, `AI_GUIDE.md` identity/version/router entries, `ActionFitPackageInfo_SO`, and package asmdefs. It writes the same JSON schema to stdout and optional `--output`; every diagnostic includes `code`, `severity`, `path`, `line`, `message`, and `suggestedFix`.
+The validator checks `package.json`, SemVer and changed-package version bumps, README install tags, `AI_GUIDE.md` identity/version/router entries, registered `Skills~/manifest.json` sources and `SKILL.md` frontmatter, `ActionFitPackageInfo_SO`, and package asmdefs. It writes the same JSON schema to stdout and optional `--output`; every diagnostic includes `code`, `severity`, `path`, `line`, `message`, and `suggestedFix`.
 
 Exit codes are stable for local automation and CI:
 
@@ -116,6 +145,8 @@ Package Manager composes `History` and `Changes` from separate catalog version r
 ## Unity Menu
 
 - Package root: `Tools > Package > Custom Package Manager`.
+- Install or refresh agent skills: `Tools > Package > Custom Package Manager > Install or Refresh Agent Skills`.
+- Remove managed agent skills: `Tools > Package > Custom Package Manager > Remove Managed Agent Skills`.
 - README: `Tools > Package > Custom Package Manager > README`.
 - Setting SO: `Tools > Package > Custom Package Manager > Setting SO`.
 - Package commands stay under the same package root and appear above the separated README/Setting SO entries when those entries exist.

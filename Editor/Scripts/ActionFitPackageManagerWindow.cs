@@ -40,6 +40,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
     private readonly HashSet<string> _expandedCommentKeys = new();
     private readonly HashSet<string> _selectedUpdatePackageIds = new();
     private readonly Dictionary<string, EmbeddedChangeState> _embeddedChangeStatesByPackage = new();
+    private readonly Dictionary<string, ActionFitPackageSkillStatus> _skillStatusesByPackage = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, ActionFitPackageCommunityClient.Summary> _communitySummariesByPackage = new();
     private readonly Dictionary<string, CommentPanelState> _commentStatesByPackage = new();
     private readonly Dictionary<string, string> _communityMessagesByPackage = new();
@@ -258,6 +259,9 @@ public class ActionFitPackageManagerWindow : EditorWindow
                     MessageType.Warning);
 
             DrawDependencyDetails(selectedVersion);
+
+            if (_skillStatusesByPackage.TryGetValue(package.Id, out ActionFitPackageSkillStatus skillStatus))
+                EditorGUILayout.LabelField("Agent Skills", skillStatus.Summary, EditorStyles.miniLabel);
 
             string updateStatus = GetUpdateStatus(package, installed);
             if (!string.IsNullOrWhiteSpace(updateStatus))
@@ -798,6 +802,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
         _packages.Clear();
         _selectedVersionByPackage.Clear();
         _embeddedChangeStatesByPackage.Clear();
+        ReloadSkillStatuses();
 
         string path = ProjectRelativeFullPath(ActiveCatalogPath);
         if (File.Exists(path))
@@ -810,6 +815,22 @@ public class ActionFitPackageManagerWindow : EditorWindow
         }
 
         LoadCachedCommentStates();
+    }
+
+    private void ReloadSkillStatuses()
+    {
+        _skillStatusesByPackage.Clear();
+        try
+        {
+            ActionFitPackageSkillInspectionResult inspection =
+                ActionFitPackageSkillBootstrap.InspectRegisteredSkills();
+            foreach (ActionFitPackageSkillStatus status in inspection.Packages)
+                _skillStatusesByPackage[status.PackageId] = status;
+        }
+        catch (Exception exception)
+        {
+            Debug.LogWarning($"[ActionFitPackageManager] Agent skill status inspection failed: {exception.Message}");
+        }
     }
 
     private static string ActiveCatalogPath
