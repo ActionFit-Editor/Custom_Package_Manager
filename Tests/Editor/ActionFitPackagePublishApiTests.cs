@@ -1,5 +1,6 @@
 #if UNITY_EDITOR
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Text;
@@ -106,6 +107,250 @@ public sealed class ActionFitPackagePublishApiTests
         Assert.That(
             ActionFitPackagePublishApi.ApprovedPlanMatches(plan, plan.PackageId, "OTHER", plan.RequiredApprovalText),
             Is.False);
+    }
+
+    [Test]
+    public void MigrationApprovalMatches_RequiresSeparateExactApproval()
+    {
+        var plan = new ActionFitPackagePublishPlan
+        {
+            RepositoryMigrationRequired = true,
+            RequiredMigrationApprovalText = "MIGRATE EXACTLY",
+        };
+
+        Assert.That(ActionFitPackagePublishApi.MigrationApprovalMatches(plan, false, "MIGRATE EXACTLY"), Is.False);
+        Assert.That(ActionFitPackagePublishApi.MigrationApprovalMatches(plan, true, "OTHER"), Is.False);
+        Assert.That(ActionFitPackagePublishApi.MigrationApprovalMatches(plan, true, "MIGRATE EXACTLY"), Is.True);
+    }
+
+    [Test]
+    public void MigrationApprovalsMatch_RequiresExactBulkPackageSetAndText()
+    {
+        var plan = new ActionFitPackageBulkPublishPlan
+        {
+            RepositoryMigrationPackageIds = new[] { "com.actionfit.alpha", "com.actionfit.beta" },
+            RequiredMigrationApprovalText = "MIGRATE BULK",
+        };
+
+        Assert.That(
+            ActionFitPackageBulkPublishApi.MigrationApprovalsMatch(
+                plan,
+                new[] { "com.actionfit.beta", "com.actionfit.alpha" },
+                "MIGRATE BULK"),
+            Is.True);
+        Assert.That(
+            ActionFitPackageBulkPublishApi.MigrationApprovalsMatch(
+                plan,
+                new[] { "com.actionfit.alpha" },
+                "MIGRATE BULK"),
+            Is.False);
+        Assert.That(
+            ActionFitPackageBulkPublishApi.MigrationApprovalsMatch(
+                plan,
+                plan.RepositoryMigrationPackageIds,
+                "OTHER"),
+            Is.False);
+    }
+
+    [TestCase("https://github.com/ActionFit/PublicRepo.git", "ActionFit", "PublicRepo")]
+    [TestCase("https://github.com/ActionFit/PublicRepo", "ActionFit", "PublicRepo")]
+    [TestCase("git@github.com:ActionFit/PublicRepo.git", "ActionFit", "PublicRepo")]
+    public void TryParseRepositoryUrl_AcceptsSupportedGitHubFormats(
+        string url,
+        string expectedOrganization,
+        string expectedName)
+    {
+        Assert.That(
+            ActionFitPackageRepositoryMigration.TryParseRepositoryUrl(
+                url,
+                out ActionFitPackageRepositoryMigration.RepositoryIdentity identity),
+            Is.True);
+        Assert.That(identity.Organization, Is.EqualTo(expectedOrganization));
+        Assert.That(identity.Name, Is.EqualTo(expectedName));
+    }
+
+    [TestCase("https://gitlab.com/ActionFit/PublicRepo.git")]
+    [TestCase("https://github.com/ActionFit")]
+    [TestCase("")]
+    public void TryParseRepositoryUrl_RejectsUnsupportedUrls(string url)
+    {
+        Assert.That(
+            ActionFitPackageRepositoryMigration.TryParseRepositoryUrl(url, out _),
+            Is.False);
+    }
+
+    [Test]
+    public void RefComparison_AllowsIdempotentRetryAndRejectsConflicts()
+    {
+        var source = new Dictionary<string, string>
+        {
+            ["refs/heads/main"] = "aaa",
+            ["refs/heads/release"] = "bbb",
+            ["refs/tags/1.0.0"] = "ccc",
+        };
+        var partialTarget = new Dictionary<string, string>
+        {
+            ["refs/heads/main"] = "aaa",
+        };
+
+        Assert.That(
+            ActionFitPackageRepositoryMigration.FindMissingRefs(source, partialTarget),
+            Is.EqualTo(new[] { "refs/heads/release", "refs/tags/1.0.0" }));
+        Assert.That(
+            ActionFitPackageRepositoryMigration.FindConflictingRefs(source, partialTarget),
+            Is.Empty);
+
+        partialTarget["refs/heads/release"] = "different";
+        Assert.That(
+            ActionFitPackageRepositoryMigration.FindConflictingRefs(source, partialTarget),
+            Is.EqualTo(new[] { "refs/heads/release" }));
+    }
+
+    [Test]
+    public void ValidateDocumentation_RequiresTargetUrlInReadmeAndAiGuide()
+    {
+        string operationRoot = Path.Combine(
+            ActionFitPackagePaths.ProjectRoot,
+            "Temp",
+            "ActionFitPackageManagerTests",
+            Guid.NewGuid().ToString("N"),
+            "repository-docs");
+        Directory.CreateDirectory(operationRoot);
+        var target = new ActionFitPackageRepositoryMigration.RepositoryIdentity("PrivateOrg", "PrivateRepo");
+
+        try
+        {
+            File.WriteAllText(Path.Combine(operationRoot, "README.md"), $"Install from {target.Url}#1.0.0");
+            File.WriteAllText(Path.Combine(operationRoot, "AI_GUIDE.md"), "Old repository only");
+            Assert.That(
+                ActionFitPackageRepositoryMigration.ValidateDocumentation(operationRoot, target, out string failure),
+                Is.False,
+                failure);
+
+            File.WriteAllText(Path.Combine(operationRoot, "AI_GUIDE.md"), $"Repository: {target.Url}");
+            Assert.That(
+                ActionFitPackageRepositoryMigration.ValidateDocumentation(operationRoot, target, out string success),
+                Is.True,
+                success);
+        }
+        finally
+        {
+            string parent = Directory.GetParent(operationRoot)?.FullName;
+            if (!string.IsNullOrWhiteSpace(parent) && Directory.Exists(parent))
+                DeleteDirectory(parent);
+        }
+    }
+
+    [Test]
+    public void CompleteRemotePreflight_BlocksVisibilityMismatchWithoutChangingRepository()
+    {
+        var plan = new ActionFitPackagePublishPlan
+        {
+            Success = true,
+            PackageId = "com.actionfit.alpha",
+            Version = "1.0.1",
+            RepositoryVisibility = "Private",
+        };
+
+        ActionFitPackagePublishPlan result = ActionFitPackagePublishApi.CompleteRemotePreflight(
+            plan,
+            new ActionFitPackagePublisher.RemoteState(true, false, false, "main"));
+
+        Assert.That(result.Success, Is.False);
+        Assert.That(result.Code, Is.EqualTo("TARGET_REPOSITORY_VISIBILITY_MISMATCH"));
+    }
+
+    [Test]
+    public void CompleteRemotePreflight_BlocksSamePublicSourceInsteadOfChangingVisibility()
+    {
+        var plan = new ActionFitPackagePublishPlan
+        {
+            Success = true,
+            PackageId = "com.actionfit.alpha",
+            Version = "1.0.1",
+            RepositoryVisibility = "Private",
+            GitHubOrganization = "SharedOrg",
+            RepositoryName = "AlphaRepo",
+        };
+        var request = new ActionFitPackagePublisher.PublishRequest(
+            "~/upm-publish",
+            "Packages/com.actionfit.alpha",
+            "AlphaRepo",
+            "Private",
+            "SharedOrg",
+            "token-not-used",
+            true,
+            plan.PackageId,
+            plan.Version,
+            null)
+        {
+            SourceRepositoryUrl = "https://github.com/SharedOrg/AlphaRepo.git",
+        };
+
+        ActionFitPackagePublishPlan result = ActionFitPackagePublishApi.CompleteRemotePreflight(
+            plan,
+            new ActionFitPackagePublisher.RemoteState(true, false, false, "main"),
+            request);
+
+        Assert.That(result.Success, Is.False);
+        Assert.That(result.Code, Is.EqualTo("SOURCE_REPOSITORY_VISIBILITY_CHANGE_BLOCKED"));
+        Assert.That(result.Message, Does.Contain("different Private organization or repository name"));
+    }
+
+    [Test]
+    public void CompleteRemotePreflight_SameCatalogTargetNeedsNoMigration()
+    {
+        var plan = new ActionFitPackagePublishPlan
+        {
+            Success = true,
+            PackageId = "com.actionfit.alpha",
+            Version = "1.0.1",
+            ContentHash = "content",
+            RepositoryVisibility = "Private",
+            GitHubOrganization = "PrivateOrg",
+            RepositoryName = "AlphaRepo",
+            RepositoryUrl = "https://github.com/PrivateOrg/AlphaRepo.git",
+        };
+        var request = new ActionFitPackagePublisher.PublishRequest(
+            "~/upm-publish",
+            "Packages/com.actionfit.alpha",
+            "AlphaRepo",
+            "Private",
+            "PrivateOrg",
+            "token-not-used",
+            true,
+            plan.PackageId,
+            plan.Version,
+            null)
+        {
+            SourceRepositoryUrl = "https://github.com/privateorg/alpharepo.git",
+        };
+
+        ActionFitPackagePublishPlan result = ActionFitPackagePublishApi.CompleteRemotePreflight(
+            plan,
+            new ActionFitPackagePublisher.RemoteState(true, false, true, "main"),
+            request);
+
+        Assert.That(result.Success, Is.True);
+        Assert.That(result.ReadyToPublish, Is.True);
+        Assert.That(result.RepositoryMigrationRequired, Is.False);
+        Assert.That(result.RequiredMigrationApprovalText, Is.Empty);
+    }
+
+    [Test]
+    public void ManagerConsole_OrdersCreateThenPublishChangedThenAddAgentSkill()
+    {
+        string path = Path.Combine(
+            ActionFitPackagePaths.ProjectRoot,
+            "Packages/com.actionfit.custompackagemanager/Editor/Scripts/ActionFitPackageManagerConsoleWindow.cs");
+        string source = File.ReadAllText(path);
+
+        int create = source.IndexOf("1. Create Package", StringComparison.Ordinal);
+        int publish = source.IndexOf("2. Publish Changed", StringComparison.Ordinal);
+        int skill = source.IndexOf("Add Agent Skill", StringComparison.Ordinal);
+        Assert.That(create, Is.GreaterThanOrEqualTo(0));
+        Assert.That(publish, Is.GreaterThan(create));
+        Assert.That(skill, Is.GreaterThan(publish));
     }
 
     [Test]

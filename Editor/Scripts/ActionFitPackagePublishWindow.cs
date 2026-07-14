@@ -200,6 +200,12 @@ public class ActionFitPackagePublishWindow : EditorWindow
 
     private void Publish(Entry entry)
     {
+        if (_mode == Mode.Changed)
+        {
+            PublishChanged(entry);
+            return;
+        }
+
         string version = _mode == Mode.Update ? GetVersion(entry).Trim() : entry.Version;
         if (string.IsNullOrWhiteSpace(version))
         {
@@ -233,8 +239,88 @@ public class ActionFitPackagePublishWindow : EditorWindow
                 "Cancel"))
             return;
 
+        if (_mode == Mode.Update)
+        {
+            if (!SetPackageJsonVersion(entry.PackageJsonPath, version, out string versionWriteError))
+            {
+                EditorUtility.DisplayDialog("ActionFit Package Manager", versionWriteError, "OK");
+                return;
+            }
+            AssetDatabase.ImportAsset(entry.PackageJsonPath, ImportAssetOptions.ForceUpdate);
+            PublishChanged(entry);
+            return;
+        }
+
         if (!PublishInternal(entry, version, true, settings, catalog, out string error))
             EditorUtility.DisplayDialog("ActionFit Package Manager", error, "OK");
+    }
+
+    private void PublishChanged(Entry entry)
+    {
+        ActionFitPackagePublishPlan plan = ActionFitPackagePublishApi.Prepare(
+            new ActionFitPackagePublishPrepareRequest
+            {
+                PackageId = entry.PackageId,
+                RefreshCatalog = true,
+                CheckRemoteState = true,
+            });
+        if (!plan.Success || !plan.ReadyToPublish)
+        {
+            Debug.LogWarning($"[ActionFitPackageManager] Publish preflight failed: {plan.Message}");
+            EditorUtility.DisplayDialog("ActionFit Package Manager", plan.Message, "OK");
+            ScheduleReload();
+            return;
+        }
+
+        if (plan.RepositoryMigrationRequired &&
+            !EditorUtility.DisplayDialog(
+                "Approve Repository Migration",
+                $"Move catalog history to the selected Private repository?\n\n" +
+                $"Source ({plan.SourceRepositoryVisibility}): {plan.SourceRepositoryUrl}\n" +
+                $"Target (Private): {plan.RepositoryUrl}\n" +
+                $"Branches: {plan.SourceBranchCount}, tags: {plan.SourceTagCount}, missing refs: {plan.MissingRepositoryRefCount}\n\n" +
+                "All source branches and tags will be copied and verified. The source repository will remain unchanged. " +
+                "The catalog URL changes only after migration verification and package publish both succeed.\n\n" +
+                $"Migration approval: {plan.RequiredMigrationApprovalText}",
+                "Approve Migration",
+                "Cancel"))
+        {
+            return;
+        }
+
+        if (!EditorUtility.DisplayDialog(
+                "ActionFit Package Manager",
+                $"Publish changed package?\n\n- {plan.PackageId}@{plan.Version}\n- {plan.RepositoryUrl}\n\n" +
+                $"Plan: {plan.PlanId}\nApproval: {plan.RequiredApprovalText}",
+                "Publish Changed",
+                "Cancel"))
+        {
+            return;
+        }
+
+        ActionFitPackagePublishExecutionResult result = ActionFitPackagePublishApi.Execute(
+            new ActionFitPackagePublishExecuteRequest
+            {
+                PackageId = plan.PackageId,
+                ExpectedPlanId = plan.PlanId,
+                ApprovalText = plan.RequiredApprovalText,
+                ApproveRepositoryCreation = plan.WillCreateRepository,
+                ApproveRepositoryMigration = plan.RepositoryMigrationRequired,
+                MigrationApprovalText = plan.RequiredMigrationApprovalText,
+                ApprovedPlan = plan,
+            });
+        if (!result.Success)
+        {
+            Debug.LogError($"[ActionFitPackageManager] Publish failed: {result.Message}");
+            EditorUtility.DisplayDialog("ActionFit Package Manager", result.Message, "OK");
+            ScheduleReload();
+            return;
+        }
+
+        Debug.Log($"[ActionFitPackageManager] Publish complete: {result.Message}");
+        foreach (string warning in result.Warnings ?? Array.Empty<string>())
+            Debug.LogWarning($"[ActionFitPackageManager] {warning}");
+        ScheduleReload();
     }
 
     private void PublishAllChanged()
@@ -274,7 +360,23 @@ public class ActionFitPackagePublishWindow : EditorWindow
             $"- {item.PackageId}@{item.Version}: " +
             (item.WillCreateRepository
                 ? $"create {item.RepositoryVisibility} {item.GitHubOrganization}/{item.RepositoryName}"
-                : $"publish to {item.GitHubOrganization}/{item.RepositoryName}")));
+                : $"publish to {item.GitHubOrganization}/{item.RepositoryName}") +
+            (item.RepositoryMigrationRequired ? $" (migrate from {item.SourceRepositoryUrl})" : "")));
+        if (plan.RepositoryMigrationPackageIds.Length > 0 &&
+            !EditorUtility.DisplayDialog(
+                "Approve Repository Migrations",
+                $"Migrate {plan.RepositoryMigrationPackageIds.Length} package repository/repositories before publishing?\n\n" +
+                string.Join("\n", plan.Packages
+                    .Where(item => item.RepositoryMigrationRequired)
+                    .Select(item => $"- {item.PackageId}: {item.SourceRepositoryUrl} -> {item.RepositoryUrl} " +
+                                    $"({item.SourceBranchCount} branches, {item.SourceTagCount} tags)")) +
+                "\n\nSource repositories remain unchanged. Catalog rows are not changed unless all migrations and publishes succeed.\n\n" +
+                $"Migration approval: {plan.RequiredMigrationApprovalText}",
+                "Approve Migrations",
+                "Cancel"))
+        {
+            return;
+        }
         if (!EditorUtility.DisplayDialog(
                 "ActionFit Package Manager",
                 $"Publish all changed packages?\n\n{list}\n\nPlan: {plan.PlanId}\nApproval: {plan.RequiredApprovalText}\n\nThe catalog and GitHub state were refreshed before this check. Repository publish runs up to {plan.MaxParallelPublishes} packages at once, then catalog rows are appended in one batch request.",
@@ -294,6 +396,8 @@ public class ActionFitPackagePublishWindow : EditorWindow
                         ExpectedPlanId = plan.PlanId,
                         ApprovalText = plan.RequiredApprovalText,
                         ApprovedRepositoryCreationPackageIds = plan.RepositoryCreationPackageIds,
+                        ApprovedRepositoryMigrationPackageIds = plan.RepositoryMigrationPackageIds,
+                        MigrationApprovalText = plan.RequiredMigrationApprovalText,
                         ApprovedPlan = plan,
                     },
                     CreateProgressReporter(executionCancellation),

@@ -38,14 +38,28 @@ public sealed class ActionFitPackagePublishPlan
     public string CatalogLatestVersion;
     public bool CatalogContainsVersion;
     public bool RepositoryExists;
+    public bool RepositoryIsPrivate;
     public bool RemoteTagExists;
     public bool WillCreateRepository;
     public string GitHubOrganization;
     public string RepositoryName;
     public string RepositoryVisibility;
     public string RepositoryUrl;
+    public bool RepositoryMigrationRequired;
+    public bool WillMirrorRepository;
+    public string SourceRepositoryUrl;
+    public string SourceRepositoryVisibility;
+    public string SourceDefaultBranch;
+    public string TargetDefaultBranch;
+    public int SourceBranchCount;
+    public int SourceTagCount;
+    public int TargetBranchCount;
+    public int TargetTagCount;
+    public int MissingRepositoryRefCount;
+    public string RepositoryMigrationFingerprint;
     public string PlanId;
     public string RequiredApprovalText;
+    public string RequiredMigrationApprovalText;
     public ActionFitPackageContractDiagnostic[] ContractDiagnostics = Array.Empty<ActionFitPackageContractDiagnostic>();
     public string[] PlannedActions = Array.Empty<string>();
     public string[] Warnings = Array.Empty<string>();
@@ -64,6 +78,8 @@ public sealed class ActionFitPackagePublishExecuteRequest
     public string ExpectedPlanId;
     public string ApprovalText;
     public bool ApproveRepositoryCreation;
+    public bool ApproveRepositoryMigration;
+    public string MigrationApprovalText;
     public ActionFitPackagePublishPlan ApprovedPlan;
 }
 
@@ -113,7 +129,7 @@ public static class ActionFitPackagePublishApi
             return LogPreparedPlan(Fail(plan, "REMOTE_CHECK_FAILED", remoteError), stopwatch);
         }
 
-        return LogPreparedPlan(CompleteRemotePreflight(plan, remote), stopwatch);
+        return LogPreparedPlan(CompleteRemotePreflight(plan, remote, publishRequest), stopwatch);
     }
 
     internal static ActionFitPackagePublishPlan PrepareLocal(
@@ -181,6 +197,13 @@ public static class ActionFitPackagePublishApi
                     "VERSION_BUMP_REQUIRED",
                     $"Local version {plan.Version} must be higher than catalog latest {inspection.LatestVersion}. Suggested: {plan.SuggestedNextVersion}");
             }
+            if (inspection.CatalogPackageFound && string.IsNullOrWhiteSpace(inspection.RepositoryUrl))
+            {
+                return Fail(
+                    plan,
+                    "CATALOG_REPOSITORY_URL_MISSING",
+                    "The registered package has no catalog repository URL. Publishing was blocked because existing version history cannot be verified or migrated safely.");
+            }
 
             ActionFitPackageInfo_SO info = FindPackageInfo(request.PackageId);
             if (info == null)
@@ -200,6 +223,8 @@ public static class ActionFitPackagePublishApi
             plan.RepositoryName = publishRequest.RepoName;
             plan.RepositoryVisibility = publishRequest.GitHubIsPrivate ? "Private" : "Public";
             plan.RepositoryUrl = $"https://github.com/{publishRequest.GitHubOrganization}/{publishRequest.RepoName}.git";
+            plan.SourceRepositoryUrl = inspection.RepositoryUrl ?? "";
+            publishRequest.SourceRepositoryUrl = plan.SourceRepositoryUrl;
             if (string.IsNullOrWhiteSpace(info.ReleaseNote))
                 plan.Warnings = new[] { "Package release note is empty." };
             plan.Success = true;
@@ -215,7 +240,8 @@ public static class ActionFitPackagePublishApi
 
     internal static ActionFitPackagePublishPlan CompleteRemotePreflight(
         ActionFitPackagePublishPlan plan,
-        ActionFitPackagePublisher.RemoteState remote)
+        ActionFitPackagePublisher.RemoteState remote,
+        ActionFitPackagePublisher.PublishRequest publishRequest = null)
     {
         if (plan == null || !plan.Success)
             return plan ?? Fail(new ActionFitPackagePublishPlan(), "PREPARE_FAILED", "Local publish preflight is missing.");
@@ -223,21 +249,80 @@ public static class ActionFitPackagePublishApi
             return Fail(plan, "REMOTE_CHECK_FAILED", "GitHub remote state is missing.");
 
         plan.RepositoryExists = remote.RepositoryExists;
+        plan.RepositoryIsPrivate = remote.RepositoryIsPrivate;
         plan.RemoteTagExists = remote.TagExists;
         plan.WillCreateRepository = !remote.RepositoryExists;
+        if (remote.RepositoryExists && remote.RepositoryIsPrivate !=
+            string.Equals(plan.RepositoryVisibility, "Private", StringComparison.Ordinal))
+        {
+            bool sourceIsTarget = publishRequest != null &&
+                                  ActionFitPackageRepositoryMigration.TryParseRepositoryUrl(
+                                      publishRequest.SourceRepositoryUrl,
+                                      out ActionFitPackageRepositoryMigration.RepositoryIdentity source) &&
+                                  source.Equals(new ActionFitPackageRepositoryMigration.RepositoryIdentity(
+                                      plan.GitHubOrganization,
+                                      plan.RepositoryName));
+            return Fail(
+                plan,
+                sourceIsTarget ? "SOURCE_REPOSITORY_VISIBILITY_CHANGE_BLOCKED" : "TARGET_REPOSITORY_VISIBILITY_MISMATCH",
+                sourceIsTarget
+                    ? "The selected Public-to-Private change resolves to the same existing Public repository. " +
+                      "Configure a different Private organization or repository name; the source repository visibility is never changed automatically."
+                    : $"Existing target repository visibility does not match selected {plan.RepositoryVisibility}. " +
+                      "Repository visibility is never changed automatically.");
+        }
         if (plan.RemoteTagExists)
             return Fail(plan, "REMOTE_TAG_ALREADY_EXISTS", $"Remote tag {plan.Version} already exists. Published tags are immutable; bump package.json.");
 
-        plan.PlannedActions = new[]
+        if (publishRequest != null)
+        {
+            if (!ActionFitPackageRepositoryMigration.TryInspect(
+                    publishRequest,
+                    remote,
+                    out ActionFitPackageRepositoryMigration.RepositoryMigrationState migration,
+                    out string migrationCode,
+                    out string migrationMessage))
+            {
+                return Fail(plan, migrationCode, migrationMessage);
+            }
+
+            plan.RepositoryMigrationRequired = migration.Required;
+            plan.WillMirrorRepository = migration.WillMirrorRepository;
+            plan.SourceRepositoryUrl = migration.SourceRepositoryUrl;
+            plan.SourceRepositoryVisibility = migration.SourceRepositoryExists
+                ? migration.SourceRepositoryIsPrivate ? "Private" : "Public"
+                : "";
+            plan.SourceDefaultBranch = migration.SourceDefaultBranch;
+            plan.TargetDefaultBranch = migration.TargetDefaultBranch;
+            plan.SourceBranchCount = migration.SourceBranchCount;
+            plan.SourceTagCount = migration.SourceTagCount;
+            plan.TargetBranchCount = migration.TargetBranchCount;
+            plan.TargetTagCount = migration.TargetTagCount;
+            plan.MissingRepositoryRefCount = migration.MissingRefCount;
+            plan.RepositoryMigrationFingerprint = migration.Fingerprint;
+        }
+
+        var actions = new System.Collections.Generic.List<string>
         {
             plan.WillCreateRepository ? $"Create {plan.RepositoryVisibility} repository {plan.GitHubOrganization}/{plan.RepositoryName}" : $"Use existing repository {plan.GitHubOrganization}/{plan.RepositoryName}",
-            $"Push package content to main for {plan.PackageId}@{plan.Version}",
-            $"Create and push immutable tag {plan.Version}",
-            $"Upsert catalog row {plan.PackageId}@{plan.Version}",
-            "Refresh the shared package catalog",
         };
+        if (plan.RepositoryMigrationRequired)
+        {
+            actions.Add(plan.WillMirrorRepository
+                ? $"Mirror all source branches and tags from {plan.SourceRepositoryUrl} and verify the private target"
+                : "Verify the existing private target contains every source branch and tag");
+            actions.Add("Keep the source repository unchanged");
+        }
+        actions.Add($"Push package content to main for {plan.PackageId}@{plan.Version}");
+        actions.Add($"Create and push immutable tag {plan.Version}");
+        actions.Add($"Upsert catalog row {plan.PackageId}@{plan.Version}");
+        actions.Add("Refresh the shared package catalog");
+        plan.PlannedActions = actions.ToArray();
         plan.PlanId = ComputePlanId(plan);
         plan.RequiredApprovalText = $"PUBLISH {plan.PackageId}@{plan.Version} PLAN {plan.PlanId}";
+        plan.RequiredMigrationApprovalText = plan.RepositoryMigrationRequired
+            ? $"MIGRATE {plan.PackageId} FROM {plan.SourceRepositoryUrl} TO {plan.RepositoryUrl} PLAN {plan.PlanId}"
+            : "";
         plan.ReadyToPublish = true;
         plan.Success = true;
         plan.Code = "READY_TO_PUBLISH";
@@ -286,7 +371,7 @@ public static class ActionFitPackagePublishApi
                     revalidatedRequest,
                     out ActionFitPackagePublisher.RemoteState remote,
                     out string remoteError)
-                    ? CompleteRemotePreflight(current, remote)
+                    ? CompleteRemotePreflight(current, remote, revalidatedRequest)
                     : Fail(current, "REMOTE_CHECK_FAILED", remoteError);
             }
         }
@@ -311,6 +396,17 @@ public static class ActionFitPackagePublishApi
             return ExecutionFailure(request, "APPROVAL_TEXT_MISMATCH", "ApprovalText does not exactly match the prepared publish plan.", current);
         if (current.WillCreateRepository && !request.ApproveRepositoryCreation)
             return ExecutionFailure(request, "REPOSITORY_CREATION_APPROVAL_REQUIRED", "This plan creates a new repository. ApproveRepositoryCreation must be true.", current);
+        if (!MigrationApprovalMatches(
+                current,
+                request.ApproveRepositoryMigration,
+                request.MigrationApprovalText))
+        {
+            return ExecutionFailure(
+                request,
+                "REPOSITORY_MIGRATION_APPROVAL_REQUIRED",
+                "Repository migration requires a separate approval flag and the exact MigrationApprovalText returned by Prepare.",
+                current);
+        }
 
         try
         {
@@ -324,6 +420,17 @@ public static class ActionFitPackagePublishApi
                     out string requestError))
             {
                 return ExecutionFailure(request, "PUBLISH_REQUEST_INVALID", requestError, current);
+            }
+            publishRequest.SourceRepositoryUrl = current.SourceRepositoryUrl;
+
+            if (current.RepositoryMigrationRequired)
+            {
+                ActionFitPackageRepositoryMigration.MigrationResult migration =
+                    ActionFitPackageRepositoryMigration.Execute(
+                        publishRequest,
+                        current.RepositoryMigrationFingerprint);
+                if (!migration.Success)
+                    return ExecutionFailure(request, "REPOSITORY_MIGRATION_FAILED", migration.Message, current);
             }
 
             ActionFitPackagePublisher.PublishResult repository = ActionFitPackagePublisher.PublishRepository(publishRequest);
@@ -449,6 +556,19 @@ public static class ActionFitPackagePublishApi
                string.Equals(plan.RequiredApprovalText, approvalText, StringComparison.Ordinal);
     }
 
+    internal static bool MigrationApprovalMatches(
+        ActionFitPackagePublishPlan plan,
+        bool approved,
+        string approvalText)
+    {
+        return plan != null &&
+               (!plan.RepositoryMigrationRequired ||
+                approved && string.Equals(
+                    plan.RequiredMigrationApprovalText,
+                    approvalText,
+                    StringComparison.Ordinal));
+    }
+
     private static ActionFitPackagePublishPlan LogPreparedPlan(
         ActionFitPackagePublishPlan plan,
         Stopwatch stopwatch)
@@ -473,7 +593,12 @@ public static class ActionFitPackagePublishApi
             plan.RepositoryName,
             plan.RepositoryVisibility,
             plan.RepositoryExists.ToString(),
+            plan.RepositoryIsPrivate.ToString(),
             plan.RemoteTagExists.ToString(),
+            plan.SourceRepositoryUrl ?? "",
+            plan.RepositoryMigrationRequired.ToString(),
+            plan.WillMirrorRepository.ToString(),
+            plan.RepositoryMigrationFingerprint ?? "",
         });
         using SHA256 sha = SHA256.Create();
         return BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(canonical))).Replace("-", "").Substring(0, 20);

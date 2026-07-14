@@ -1,0 +1,4 @@
+interface:
+  display_name: "Package Manager Validate"
+  short_description: "Validate ActionFit package contracts"
+  default_prompt: "Use $package-manager-validate to run read-only ActionFit package contract validation and interpret diagnostics."

@@ -94,15 +94,23 @@ public static class ActionFitPackagePublisher
         try
         {
             string repoPath = $"{request.GitHubOrganization}/{request.RepoName}";
-            bool repositoryExists = GitHubResourceExists(
-                $"https://api.github.com/repos/{repoPath}",
-                request.GitHubToken);
+            if (!TryGetRepositoryMetadata(
+                    request.GitHubOrganization,
+                    request.RepoName,
+                    request.GitHubToken,
+                    out bool repositoryExists,
+                    out bool repositoryIsPrivate,
+                    out string defaultBranch,
+                    out string repositoryError))
+            {
+                throw new InvalidOperationException(repositoryError);
+            }
             bool tagExists = repositoryExists && GitHubResourceExists(
                 $"https://api.github.com/repos/{repoPath}/git/ref/tags/{Uri.EscapeDataString(request.Version)}",
                 request.GitHubToken,
                 true);
 
-            state = new RemoteState(repositoryExists, tagExists);
+            state = new RemoteState(repositoryExists, tagExists, repositoryIsPrivate, defaultBranch);
             message = repositoryExists
                 ? tagExists
                     ? $"Repository and tag {request.Version} already exist."
@@ -301,14 +309,25 @@ public static class ActionFitPackagePublisher
         return true;
     }
 
-    private static void EnsureRepository(PublishRequest request)
+    internal static void EnsureRepository(PublishRequest request)
     {
         string repoPath = $"{request.GitHubOrganization}/{request.RepoName}";
         var get = CreateGitHubRequest($"https://api.github.com/repos/{repoPath}", request.GitHubToken, "GET");
         try
         {
             using var response = (HttpWebResponse)get.GetResponse();
-            if ((int)response.StatusCode >= 200 && (int)response.StatusCode < 300) return;
+            if ((int)response.StatusCode >= 200 && (int)response.StatusCode < 300)
+            {
+                using var reader = new StreamReader(response.GetResponseStream(), Encoding.UTF8);
+                GitHubRepositoryResponse repository = JsonUtility.FromJson<GitHubRepositoryResponse>(reader.ReadToEnd());
+                if (repository == null || repository.@private != request.GitHubIsPrivate)
+                {
+                    throw new InvalidOperationException(
+                        $"Existing repository visibility does not match the selected {request.GitHubLabel} profile. " +
+                        "The publisher will not change repository visibility automatically.");
+                }
+                return;
+            }
         }
         catch (WebException ex) when ((ex.Response as HttpWebResponse)?.StatusCode == HttpStatusCode.NotFound)
         {
@@ -321,6 +340,66 @@ public static class ActionFitPackagePublisher
                 throw new InvalidOperationException($"GitHub repository create failed ({request.GitHubLabel}): {response.StatusCode}");
             return;
         }
+    }
+
+    internal static bool TryGetRepositoryMetadata(
+        string organization,
+        string repoName,
+        string token,
+        out bool exists,
+        out bool isPrivate,
+        out string defaultBranch,
+        out string message)
+    {
+        exists = false;
+        isPrivate = false;
+        defaultBranch = "";
+        message = "";
+        try
+        {
+            var get = CreateGitHubRequest(
+                $"https://api.github.com/repos/{organization}/{repoName}",
+                token,
+                "GET");
+            using var response = (HttpWebResponse)get.GetResponse();
+            using var reader = new StreamReader(response.GetResponseStream(), Encoding.UTF8);
+            GitHubRepositoryResponse repository = JsonUtility.FromJson<GitHubRepositoryResponse>(reader.ReadToEnd());
+            if (repository == null)
+            {
+                message = $"GitHub returned an invalid repository response for {organization}/{repoName}.";
+                return false;
+            }
+
+            exists = true;
+            isPrivate = repository.@private;
+            defaultBranch = repository.default_branch ?? "";
+            return true;
+        }
+        catch (WebException ex) when ((ex.Response as HttpWebResponse)?.StatusCode == HttpStatusCode.NotFound)
+        {
+            ex.Response?.Dispose();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            message = $"GitHub repository inspection failed for {organization}/{repoName}: {ex.Message}";
+            return false;
+        }
+    }
+
+    internal static void SetDefaultBranch(PublishRequest request, string defaultBranch)
+    {
+        if (request == null) throw new ArgumentNullException(nameof(request));
+        if (string.IsNullOrWhiteSpace(defaultBranch)) return;
+
+        var update = CreateGitHubRequest(
+            $"https://api.github.com/repos/{request.GitHubOrganization}/{request.RepoName}",
+            request.GitHubToken,
+            "PATCH");
+        WriteBody(update, $"{{\"default_branch\":\"{EscapeJson(defaultBranch)}\"}}");
+        using var response = (HttpWebResponse)update.GetResponse();
+        if ((int)response.StatusCode < 200 || (int)response.StatusCode >= 300)
+            throw new InvalidOperationException($"GitHub default branch update failed: {response.StatusCode}");
     }
 
     private static bool GitHubResourceExists(string url, string token, bool conflictMeansMissing = false)
@@ -621,8 +700,45 @@ public static class ActionFitPackagePublisher
         throw new InvalidOperationException($"git {sanitizedArguments} failed:\n{sanitizedOutput}");
     }
 
+    internal static bool RunGitCapture(
+        string workingDirectory,
+        string arguments,
+        string token,
+        out string output,
+        out string error,
+        bool throwOnFailure = true)
+    {
+        var startInfo = new ProcessStartInfo("git", arguments)
+        {
+            WorkingDirectory = workingDirectory,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+
+        using var process = Process.Start(startInfo);
+        if (process == null)
+            throw new InvalidOperationException("Could not start git process.");
+
+        Task<string> outputTask = process.StandardOutput.ReadToEndAsync();
+        Task<string> errorTask = process.StandardError.ReadToEndAsync();
+        process.WaitForExit();
+        output = outputTask.GetAwaiter().GetResult();
+        error = errorTask.GetAwaiter().GetResult();
+
+        if (process.ExitCode == 0) return true;
+        if (!throwOnFailure) return false;
+
+        throw new InvalidOperationException(
+            $"git {Sanitize(arguments, token)} failed:\n{Sanitize(output + "\n" + error, token)}");
+    }
+
     private static string BuildTokenRemote(PublishRequest request)
-        => $"https://x-access-token:{request.GitHubToken}@github.com/{request.GitHubOrganization}/{request.RepoName}.git";
+        => BuildTokenRemote(request.GitHubOrganization, request.RepoName, request.GitHubToken);
+
+    internal static string BuildTokenRemote(string organization, string repoName, string token)
+        => $"https://x-access-token:{token}@github.com/{organization}/{repoName}.git";
 
     private static void WriteBody(HttpWebRequest request, string body)
     {
@@ -667,7 +783,7 @@ public static class ActionFitPackagePublisher
         }
     }
 
-    private static string ExpandPath(string path)
+    internal static string ExpandPath(string path)
     {
         if (string.IsNullOrWhiteSpace(path)) path = "~/upm-publish";
         if (path.StartsWith("~/", StringComparison.Ordinal))
@@ -724,6 +840,7 @@ public static class ActionFitPackagePublisher
         public string Version { get; }
         public CatalogAppendItem CatalogItem { get; }
         public string CatalogId => CatalogItem?.CatalogId ?? $"{PackageId}@{Version}";
+        public string SourceRepositoryUrl { get; internal set; }
     }
 
     public sealed class CatalogAppendItem
@@ -799,14 +916,29 @@ public static class ActionFitPackagePublisher
     /// </summary>
     public sealed class RemoteState
     {
-        public RemoteState(bool repositoryExists, bool tagExists)
+        public RemoteState(
+            bool repositoryExists,
+            bool tagExists,
+            bool repositoryIsPrivate = false,
+            string defaultBranch = "")
         {
             RepositoryExists = repositoryExists;
             TagExists = tagExists;
+            RepositoryIsPrivate = repositoryIsPrivate;
+            DefaultBranch = defaultBranch ?? "";
         }
 
         public bool RepositoryExists { get; }
         public bool TagExists { get; }
+        public bool RepositoryIsPrivate { get; }
+        public string DefaultBranch { get; }
+    }
+
+    [Serializable]
+    private sealed class GitHubRepositoryResponse
+    {
+        public bool @private;
+        public string default_branch;
     }
 
     [Serializable]

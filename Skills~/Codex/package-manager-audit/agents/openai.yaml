@@ -1,0 +1,4 @@
+interface:
+  display_name: "Package Manager Audit"
+  short_description: "Audit installed ActionFit packages without changes"
+  default_prompt: "Use $package-manager-audit to inspect installed ActionFit package and agent-skill state without changing files."

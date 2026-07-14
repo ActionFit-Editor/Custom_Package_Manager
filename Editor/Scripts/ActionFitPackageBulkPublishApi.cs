@@ -30,6 +30,8 @@ public sealed class ActionFitPackageBulkPublishPlan
     public string RequiredApprovalText;
     public string[] PackageIds = Array.Empty<string>();
     public string[] RepositoryCreationPackageIds = Array.Empty<string>();
+    public string[] RepositoryMigrationPackageIds = Array.Empty<string>();
+    public string RequiredMigrationApprovalText;
     public ActionFitPackagePublishPlan[] Packages = Array.Empty<ActionFitPackagePublishPlan>();
     public int MaxParallelPublishes = ActionFitPackagePublisher.DefaultMaxParallelPublishes;
     public string[] Warnings = Array.Empty<string>();
@@ -42,6 +44,8 @@ public sealed class ActionFitPackageBulkPublishExecuteRequest
     public string ExpectedPlanId;
     public string ApprovalText;
     public string[] ApprovedRepositoryCreationPackageIds = Array.Empty<string>();
+    public string[] ApprovedRepositoryMigrationPackageIds = Array.Empty<string>();
+    public string MigrationApprovalText;
     public ActionFitPackageBulkPublishPlan ApprovedPlan;
 }
 
@@ -175,7 +179,10 @@ public static class ActionFitPackageBulkPublishApi
             {
                 RemotePreflightResult remoteResult = remoteResults[index];
                 packages[index] = remoteResult.Success
-                    ? ActionFitPackagePublishApi.CompleteRemotePreflight(packages[index], remoteResult.State)
+                    ? ActionFitPackagePublishApi.CompleteRemotePreflight(
+                        packages[index],
+                        remoteResult.State,
+                        publishRequests[index])
                     : FailPackage(packages[index], "REMOTE_CHECK_FAILED", remoteResult.Message);
             }
 
@@ -194,8 +201,16 @@ public static class ActionFitPackageBulkPublishApi
                 .Select(item => item.PackageId)
                 .OrderBy(value => value, StringComparer.Ordinal)
                 .ToArray();
+            plan.RepositoryMigrationPackageIds = packages
+                .Where(item => item.RepositoryMigrationRequired)
+                .Select(item => item.PackageId)
+                .OrderBy(value => value, StringComparer.Ordinal)
+                .ToArray();
             plan.PlanId = ComputePlanId(packages);
             plan.RequiredApprovalText = $"PUBLISH ALL {packages.Count} PACKAGES PLAN {plan.PlanId}";
+            plan.RequiredMigrationApprovalText = plan.RepositoryMigrationPackageIds.Length == 0
+                ? ""
+                : $"MIGRATE REPOSITORIES {string.Join(",", plan.RepositoryMigrationPackageIds)} PLAN {plan.PlanId}";
             plan.Warnings = packages.SelectMany(item => item.Warnings ?? Array.Empty<string>()).Distinct().ToArray();
             plan.Success = true;
             plan.ReadyToPublish = true;
@@ -279,6 +294,20 @@ public static class ActionFitPackageBulkPublishApi
                 stopwatch);
         }
 
+        if (!MigrationApprovalsMatch(
+                current,
+                request.ApprovedRepositoryMigrationPackageIds,
+                request.MigrationApprovalText))
+        {
+            return LogExecutionResult(
+                ExecutionFailure(
+                    request,
+                    "REPOSITORY_MIGRATION_APPROVAL_REQUIRED",
+                    "ApprovedRepositoryMigrationPackageIds and MigrationApprovalText must exactly match the separate migration approval returned by PrepareAllChanged.",
+                    current),
+                stopwatch);
+        }
+
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -301,7 +330,36 @@ public static class ActionFitPackageBulkPublishApi
                         ExecutionFailure(request, "PUBLISH_REQUEST_INVALID", $"{packagePlan.PackageId}: {requestError}", current),
                         stopwatch);
                 }
+                publishRequest.SourceRepositoryUrl = packagePlan.SourceRepositoryUrl;
                 publishRequests.Add(publishRequest);
+            }
+
+            for (int index = 0; index < current.Packages.Length; index++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                ActionFitPackagePublishPlan packagePlan = current.Packages[index];
+                if (!packagePlan.RepositoryMigrationRequired) continue;
+                ReportProgress(
+                    onProgress,
+                    "repository-migration",
+                    $"Migrating repository {index + 1}/{current.Packages.Length}: {packagePlan.PackageId}",
+                    index,
+                    current.Packages.Length,
+                    0.54f);
+                ActionFitPackageRepositoryMigration.MigrationResult migration =
+                    ActionFitPackageRepositoryMigration.Execute(
+                        publishRequests[index],
+                        packagePlan.RepositoryMigrationFingerprint);
+                if (!migration.Success)
+                {
+                    return LogExecutionResult(
+                        ExecutionFailure(
+                            request,
+                            "REPOSITORY_MIGRATION_FAILED",
+                            $"{packagePlan.PackageId}: {migration.Message} Catalog rows were not changed.",
+                            current),
+                        stopwatch);
+                }
             }
 
             ActionFitPackagePublisher.PublishResult[] repositoryResults = PublishRepositoriesParallel(
@@ -705,6 +763,19 @@ public static class ActionFitPackageBulkPublishApi
         }
 
         return string.Equals(ComputePlanId(plan.Packages), plan.PlanId, StringComparison.Ordinal);
+    }
+
+    internal static bool MigrationApprovalsMatch(
+        ActionFitPackageBulkPublishPlan plan,
+        IEnumerable<string> approvedPackageIds,
+        string approvalText)
+    {
+        if (plan == null) return false;
+        string[] expected = NormalizePackageIds(plan.RepositoryMigrationPackageIds);
+        string[] approved = NormalizePackageIds(approvedPackageIds);
+        return expected.SequenceEqual(approved, StringComparer.Ordinal) &&
+               (expected.Length == 0 ||
+                string.Equals(plan.RequiredMigrationApprovalText, approvalText, StringComparison.Ordinal));
     }
 
     private static void ReportProgress(

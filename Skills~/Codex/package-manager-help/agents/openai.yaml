@@ -1,0 +1,4 @@
+interface:
+  display_name: "Package Manager Help"
+  short_description: "Explain ActionFit package management and safety"
+  default_prompt: "Use $package-manager-help to explain Custom Package Manager skills, workflows, validation, and safety boundaries."

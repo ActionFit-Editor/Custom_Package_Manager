@@ -7,7 +7,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.79"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.81"
   }
 }
 ```
@@ -15,7 +15,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ## Menu
 
 - `Tools > Package > Custom Package Manager > Package Manager`: install, apply versions, remove packages, inspect package details, and check updates.
-- `Tools > Package > Custom Package Manager > Manager Console`: create packages, add schema v2 agent skills, publish changed or selected package versions, open catalog/manifest files, and refresh the AI guide router.
+- `Tools > Package > Custom Package Manager > Manager Console`: create packages, publish changed or selected package versions, add schema v2 agent skills, open catalog/manifest files, and refresh the AI guide router.
 - `Tools > Package > Custom Package Manager > Install or Refresh Agent Skills`: discovers registered skills from installed ActionFit packages and safely synchronizes their managed project-local copies.
 - `Tools > Package > Custom Package Manager > Remove Managed Agent Skills`: removes only unchanged managed copies and disables automatic recreation until an explicit refresh.
 - `Tools > Package > Custom Package Manager > Add Agent Skill`: adds a schema v2 skill to an editable embedded package and creates its mandatory package help skill on first use.
@@ -23,6 +23,14 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 - `Tools > Package > <Package Name> > Setting SO`: focuses that package's settings ScriptableObject when the package has one.
 
 ## Package Agent Skills
+
+Custom Package Manager의 `Install or Refresh Agent Skills`는 이 패키지 자체에서도 Codex와 Claude에 다음 read-only skill을 설치합니다.
+
+- `package-manager-help`: 패키지 관리 기능, 설치된 스킬, 릴리스 준비와 안전 경계를 설명합니다.
+- `package-manager-audit`: 로컬 manifest/lock/package metadata와 agent-skill 등록 상태를 변경 없이 점검합니다.
+- `package-manager-validate`: 기존 `Tools~/package_contract_validator.py`를 한 패키지, 변경 패키지 또는 전체 embedded 패키지 범위로 실행합니다.
+
+세 skill은 catalog refresh, manifest rewrite, install/update/embed/remove, installed skill refresh, publish, repository 생성, Git push/tag와 catalog append를 실행하지 않습니다.
 
 An ActionFit package can register Codex and Claude skills with `Skills~/manifest.json`:
 
@@ -225,11 +233,11 @@ var skill = ActionFitPackageSkillScaffoldApi.Add(new ActionFitPackageSkillScaffo
 - `ActionFitPackageEmbedApi.ExecuteJson`: JSON start-result wrapper for Unity connectors and AI tools. A returned `EMBED_STARTED` is not the final conversion result.
 - `ActionFitPackageEmbedApi.RecoverPendingTransactions`: explicit recovery entry point in addition to automatic Editor-load recovery.
 - `ActionFitPackageSkillScaffoldApi.Add` / `AddJson`: adds a schema v2 package skill to an embedded package without overwriting existing sources. The first addition creates `<skillPrefix>-help` for Codex and Claude plus Codex `agents/openai.yaml` metadata.
-- `ActionFitPackagePublishApi.Prepare`: runs the local package contract first, then refreshes the catalog, blocks reused versions, validates package metadata/authentication, checks the GitHub repository and immutable tag, and returns a content-bound plan ID without changing external state. Contract failures include structured diagnostics and stop before catalog, credential, or GitHub requests.
-- `ActionFitPackagePublishApi.Execute`: re-runs every preflight and requires the same plan ID plus the exact `RequiredApprovalText` before repository push, tag push, and catalog upsert.
+- `ActionFitPackagePublishApi.Prepare`: runs the local package contract first, then refreshes the catalog, blocks reused versions, validates package metadata/authentication, checks the GitHub repository and immutable tag, and returns a content-bound plan ID without changing external state. When the catalog source URL differs from a selected Private target, it also compares actual visibility, default branch, every branch/tag ref, and target documentation before preparing a repository migration.
+- `ActionFitPackagePublishApi.Execute`: re-runs every preflight and requires the same plan ID plus the exact `RequiredApprovalText` before repository push, tag push, and catalog upsert. Repository relocation additionally requires `ApproveRepositoryMigration = true` and the exact separate `MigrationApprovalText`.
 - `ActionFitPackagePublishApi.PrepareJson` / `ExecuteJson`: JSON wrappers for AI connectors. Execution never infers approval from preparation.
 - `ActionFitPackageBulkPublishApi.PrepareAllChanged`: discovers changed embedded packages or validates an explicit package ID list, refreshes catalog/GitHub state, and returns one content-bound bulk plan without external changes.
-- `ActionFitPackageBulkPublishApi.ExecuteAll`: requires the exact bulk plan ID, exact approval text, and an exact list of every package whose repository will be created. Repository work runs in parallel only after revalidation, and catalog rows are appended after all repository publishes succeed.
+- `ActionFitPackageBulkPublishApi.ExecuteAll`: requires the exact bulk plan ID, exact publish approval, exact repository-creation package set, and—when needed—the exact migration package set and migration approval text. Approved migrations finish and verify first; repository work then runs in parallel, and catalog rows are appended only after all repository publishes succeed.
 - `ActionFitPackageBulkPublishApi.PrepareAllChangedJson` / `ExecuteAllJson`: JSON wrappers for AI connectors. The Manager Console's `Publish All Changed` button calls this same API.
 
 Batchmode callers can use:
@@ -241,7 +249,7 @@ Batchmode callers can use:
 
 Inspection is advisory and never publishes. Workflow options mark repository publishing with `RequiresExplicitPublishApproval`; AI must not push, tag, create a repository, or append a catalog row unless the user explicitly requests that external action.
 
-`Prepare` is always read-only. A successful plan returns an exact approval string such as `PUBLISH com.actionfit.example@1.2.3 PLAN <planId>`. `Execute` rejects missing or mismatched approval, rechecks the refreshed catalog and remote tag, and rejects a changed content hash or plan. New repository creation additionally requires `ApproveRepositoryCreation = true`. If repository push succeeds but catalog upsert fails, the result reports `RetryCatalogAppendAvailable = true` instead of pushing the repository again.
+`Prepare` is always read-only. A successful plan returns an exact approval string such as `PUBLISH com.actionfit.example@1.2.3 PLAN <planId>`. `Execute` rejects missing or mismatched approval, rechecks the refreshed catalog and remote tag, and rejects a changed content hash or plan. New repository creation additionally requires `ApproveRepositoryCreation = true`. Public-to-Private repository relocation has a separate `MIGRATE ... PLAN <planId>` approval and never changes, archives, or deletes the source repository. If repository push succeeds but catalog upsert fails, the result reports `RetryCatalogAppendAvailable = true` instead of pushing the repository again.
 
 Custom Package Manager scans installed `AI_GUIDE.md` files from embedded `Packages/com.actionfit.*` folders and Git UPM `Library/PackageCache/com.actionfit.*@*` folders, then refreshes `PACKAGE_AI_GUIDE_ROUTER.md` from their `Requested router entry` blocks. Router entries are rewritten to the actual discovered guide path, so Git UPM packages point at `Library/PackageCache/...@hash/AI_GUIDE.md`. When a consuming project already has a primary AI markdown entry point, it also generates a `packages/actionfit-packages.md` compatibility pointer next to that entry point and adds an auto-managed section so the project-level AI router can discover `PACKAGE_AI_GUIDE_ROUTER.md`.
 
@@ -250,9 +258,9 @@ If an AI assistant reads this package documentation before the automatic router 
 ## Manager Console
 
 - `1. Create Package`: requires an explicit `Public` or `Private` repository visibility choice, then creates the `Packages/com.actionfit.*` package skeleton, README, AI guide, README-only package menu file, asmdef, and PackageInfo SO. Creation validation rejects requests that omit the explicit choice, and the completed skeleton must pass the package-owned round-trip contract validator before creation returns successfully.
-- `Add Agent Skill`: opens the same no-overwrite schema v2 scaffolding window used by embedded package detail rows. The first addition creates the mandatory help sources for Codex and Claude; later additions update only the manifest and newly requested source paths.
-- `2. Publish Changed`: normal publish path. It finds top-level `Packages/com.actionfit.*` packages whose local `package.json` version is higher than the catalog latest version, includes newly created packages that are not yet registered, prepares local publish clones, creates missing repositories, pushes package contents/tags, and appends catalog rows. Nested `package.json` files under test fixtures or package content are not publish candidates. `Publish All Changed` runs repository publishes up to 4 packages at once, then appends all catalog rows by one batch request when the Web App supports it. Each package's `Repository Visibility` in `ActionFitPackageInfo_SO` selects the public/private GitHub profile for both new and already registered package publishes.
-- `Publish Package`: manual publish path for an already registered package version when you need to type a specific version before publishing.
+- `2. Publish Changed`: normal publish path and the second Manager Console action. It finds top-level `Packages/com.actionfit.*` packages whose local `package.json` version is higher than the catalog latest version, includes newly created packages that are not yet registered, and uses the same approval-gated API for single and bulk publication. Nested `package.json` files under test fixtures or package content are not publish candidates. `Publish All Changed` runs repository publishes up to 4 packages at once, then appends all catalog rows by one batch request when the Web App supports it. Each package's `Repository Visibility` in `ActionFitPackageInfo_SO` selects the public/private GitHub profile.
+- `Add Agent Skill`: the third Manager Console action. It opens the same no-overwrite schema v2 scaffolding window used by embedded package detail rows. The first addition creates the mandatory help sources for Codex and Claude; later additions update only the manifest and newly requested source paths.
+- `Publish Package`: manual publish path for an already registered package when you need to type a specific version. After writing that version, it enters the same approval-gated preflight, migration, repository publish, and catalog sequence as `Publish Changed`.
 - `Open Catalog`: selects the local or fallback catalog CSV.
 - `Open Manifest`: opens the project `Packages/manifest.json`.
 - `Refresh AI Guide Router`: refreshes `PACKAGE_AI_GUIDE_ROUTER.md`, regenerates the local `packages/actionfit-packages.md` compatibility pointer next to the discovered AI entry point, and refreshes that entry point's auto-managed package guide section when one exists. The router code now keeps AI entry point registration behind adapter-style helpers so additional AI tools can be added without duplicating package guide scanning.
@@ -276,6 +284,8 @@ If an AI assistant reads this package documentation before the automatic router 
 Publish preflight also supports a repository that exists but has no first commit yet. GitHub's empty-repository conflict response from the tag lookup is treated as an available tag while the repository remains classified as existing. Git command output streams are drained concurrently so large warning output, including line-ending warnings, cannot block publication.
 
 `Publish All Changed` validates package contracts once before approval, reuses the same in-process approved plan during execution, and rechecks the mutable catalog, content hash, version, repository, and tag state immediately before upload. Deserialized/API-supplied plan data cannot bypass contract validation because its validation receipt is not serialized. GitHub remote preflight and repository publishing run with up to 4 workers. The progress dialog identifies local validation, GitHub checks, repository publishing, catalog batch/fallback, and final refresh stages and can cancel before mutation or stop before catalog registration after repository publishing completes.
+
+When an existing catalog repository URL differs from the selected Private publish target, `Publish Changed` treats it as an explicit repository migration. Preflight checks both repositories' actual GitHub visibility, default branch, all branch/tag refs, current-version tag conflicts, and requires both `README.md` and `AI_GUIDE.md` to reference the target URL. A missing target may be created only with the existing creation approval; source branches and tags are then mirrored without force or prune against the target, the target default branch is aligned, and all refs are rechecked. Existing Public targets and conflicting target refs are blocked. The source repository is never modified, archived, deleted, or made Private. The package version and catalog URL are published only after migration verification, so a failed or partially completed attempt leaves catalog rows unchanged and can be retried safely.
 
 Catalog and GitHub HTTP requests use a 30-second connection/read timeout. The catalog Web App should support `upsertPackageVersions` and return either a matching `count` or per-item confirmations. Unsupported batch responses fall back to serial `upsertPackageVersion`; timeout and cancellation failures do not start a potentially long serial fallback. If repository publishing succeeds but catalog append fails or is canceled, the window keeps those rows and shows `Retry Catalog Append` so the spreadsheet update can be retried without pushing repositories again. The Unity Console logs elapsed milliseconds for catalog refresh, GitHub preflight, repository publish, batch append, serial fallback, and total bulk execution.
 
