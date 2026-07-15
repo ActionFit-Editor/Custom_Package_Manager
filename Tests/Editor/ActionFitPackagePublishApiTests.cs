@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Text;
 using NUnit.Framework;
@@ -71,6 +72,7 @@ public sealed class ActionFitPackagePublishApiTests
             Success = true,
             ReadyToPublish = true,
             PackageIds = new[] { package.PackageId },
+            PublishPackageIds = new[] { package.PackageId },
             Packages = new[] { package },
             PlanId = planId,
             RequiredApprovalText = $"PUBLISH ALL 1 PACKAGES PLAN {planId}",
@@ -87,6 +89,221 @@ public sealed class ActionFitPackagePublishApiTests
 
         package.PlanId = "TAMPERED";
         Assert.That(ActionFitPackageBulkPublishApi.ApprovedPlanMatches(request), Is.False);
+    }
+
+    [Test]
+    public void CompleteBulkRemotePreflight_MatchingTagBecomesCatalogRecoveryCandidate()
+    {
+        var plan = new ActionFitPackagePublishPlan
+        {
+            Success = true,
+            PackageId = "com.actionfit.alpha",
+            Version = "1.0.1",
+            CatalogLatestVersion = "1.0.0",
+            RepositoryVisibility = "Public",
+            GitHubOrganization = "ActionFit",
+            RepositoryName = "Alpha",
+        };
+        bool verifierCalled = false;
+
+        ActionFitPackagePublishPlan result = ActionFitPackageBulkPublishApi.CompleteBulkRemotePreflight(
+            plan,
+            new ActionFitPackagePublisher.RemoteState(true, true, false, "main"),
+            null,
+            _ =>
+            {
+                verifierCalled = true;
+                return new ActionFitPackageCatalogRecoveryVerification(
+                    true,
+                    true,
+                    "0123456789012345678901234567890123456789",
+                    "matched");
+            });
+
+        Assert.That(verifierCalled, Is.True);
+        Assert.That(result.Success, Is.True);
+        Assert.That(result.ReadyToPublish, Is.False);
+        Assert.That(result.ReadyToRecoverCatalog, Is.True);
+        Assert.That(result.Code, Is.EqualTo("READY_TO_RECOVER_CATALOG"));
+    }
+
+    [Test]
+    public void CompleteBulkRemotePreflight_ChangedTagContentBlocksAndSuggestsPatch()
+    {
+        var plan = new ActionFitPackagePublishPlan
+        {
+            Success = true,
+            PackageId = "com.actionfit.alpha",
+            Version = "1.0.1",
+            RepositoryVisibility = "Public",
+        };
+
+        ActionFitPackagePublishPlan result = ActionFitPackageBulkPublishApi.CompleteBulkRemotePreflight(
+            plan,
+            new ActionFitPackagePublisher.RemoteState(true, true, false, "main"),
+            null,
+            _ => new ActionFitPackageCatalogRecoveryVerification(
+                true,
+                false,
+                "0123456789012345678901234567890123456789",
+                "Package content differs at Runtime/Changed.cs."));
+
+        Assert.That(result.Success, Is.False);
+        Assert.That(result.Code, Is.EqualTo("REMOTE_TAG_CONTENT_MISMATCH"));
+        Assert.That(result.SuggestedNextVersion, Is.EqualTo("1.0.2"));
+        Assert.That(result.Message, Does.Contain("Bump package.json to 1.0.2"));
+    }
+
+    [Test]
+    public void CompleteBulkRemotePreflight_VisibilityMismatchBlocksWithoutTagCheckout()
+    {
+        var plan = new ActionFitPackagePublishPlan
+        {
+            Success = true,
+            PackageId = "com.actionfit.alpha",
+            Version = "1.0.1",
+            RepositoryVisibility = "Private",
+        };
+        bool verifierCalled = false;
+
+        ActionFitPackagePublishPlan result = ActionFitPackageBulkPublishApi.CompleteBulkRemotePreflight(
+            plan,
+            new ActionFitPackagePublisher.RemoteState(true, true, false, "main"),
+            null,
+            _ =>
+            {
+                verifierCalled = true;
+                return new ActionFitPackageCatalogRecoveryVerification(true, true, "commit", "matched");
+            });
+
+        Assert.That(verifierCalled, Is.False);
+        Assert.That(result.Success, Is.False);
+        Assert.That(result.Code, Is.EqualTo("RECOVERY_REPOSITORY_VISIBILITY_MISMATCH"));
+    }
+
+    [Test]
+    public void CompleteBulkRemotePreflight_PreRegisteredCatalogFailureNeverBecomesRecovery()
+    {
+        var plan = new ActionFitPackagePublishPlan
+        {
+            Success = false,
+            Code = "VERSION_ALREADY_IN_CATALOG",
+            PackageId = "com.actionfit.alpha",
+            Version = "1.0.1",
+            CatalogContainsVersion = true,
+            RepositoryVisibility = "Public",
+        };
+        bool verifierCalled = false;
+
+        ActionFitPackagePublishPlan result = ActionFitPackageBulkPublishApi.CompleteBulkRemotePreflight(
+            plan,
+            new ActionFitPackagePublisher.RemoteState(true, true, false, "main"),
+            null,
+            _ =>
+            {
+                verifierCalled = true;
+                return new ActionFitPackageCatalogRecoveryVerification(true, true, "commit", "matched");
+            });
+
+        Assert.That(result, Is.SameAs(plan));
+        Assert.That(verifierCalled, Is.False);
+        Assert.That(result.ReadyToRecoverCatalog, Is.False);
+        Assert.That(result.Code, Is.EqualTo("VERSION_ALREADY_IN_CATALOG"));
+    }
+
+    [Test]
+    public void ApprovedBulkPlanMatches_MixedPlanRequiresSeparateRecoveryApproval()
+    {
+        var publish = new ActionFitPackagePublishPlan
+        {
+            Success = true,
+            ReadyToPublish = true,
+            PackageId = "com.actionfit.alpha",
+            Version = "1.0.2",
+            PlanId = "PUBLISH_PLAN",
+        };
+        var recovery = new ActionFitPackagePublishPlan
+        {
+            Success = true,
+            ReadyToRecoverCatalog = true,
+            PackageId = "com.actionfit.beta",
+            Version = "2.0.1",
+            PlanId = "RECOVERY_PLAN",
+        };
+        string planId = ActionFitPackageBulkPublishApi.ComputePlanId(new[] { publish, recovery });
+        var plan = new ActionFitPackageBulkPublishPlan
+        {
+            Success = true,
+            ReadyToPublish = true,
+            PackageIds = new[] { publish.PackageId, recovery.PackageId },
+            PublishPackageIds = new[] { publish.PackageId },
+            CatalogRecoveryPackageIds = new[] { recovery.PackageId },
+            Packages = new[] { publish, recovery },
+            PlanId = planId,
+            RequiredApprovalText = $"PUBLISH ALL 1 PACKAGES PLAN {planId}",
+            RequiredCatalogRecoveryApprovalText = $"RECOVER CATALOG {recovery.PackageId} PLAN {planId}",
+        };
+        var request = new ActionFitPackageBulkPublishExecuteRequest
+        {
+            PackageIds = plan.PackageIds,
+            ExpectedPlanId = plan.PlanId,
+            ApprovalText = plan.RequiredApprovalText,
+            CatalogRecoveryApprovalText = plan.RequiredCatalogRecoveryApprovalText,
+            ApprovedPlan = plan,
+        };
+
+        Assert.That(ActionFitPackageBulkPublishApi.ApprovedPlanMatches(request), Is.True);
+
+        request.CatalogRecoveryApprovalText = "OTHER";
+        Assert.That(ActionFitPackageBulkPublishApi.ApprovedPlanMatches(request), Is.False);
+    }
+
+    [Test]
+    public void CreatePackageResults_MixedPlanNeverMarksRecoveryAsRepositoryPublished()
+    {
+        var publishPlan = new ActionFitPackagePublishPlan
+        {
+            Success = true,
+            ReadyToPublish = true,
+            PackageId = "com.actionfit.alpha",
+            Version = "1.0.2",
+        };
+        var recoveryPlan = new ActionFitPackagePublishPlan
+        {
+            Success = true,
+            ReadyToRecoverCatalog = true,
+            PackageId = "com.actionfit.beta",
+            Version = "2.0.1",
+        };
+        ActionFitPackagePublisher.PublishRequest publishRequest = CreatePublishRequest(publishPlan);
+        ActionFitPackagePublisher.PublishRequest recoveryRequest = CreatePublishRequest(recoveryPlan);
+        var requests = new Dictionary<string, ActionFitPackagePublisher.PublishRequest>
+        {
+            [publishPlan.PackageId] = publishRequest,
+            [recoveryPlan.PackageId] = recoveryRequest,
+        };
+
+        ActionFitPackagePublisher.PublishRequest[] repositoryRequests =
+            ActionFitPackageBulkPublishApi.SelectRepositoryPublishRequests(
+                new[] { publishPlan, recoveryPlan },
+                requests);
+        ActionFitPackagePublisher.PublishRequest[] recoveryRequests =
+            ActionFitPackageBulkPublishApi.SelectCatalogRecoveryRequests(
+                new[] { publishPlan, recoveryPlan },
+                requests);
+
+        ActionFitPackageBulkPublishPackageResult[] results = ActionFitPackageBulkPublishApi.CreatePackageResults(
+            new[] { publishPlan, recoveryPlan },
+            requests,
+            new[] { ActionFitPackagePublisher.PublishResult.Succeeded(publishRequest, "published") });
+
+        Assert.That(repositoryRequests.Select(item => item.PackageId), Is.EqualTo(new[] { publishPlan.PackageId }));
+        Assert.That(recoveryRequests.Select(item => item.PackageId), Is.EqualTo(new[] { recoveryPlan.PackageId }));
+        Assert.That(results, Has.Length.EqualTo(2));
+        Assert.That(results[0].RepositoryPublished, Is.True);
+        Assert.That(results[1].RepositoryPublished, Is.False);
+        Assert.That(results[1].CatalogRecovered, Is.False);
+        Assert.That(results[1].Message, Does.Contain("waiting for catalog append"));
     }
 
     [Test]
@@ -338,6 +555,140 @@ public sealed class ActionFitPackagePublishApiTests
     }
 
     [Test]
+    public void CompleteCatalogRecoveryPreflight_AllowsMatchingImmutableTagWithoutRepositoryActions()
+    {
+        var plan = new ActionFitPackagePublishPlan
+        {
+            Success = true,
+            PackageId = "com.actionfit.alpha",
+            Version = "1.0.1",
+            CatalogLatestVersion = "1.0.0",
+            ContentHash = "content",
+            RepositoryVisibility = "Public",
+            GitHubOrganization = "ActionFit",
+            RepositoryName = "Alpha",
+            RepositoryUrl = "https://github.com/ActionFit/Alpha.git",
+        };
+
+        ActionFitPackagePublishPlan result = ActionFitPackagePublishApi.CompleteCatalogRecoveryPreflight(
+            plan,
+            new ActionFitPackagePublisher.RemoteState(true, true, false, "main"),
+            true,
+            "0123456789012345678901234567890123456789",
+            "matched");
+
+        Assert.That(result.Success, Is.True);
+        Assert.That(result.ReadyToPublish, Is.False);
+        Assert.That(result.ReadyToRecoverCatalog, Is.True);
+        Assert.That(result.Code, Is.EqualTo("READY_TO_RECOVER_CATALOG"));
+        Assert.That(result.RequiredCatalogRecoveryApprovalText, Does.StartWith("RECOVER CATALOG com.actionfit.alpha@1.0.1"));
+        Assert.That(result.PlannedActions, Has.None.Contains("Push"));
+    }
+
+    [Test]
+    public void CompleteCatalogRecoveryPreflight_BlocksChangedContentAndSuggestsNextPatch()
+    {
+        var plan = new ActionFitPackagePublishPlan
+        {
+            Success = true,
+            PackageId = "com.actionfit.alpha",
+            Version = "1.0.1",
+            RepositoryVisibility = "Public",
+        };
+
+        ActionFitPackagePublishPlan result = ActionFitPackagePublishApi.CompleteCatalogRecoveryPreflight(
+            plan,
+            new ActionFitPackagePublisher.RemoteState(true, true, false, "main"),
+            false,
+            "0123456789012345678901234567890123456789",
+            "Package content differs at Runtime/Changed.cs.");
+
+        Assert.That(result.Success, Is.False);
+        Assert.That(result.Code, Is.EqualTo("REMOTE_TAG_CONTENT_MISMATCH"));
+        Assert.That(result.SuggestedNextVersion, Is.EqualTo("1.0.2"));
+    }
+
+    [Test]
+    public void CatalogRecoveryApprovedPlanMatches_RequiresRecoveryPlanAndExactApproval()
+    {
+        var plan = new ActionFitPackagePublishPlan
+        {
+            Success = true,
+            ReadyToRecoverCatalog = true,
+            PackageId = "com.actionfit.alpha",
+            PlanId = "RECOVERY_PLAN",
+            RequiredCatalogRecoveryApprovalText = "RECOVER EXACTLY",
+        };
+
+        Assert.That(
+            ActionFitPackagePublishApi.CatalogRecoveryApprovedPlanMatches(
+                plan,
+                plan.PackageId,
+                plan.PlanId,
+                plan.RequiredCatalogRecoveryApprovalText),
+            Is.True);
+        Assert.That(
+            ActionFitPackagePublishApi.CatalogRecoveryApprovedPlanMatches(
+                plan,
+                plan.PackageId,
+                plan.PlanId,
+                "OTHER"),
+            Is.False);
+    }
+
+    [Test]
+    public void CatalogRecoveryVerifier_NormalizesFingerprintJsonAndUnityYamlButRejectsCodeChanges()
+    {
+        string operationRoot = Path.Combine(
+            ActionFitPackagePaths.ProjectRoot,
+            "Temp",
+            "ActionFitPackageManagerTests",
+            Guid.NewGuid().ToString("N"),
+            "catalog-recovery-compare");
+        string localRoot = Path.Combine(operationRoot, "local");
+        string tagRoot = Path.Combine(operationRoot, "tag");
+        string packageInfoPath = Path.Combine("Editor", "PackageInfo", "ActionFitPackageInfo_SO.asset");
+
+        try
+        {
+            Directory.CreateDirectory(Path.Combine(localRoot, "Runtime"));
+            Directory.CreateDirectory(Path.Combine(tagRoot, "Runtime"));
+            Directory.CreateDirectory(Path.Combine(localRoot, "Editor", "PackageInfo"));
+            Directory.CreateDirectory(Path.Combine(tagRoot, "Editor", "PackageInfo"));
+            File.WriteAllText(
+                Path.Combine(localRoot, "package.json"),
+                "{\n  \"name\": \"com.actionfit.alpha\",\n  \"version\": \"1.0.1\",\n  \"_fingerprint\": \"012345\"\n}");
+            File.WriteAllText(
+                Path.Combine(tagRoot, "package.json"),
+                "{ \"name\": \"com.actionfit.alpha\", \"version\": \"1.0.1\" }");
+            File.WriteAllText(Path.Combine(localRoot, "Runtime", "Same.cs"), "public class Same {}\n");
+            File.WriteAllText(Path.Combine(tagRoot, "Runtime", "Same.cs"), "public class Same {}\n");
+            File.WriteAllText(
+                Path.Combine(localRoot, packageInfoPath),
+                "MonoBehaviour:\n  m_Name: ActionFitPackageInfo_SO\n  _packageId: com.actionfit.alpha\n  _releaseNote: \"\\uC548\\uC804\n    \\uBCF5\\uAD6C\"");
+            File.WriteAllText(
+                Path.Combine(tagRoot, packageInfoPath),
+                "MonoBehaviour:\n  m_Name: ActionFitPackageInfo_SO\n  _packageId: com.actionfit.alpha\n  _releaseNote: \"안전 복구\"");
+
+            Assert.That(
+                ActionFitPackageCatalogRecoveryVerifier.AreEquivalent(localRoot, tagRoot, out string matched),
+                Is.True,
+                matched);
+
+            File.WriteAllText(Path.Combine(localRoot, "Runtime", "Same.cs"), "public class Changed {}\n");
+            Assert.That(
+                ActionFitPackageCatalogRecoveryVerifier.AreEquivalent(localRoot, tagRoot, out string changed),
+                Is.False);
+            Assert.That(changed, Does.Contain("Runtime/Same.cs"));
+        }
+        finally
+        {
+            if (Directory.Exists(operationRoot))
+                DeleteDirectory(operationRoot);
+        }
+    }
+
+    [Test]
     public void ManagerConsole_OrdersCreateThenPublishChangedThenAddAgentSkill()
     {
         string path = Path.Combine(
@@ -478,6 +829,21 @@ public sealed class ActionFitPackagePublishApiTests
             if (Directory.Exists(operationRoot))
                 DeleteDirectory(operationRoot);
         }
+    }
+
+    private static ActionFitPackagePublisher.PublishRequest CreatePublishRequest(ActionFitPackagePublishPlan plan)
+    {
+        return new ActionFitPackagePublisher.PublishRequest(
+            "~/upm-publish",
+            $"Packages/{plan.PackageId}",
+            plan.PackageId.Replace("com.actionfit.", ""),
+            "Public",
+            "ActionFit",
+            "token-not-used",
+            false,
+            plan.PackageId,
+            plan.Version,
+            null);
     }
 
     private static void DeleteDirectory(string path)

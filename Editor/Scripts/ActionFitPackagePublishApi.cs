@@ -28,6 +28,7 @@ public sealed class ActionFitPackagePublishPlan
 {
     public bool Success;
     public bool ReadyToPublish;
+    public bool ReadyToRecoverCatalog;
     public string Code;
     public string Message;
     public string PackageId;
@@ -40,6 +41,8 @@ public sealed class ActionFitPackagePublishPlan
     public bool RepositoryExists;
     public bool RepositoryIsPrivate;
     public bool RemoteTagExists;
+    public bool CatalogRecoveryContentMatches;
+    public string RemoteTagCommit;
     public bool WillCreateRepository;
     public string GitHubOrganization;
     public string RepositoryName;
@@ -60,6 +63,7 @@ public sealed class ActionFitPackagePublishPlan
     public string PlanId;
     public string RequiredApprovalText;
     public string RequiredMigrationApprovalText;
+    public string RequiredCatalogRecoveryApprovalText;
     public ActionFitPackageContractDiagnostic[] ContractDiagnostics = Array.Empty<ActionFitPackageContractDiagnostic>();
     public string[] PlannedActions = Array.Empty<string>();
     public string[] Warnings = Array.Empty<string>();
@@ -80,6 +84,18 @@ public sealed class ActionFitPackagePublishExecuteRequest
     public bool ApproveRepositoryCreation;
     public bool ApproveRepositoryMigration;
     public string MigrationApprovalText;
+    public ActionFitPackagePublishPlan ApprovedPlan;
+}
+
+/// <summary>
+/// Explicitly approved request that registers an already published immutable tag in the catalog.
+/// </summary>
+[Serializable]
+public sealed class ActionFitPackageCatalogRecoveryExecuteRequest
+{
+    public string PackageId;
+    public string ExpectedPlanId;
+    public string ApprovalText;
     public ActionFitPackagePublishPlan ApprovedPlan;
 }
 
@@ -130,6 +146,48 @@ public static class ActionFitPackagePublishApi
         }
 
         return LogPreparedPlan(CompleteRemotePreflight(plan, remote, publishRequest), stopwatch);
+    }
+
+    /// <summary>
+    /// Prepares a catalog-only recovery plan after verifying that local package content matches the immutable remote tag.
+    /// </summary>
+    public static ActionFitPackagePublishPlan PrepareCatalogRecovery(ActionFitPackagePublishPrepareRequest request)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        ActionFitPackagePublishPlan plan = PrepareLocal(request, true, out ActionFitPackagePublisher.PublishRequest publishRequest);
+        if (!plan.Success)
+            return LogPreparedPlan(plan, stopwatch);
+        if (!request.CheckRemoteState)
+            return LogPreparedPlan(
+                Fail(plan, "REMOTE_CHECK_REQUIRED", "GitHub remote state must be checked before catalog recovery can be approved."),
+                stopwatch);
+        if (!ActionFitPackagePublisher.TryGetRemoteState(
+                publishRequest,
+                out ActionFitPackagePublisher.RemoteState remote,
+                out string remoteError))
+        {
+            return LogPreparedPlan(Fail(plan, "REMOTE_CHECK_FAILED", remoteError), stopwatch);
+        }
+
+        if (!remote.TagExists)
+        {
+            return LogPreparedPlan(
+                CompleteCatalogRecoveryPreflight(plan, remote, false, "", $"Remote tag {plan.Version} does not exist."),
+                stopwatch);
+        }
+
+        if (!ActionFitPackageCatalogRecoveryVerifier.TryVerify(
+                publishRequest,
+                out bool matches,
+                out string tagCommit,
+                out string verificationMessage))
+        {
+            return LogPreparedPlan(Fail(plan, "REMOTE_TAG_VERIFICATION_FAILED", verificationMessage), stopwatch);
+        }
+
+        return LogPreparedPlan(
+            CompleteCatalogRecoveryPreflight(plan, remote, matches, tagCommit, verificationMessage),
+            stopwatch);
     }
 
     internal static ActionFitPackagePublishPlan PrepareLocal(
@@ -330,6 +388,64 @@ public static class ActionFitPackagePublishApi
         return plan;
     }
 
+    internal static ActionFitPackagePublishPlan CompleteCatalogRecoveryPreflight(
+        ActionFitPackagePublishPlan plan,
+        ActionFitPackagePublisher.RemoteState remote,
+        bool contentMatches,
+        string tagCommit,
+        string verificationMessage)
+    {
+        if (plan == null || !plan.Success)
+            return plan ?? Fail(new ActionFitPackagePublishPlan(), "PREPARE_FAILED", "Local catalog recovery preflight is missing.");
+        if (remote == null)
+            return Fail(plan, "REMOTE_CHECK_FAILED", "GitHub remote state is missing.");
+
+        plan.RepositoryExists = remote.RepositoryExists;
+        plan.RepositoryIsPrivate = remote.RepositoryIsPrivate;
+        plan.RemoteTagExists = remote.TagExists;
+        plan.CatalogRecoveryContentMatches = contentMatches;
+        plan.RemoteTagCommit = tagCommit ?? "";
+        if (!remote.RepositoryExists)
+            return Fail(plan, "RECOVERY_REPOSITORY_MISSING", "Catalog recovery requires the already published repository.");
+        if (remote.RepositoryIsPrivate != string.Equals(plan.RepositoryVisibility, "Private", StringComparison.Ordinal))
+        {
+            return Fail(
+                plan,
+                "RECOVERY_REPOSITORY_VISIBILITY_MISMATCH",
+                $"Existing repository visibility does not match selected {plan.RepositoryVisibility}. Catalog recovery was blocked.");
+        }
+        if (!remote.TagExists)
+            return Fail(plan, "RECOVERY_REMOTE_TAG_MISSING", verificationMessage);
+        if (!contentMatches)
+        {
+            plan.SuggestedNextVersion = IncrementPatchVersion(plan.Version);
+            return Fail(
+                plan,
+                "REMOTE_TAG_CONTENT_MISMATCH",
+                $"Remote tag {plan.Version} exists, but its package content does not match the local publish candidate. " +
+                $"Catalog recovery was blocked. {verificationMessage} Bump package.json to {plan.SuggestedNextVersion} for new changes.");
+        }
+
+        plan.PlannedActions = new[]
+        {
+            $"Use immutable tag {plan.Version} at {plan.RemoteTagCommit}",
+            $"Upsert catalog row {plan.PackageId}@{plan.Version}",
+            "Refresh the shared package catalog",
+            "Do not push or modify any repository branch or tag",
+        };
+        plan.PlanId = ComputePlanId(plan);
+        plan.RequiredCatalogRecoveryApprovalText =
+            $"RECOVER CATALOG {plan.PackageId}@{plan.Version} TAG {plan.RemoteTagCommit} PLAN {plan.PlanId}";
+        plan.ReadyToPublish = false;
+        plan.ReadyToRecoverCatalog = true;
+        plan.Success = true;
+        plan.Code = "READY_TO_RECOVER_CATALOG";
+        plan.Message =
+            $"Catalog-only recovery is ready for {plan.PackageId}@{plan.Version}. " +
+            "The repository and immutable tag will not be changed.";
+        return plan;
+    }
+
     /// <summary>
     /// Re-prepares and executes a plan only when the plan hash and exact approval text still match.
     /// </summary>
@@ -495,6 +611,125 @@ public static class ActionFitPackagePublishApi
     }
 
     /// <summary>
+    /// Revalidates and appends only the catalog row for a matching immutable remote tag.
+    /// </summary>
+    public static ActionFitPackagePublishExecutionResult ExecuteCatalogRecovery(
+        ActionFitPackageCatalogRecoveryExecuteRequest request)
+    {
+        if (request == null)
+            return CatalogRecoveryFailure(null, "INVALID_REQUEST", "Catalog recovery execute request is missing.");
+        if (string.IsNullOrWhiteSpace(request.ExpectedPlanId) || string.IsNullOrWhiteSpace(request.ApprovalText))
+            return CatalogRecoveryFailure(request, "APPROVAL_REQUIRED", "ExpectedPlanId and exact ApprovalText from catalog recovery preparation are required.");
+        if (request.ApprovedPlan != null &&
+            !CatalogRecoveryApprovedPlanMatches(
+                request.ApprovedPlan,
+                request.PackageId,
+                request.ExpectedPlanId,
+                request.ApprovalText))
+        {
+            return CatalogRecoveryFailure(
+                request,
+                "APPROVED_PLAN_MISMATCH",
+                "ApprovedPlan must match PackageId, ExpectedPlanId, and ApprovalText from catalog recovery preparation.");
+        }
+
+        ActionFitPackagePublishPlan current = PrepareCatalogRecovery(new ActionFitPackagePublishPrepareRequest
+        {
+            PackageId = request.PackageId,
+            RefreshCatalog = true,
+            CheckRemoteState = true,
+        });
+        if (!current.Success || !current.ReadyToRecoverCatalog)
+        {
+            if (string.Equals(current.Code, "VERSION_ALREADY_IN_CATALOG", StringComparison.Ordinal))
+            {
+                return new ActionFitPackagePublishExecutionResult
+                {
+                    Success = true,
+                    RepositoryPublished = false,
+                    CatalogAppended = false,
+                    Code = "CATALOG_ALREADY_RECOVERED",
+                    Message = $"Catalog already contains {current.PackageId}@{current.Version}; no duplicate row was appended.",
+                    PackageId = current.PackageId,
+                    Version = current.Version,
+                    PlanId = request.ExpectedPlanId,
+                };
+            }
+            return CatalogRecoveryFailure(request, "PREFLIGHT_FAILED", current.Message, current);
+        }
+        if (!string.Equals(current.PlanId, request.ExpectedPlanId, StringComparison.Ordinal))
+        {
+            return CatalogRecoveryFailure(
+                request,
+                "PLAN_CHANGED",
+                $"Catalog recovery state changed after approval. Expected plan {request.ExpectedPlanId}, current plan {current.PlanId}. Prepare and approve again.",
+                current);
+        }
+        if (!string.Equals(current.RequiredCatalogRecoveryApprovalText, request.ApprovalText, StringComparison.Ordinal))
+            return CatalogRecoveryFailure(request, "APPROVAL_TEXT_MISMATCH", "ApprovalText does not exactly match the prepared catalog recovery plan.", current);
+
+        try
+        {
+            ActionFitPackageCatalogSettings_SO settings = ActionFitPackageCatalogSettingsProvider.FindOrCreate();
+            ActionFitPackageInfo_SO info = FindPackageInfo(request.PackageId);
+            if (!ActionFitPackagePublisher.TryCreatePublishRequest(
+                    settings,
+                    info,
+                    info.RepositoryVisibility,
+                    out ActionFitPackagePublisher.PublishRequest publishRequest,
+                    out string requestError))
+            {
+                return CatalogRecoveryFailure(request, "PUBLISH_REQUEST_INVALID", requestError, current);
+            }
+
+            bool catalogAppended = TryAppendCatalogWithSafeFallback(
+                new[] { publishRequest.CatalogItem },
+                out string catalogMessage);
+            if (!catalogAppended)
+            {
+                return new ActionFitPackagePublishExecutionResult
+                {
+                    Success = false,
+                    RepositoryPublished = false,
+                    CatalogAppended = false,
+                    RetryCatalogAppendAvailable = true,
+                    Code = "CATALOG_RECOVERY_APPEND_FAILED",
+                    Message = catalogMessage,
+                    PackageId = current.PackageId,
+                    Version = current.Version,
+                    PlanId = current.PlanId,
+                    RepositoryUrl = current.RepositoryUrl,
+                    CatalogId = publishRequest.CatalogId,
+                };
+            }
+
+            string[] warnings = Array.Empty<string>();
+            if (!ActionFitPackageCatalogUpdater.UpdateCatalog(settings, out string refreshMessage, false))
+                warnings = new[] { $"Catalog row recovery succeeded, but catalog refresh failed: {refreshMessage}" };
+
+            return new ActionFitPackagePublishExecutionResult
+            {
+                Success = true,
+                RepositoryPublished = false,
+                CatalogAppended = true,
+                Code = "CATALOG_RECOVERED",
+                Message =
+                    $"{current.PackageId}@{current.Version} was registered in the catalog without changing the repository or tag.",
+                PackageId = current.PackageId,
+                Version = current.Version,
+                PlanId = current.PlanId,
+                RepositoryUrl = current.RepositoryUrl,
+                CatalogId = publishRequest.CatalogId,
+                Warnings = warnings,
+            };
+        }
+        catch (Exception ex)
+        {
+            return CatalogRecoveryFailure(request, "CATALOG_RECOVERY_FAILED", ex.Message, current);
+        }
+    }
+
+    /// <summary>
     /// JSON wrapper for preparing a publish plan through AI connectors.
     /// </summary>
     public static string PrepareJson(string requestJson)
@@ -521,6 +756,34 @@ public static class ActionFitPackagePublishApi
         catch (Exception ex)
         {
             return JsonUtility.ToJson(ExecutionFailure(null, "INVALID_REQUEST_JSON", ex.Message), true);
+        }
+    }
+
+    public static string PrepareCatalogRecoveryJson(string requestJson)
+    {
+        try
+        {
+            return JsonUtility.ToJson(
+                PrepareCatalogRecovery(JsonUtility.FromJson<ActionFitPackagePublishPrepareRequest>(requestJson ?? "")),
+                true);
+        }
+        catch (Exception ex)
+        {
+            return JsonUtility.ToJson(Fail(new ActionFitPackagePublishPlan(), "INVALID_REQUEST_JSON", ex.Message), true);
+        }
+    }
+
+    public static string ExecuteCatalogRecoveryJson(string requestJson)
+    {
+        try
+        {
+            return JsonUtility.ToJson(
+                ExecuteCatalogRecovery(JsonUtility.FromJson<ActionFitPackageCatalogRecoveryExecuteRequest>(requestJson ?? "")),
+                true);
+        }
+        catch (Exception ex)
+        {
+            return JsonUtility.ToJson(CatalogRecoveryFailure(null, "INVALID_REQUEST_JSON", ex.Message), true);
         }
     }
 
@@ -554,6 +817,20 @@ public static class ActionFitPackagePublishApi
                string.Equals(plan.PackageId, packageId, StringComparison.Ordinal) &&
                string.Equals(plan.PlanId, expectedPlanId, StringComparison.Ordinal) &&
                string.Equals(plan.RequiredApprovalText, approvalText, StringComparison.Ordinal);
+    }
+
+    internal static bool CatalogRecoveryApprovedPlanMatches(
+        ActionFitPackagePublishPlan plan,
+        string packageId,
+        string expectedPlanId,
+        string approvalText)
+    {
+        return plan != null &&
+               plan.Success &&
+               plan.ReadyToRecoverCatalog &&
+               string.Equals(plan.PackageId, packageId, StringComparison.Ordinal) &&
+               string.Equals(plan.PlanId, expectedPlanId, StringComparison.Ordinal) &&
+               string.Equals(plan.RequiredCatalogRecoveryApprovalText, approvalText, StringComparison.Ordinal);
     }
 
     internal static bool MigrationApprovalMatches(
@@ -595,6 +872,8 @@ public static class ActionFitPackagePublishApi
             plan.RepositoryExists.ToString(),
             plan.RepositoryIsPrivate.ToString(),
             plan.RemoteTagExists.ToString(),
+            plan.CatalogRecoveryContentMatches.ToString(),
+            plan.RemoteTagCommit ?? "",
             plan.SourceRepositoryUrl ?? "",
             plan.RepositoryMigrationRequired.ToString(),
             plan.WillMirrorRepository.ToString(),
@@ -614,11 +893,36 @@ public static class ActionFitPackagePublishApi
         return $"{major}.{minor}.{patch + 1}";
     }
 
+    private static string IncrementPatchVersion(string version)
+        => SuggestNextVersion("", version);
+
+    private static bool TryAppendCatalogWithSafeFallback(
+        ActionFitPackagePublisher.CatalogAppendItem[] items,
+        out string message)
+    {
+        if (ActionFitPackagePublisher.TryAppendCatalogBatch(items, out message)) return true;
+
+        string batchMessage = message;
+        if (!ActionFitPackageBulkPublishApi.ShouldAttemptSerialFallback(batchMessage))
+        {
+            message =
+                $"Catalog batch append failed and serial fallback was skipped because the outcome was ambiguous. {batchMessage}";
+            return false;
+        }
+
+        bool serialSucceeded = ActionFitPackagePublisher.TryAppendCatalogSerial(items, out string serialMessage);
+        message = serialSucceeded
+            ? $"Batch append failed, serial upsert succeeded. Batch: {batchMessage} Serial: {serialMessage}"
+            : $"Batch append failed: {batchMessage} Serial upsert failed: {serialMessage}";
+        return serialSucceeded;
+    }
+
     private static ActionFitPackagePublishPlan Fail(ActionFitPackagePublishPlan plan, string code, string message)
     {
         plan ??= new ActionFitPackagePublishPlan();
         plan.Success = false;
         plan.ReadyToPublish = false;
+        plan.ReadyToRecoverCatalog = false;
         plan.Code = code;
         plan.Message = message;
         return plan;
@@ -633,6 +937,26 @@ public static class ActionFitPackagePublishApi
         return new ActionFitPackagePublishExecutionResult
         {
             Success = false,
+            Code = code,
+            Message = message,
+            PackageId = plan?.PackageId ?? request?.PackageId ?? "",
+            Version = plan?.Version ?? "",
+            PlanId = plan?.PlanId ?? request?.ExpectedPlanId ?? "",
+            RepositoryUrl = plan?.RepositoryUrl ?? "",
+        };
+    }
+
+    private static ActionFitPackagePublishExecutionResult CatalogRecoveryFailure(
+        ActionFitPackageCatalogRecoveryExecuteRequest request,
+        string code,
+        string message,
+        ActionFitPackagePublishPlan plan = null)
+    {
+        return new ActionFitPackagePublishExecutionResult
+        {
+            Success = false,
+            RepositoryPublished = false,
+            CatalogAppended = false,
             Code = code,
             Message = message,
             PackageId = plan?.PackageId ?? request?.PackageId ?? "",

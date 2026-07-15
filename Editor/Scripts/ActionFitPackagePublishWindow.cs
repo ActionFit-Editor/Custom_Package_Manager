@@ -173,6 +173,12 @@ public class ActionFitPackagePublishWindow : EditorWindow
                     EditorGUIUtility.PingObject(entry.Info);
                 }
 
+                if (_mode == Mode.Changed &&
+                    GUILayout.Button("Recover Catalog Entry", GUILayout.Width(175)))
+                {
+                    ScheduleGuiAction(() => RecoverCatalogEntry(entry));
+                }
+
                 string button = _mode switch
                 {
                     Mode.Create => "Initial Publish",
@@ -266,8 +272,15 @@ public class ActionFitPackagePublishWindow : EditorWindow
             });
         if (!plan.Success || !plan.ReadyToPublish)
         {
-            Debug.LogWarning($"[ActionFitPackageManager] Publish preflight failed: {plan.Message}");
-            EditorUtility.DisplayDialog("ActionFit Package Manager", plan.Message, "OK");
+            string message = plan.Message;
+            if (string.Equals(plan.Code, "REMOTE_TAG_ALREADY_EXISTS", StringComparison.Ordinal))
+            {
+                message +=
+                    "\n\nIf the immutable tag was already published and only its catalog row is missing, " +
+                    "use Recover Catalog Entry. Recovery verifies the tag content and never pushes the repository again.";
+            }
+            Debug.LogWarning($"[ActionFitPackageManager] Publish preflight failed: {message}");
+            EditorUtility.DisplayDialog("ActionFit Package Manager", message, "OK");
             ScheduleReload();
             return;
         }
@@ -323,6 +336,63 @@ public class ActionFitPackagePublishWindow : EditorWindow
         ScheduleReload();
     }
 
+    private void RecoverCatalogEntry(Entry entry)
+    {
+        ActionFitPackagePublishPlan plan = ActionFitPackagePublishApi.PrepareCatalogRecovery(
+            new ActionFitPackagePublishPrepareRequest
+            {
+                PackageId = entry.PackageId,
+                RefreshCatalog = true,
+                CheckRemoteState = true,
+            });
+        if (!plan.Success || !plan.ReadyToRecoverCatalog)
+        {
+            Debug.LogWarning($"[ActionFitPackageManager] Catalog recovery preflight failed: {plan.Message}");
+            EditorUtility.DisplayDialog("ActionFit Package Manager", plan.Message, "OK");
+            ScheduleReload();
+            return;
+        }
+
+        if (!EditorUtility.DisplayDialog(
+                "Recover Catalog Entry",
+                $"Register the already published immutable tag without publishing the repository again?\n\n" +
+                $"Package: {plan.PackageId}@{plan.Version}\n" +
+                $"Catalog latest: {plan.CatalogLatestVersion}\n" +
+                $"Repository: {plan.RepositoryUrl}\n" +
+                $"Tag commit: {plan.RemoteTagCommit}\n\n" +
+                "The repository, main branch, and tag will not be changed. Only the catalog row will be appended.\n\n" +
+                $"Plan: {plan.PlanId}\nApproval: {plan.RequiredCatalogRecoveryApprovalText}",
+                "Recover Catalog Entry",
+                "Cancel"))
+        {
+            return;
+        }
+
+        ActionFitPackagePublishExecutionResult result = ActionFitPackagePublishApi.ExecuteCatalogRecovery(
+            new ActionFitPackageCatalogRecoveryExecuteRequest
+            {
+                PackageId = plan.PackageId,
+                ExpectedPlanId = plan.PlanId,
+                ApprovalText = plan.RequiredCatalogRecoveryApprovalText,
+                ApprovedPlan = plan,
+            });
+        if (!result.Success)
+        {
+            string message = result.Message;
+            if (result.RetryCatalogAppendAvailable)
+                message += "\n\nNo repository state was changed. Use Recover Catalog Entry to retry the catalog-only operation.";
+            Debug.LogError($"[ActionFitPackageManager] Catalog recovery failed: {message}");
+            EditorUtility.DisplayDialog("ActionFit Package Manager", message, "OK");
+            ScheduleReload();
+            return;
+        }
+
+        Debug.Log($"[ActionFitPackageManager] Catalog recovery complete: {result.Message}");
+        foreach (string warning in result.Warnings ?? Array.Empty<string>())
+            Debug.LogWarning($"[ActionFitPackageManager] {warning}");
+        ScheduleReload();
+    }
+
     private void PublishAllChanged()
     {
         var targets = _entries.ToArray();
@@ -357,11 +427,13 @@ public class ActionFitPackagePublishWindow : EditorWindow
         }
 
         string list = string.Join("\n", plan.Packages.Select(item =>
-            $"- {item.PackageId}@{item.Version}: " +
-            (item.WillCreateRepository
-                ? $"create {item.RepositoryVisibility} {item.GitHubOrganization}/{item.RepositoryName}"
-                : $"publish to {item.GitHubOrganization}/{item.RepositoryName}") +
-            (item.RepositoryMigrationRequired ? $" (migrate from {item.SourceRepositoryUrl})" : "")));
+            item.ReadyToRecoverCatalog
+                ? $"- {item.PackageId}@{item.Version}: Recover Catalog only from immutable tag {item.RemoteTagCommit}"
+                : $"- {item.PackageId}@{item.Version}: " +
+                  (item.WillCreateRepository
+                      ? $"create {item.RepositoryVisibility} {item.GitHubOrganization}/{item.RepositoryName}"
+                      : $"publish to {item.GitHubOrganization}/{item.RepositoryName}") +
+                  (item.RepositoryMigrationRequired ? $" (migrate from {item.SourceRepositoryUrl})" : "")));
         if (plan.RepositoryMigrationPackageIds.Length > 0 &&
             !EditorUtility.DisplayDialog(
                 "Approve Repository Migrations",
@@ -377,9 +449,25 @@ public class ActionFitPackagePublishWindow : EditorWindow
         {
             return;
         }
-        if (!EditorUtility.DisplayDialog(
+        if (plan.CatalogRecoveryPackageIds.Length > 0 &&
+            !EditorUtility.DisplayDialog(
+                "Approve Catalog Recoveries",
+                $"Recover {plan.CatalogRecoveryPackageIds.Length} catalog row(s) without publishing their repositories?\n\n" +
+                string.Join("\n", plan.Packages
+                    .Where(item => item.ReadyToRecoverCatalog)
+                    .Select(item => $"- {item.PackageId}@{item.Version}: immutable tag {item.RemoteTagCommit}")) +
+                "\n\nEach tag was checked for repository visibility, package identity, and content equivalence. " +
+                "Repository branches and tags will not be changed.\n\n" +
+                $"Catalog recovery approval: {plan.RequiredCatalogRecoveryApprovalText}",
+                "Approve Recoveries",
+                "Cancel"))
+        {
+            return;
+        }
+        if (plan.PublishPackageIds.Length > 0 &&
+            !EditorUtility.DisplayDialog(
                 "ActionFit Package Manager",
-                $"Publish all changed packages?\n\n{list}\n\nPlan: {plan.PlanId}\nApproval: {plan.RequiredApprovalText}\n\nThe catalog and GitHub state were refreshed before this check. Repository publish runs up to {plan.MaxParallelPublishes} packages at once, then catalog rows are appended in one batch request.",
+                $"Execute the bulk package plan?\n\n{list}\n\nPlan: {plan.PlanId}\nPublish approval: {plan.RequiredApprovalText}\n\nThe catalog and GitHub state were refreshed before this check. Repository publish runs up to {plan.MaxParallelPublishes} packages at once. Published rows and separately approved recovery rows are appended in one catalog batch request.",
                 "Publish All Changed",
                 "Cancel"))
             return;
@@ -398,6 +486,7 @@ public class ActionFitPackagePublishWindow : EditorWindow
                         ApprovedRepositoryCreationPackageIds = plan.RepositoryCreationPackageIds,
                         ApprovedRepositoryMigrationPackageIds = plan.RepositoryMigrationPackageIds,
                         MigrationApprovalText = plan.RequiredMigrationApprovalText,
+                        CatalogRecoveryApprovalText = plan.RequiredCatalogRecoveryApprovalText,
                         ApprovedPlan = plan,
                     },
                     CreateProgressReporter(executionCancellation),
@@ -417,7 +506,7 @@ public class ActionFitPackagePublishWindow : EditorWindow
         {
             string message = result.Message;
             if (result.RetryCatalogAppendAvailable)
-                message += "\n\nRepository-published rows were kept in this window. Use Retry Catalog Append without publishing repositories again.";
+                message += "\n\nApproved catalog rows were kept in this window. Use Retry Catalog Append without publishing repositories again.";
             Debug.LogError($"[ActionFitPackageManager] {message}");
             EditorUtility.DisplayDialog("ActionFit Package Manager", message, "OK");
             ScheduleReload();

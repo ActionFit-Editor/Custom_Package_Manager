@@ -29,9 +29,12 @@ public sealed class ActionFitPackageBulkPublishPlan
     public string PlanId;
     public string RequiredApprovalText;
     public string[] PackageIds = Array.Empty<string>();
+    public string[] PublishPackageIds = Array.Empty<string>();
+    public string[] CatalogRecoveryPackageIds = Array.Empty<string>();
     public string[] RepositoryCreationPackageIds = Array.Empty<string>();
     public string[] RepositoryMigrationPackageIds = Array.Empty<string>();
     public string RequiredMigrationApprovalText;
+    public string RequiredCatalogRecoveryApprovalText;
     public ActionFitPackagePublishPlan[] Packages = Array.Empty<ActionFitPackagePublishPlan>();
     public int MaxParallelPublishes = ActionFitPackagePublisher.DefaultMaxParallelPublishes;
     public string[] Warnings = Array.Empty<string>();
@@ -46,6 +49,7 @@ public sealed class ActionFitPackageBulkPublishExecuteRequest
     public string[] ApprovedRepositoryCreationPackageIds = Array.Empty<string>();
     public string[] ApprovedRepositoryMigrationPackageIds = Array.Empty<string>();
     public string MigrationApprovalText;
+    public string CatalogRecoveryApprovalText;
     public ActionFitPackageBulkPublishPlan ApprovedPlan;
 }
 
@@ -64,9 +68,30 @@ public sealed class ActionFitPackageBulkPublishPackageResult
     public string PackageId;
     public string Version;
     public bool RepositoryPublished;
+    public bool CatalogRecovered;
     public string RepositoryUrl;
     public string CatalogId;
     public string Message;
+}
+
+internal sealed class ActionFitPackageCatalogRecoveryVerification
+{
+    public ActionFitPackageCatalogRecoveryVerification(
+        bool success,
+        bool contentMatches,
+        string tagCommit,
+        string message)
+    {
+        Success = success;
+        ContentMatches = contentMatches;
+        TagCommit = tagCommit ?? "";
+        Message = message ?? "";
+    }
+
+    public bool Success { get; }
+    public bool ContentMatches { get; }
+    public string TagCommit { get; }
+    public string Message { get; }
 }
 
 [Serializable]
@@ -179,15 +204,18 @@ public static class ActionFitPackageBulkPublishApi
             {
                 RemotePreflightResult remoteResult = remoteResults[index];
                 packages[index] = remoteResult.Success
-                    ? ActionFitPackagePublishApi.CompleteRemotePreflight(
+                    ? CompleteBulkRemotePreflight(
                         packages[index],
                         remoteResult.State,
-                        publishRequests[index])
+                        publishRequests[index],
+                        VerifyCatalogRecovery)
                     : FailPackage(packages[index], "REMOTE_CHECK_FAILED", remoteResult.Message);
             }
 
             plan.Packages = packages.ToArray();
-            failed = packages.Where(item => !item.Success || !item.ReadyToPublish).ToArray();
+            failed = packages.Where(item =>
+                !item.Success ||
+                (!item.ReadyToPublish && !item.ReadyToRecoverCatalog)).ToArray();
             if (failed.Length > 0)
             {
                 string details = string.Join("\n", failed.Select(item => $"- {item.PackageId}: {item.Code} - {item.Message}"));
@@ -196,26 +224,45 @@ public static class ActionFitPackageBulkPublishApi
                     stopwatch);
             }
 
+            plan.PublishPackageIds = packages
+                .Where(item => item.ReadyToPublish)
+                .Select(item => item.PackageId)
+                .OrderBy(value => value, StringComparer.Ordinal)
+                .ToArray();
+            plan.CatalogRecoveryPackageIds = packages
+                .Where(item => item.ReadyToRecoverCatalog)
+                .Select(item => item.PackageId)
+                .OrderBy(value => value, StringComparer.Ordinal)
+                .ToArray();
             plan.RepositoryCreationPackageIds = packages
+                .Where(item => item.ReadyToPublish)
                 .Where(item => item.WillCreateRepository)
                 .Select(item => item.PackageId)
                 .OrderBy(value => value, StringComparer.Ordinal)
                 .ToArray();
             plan.RepositoryMigrationPackageIds = packages
+                .Where(item => item.ReadyToPublish)
                 .Where(item => item.RepositoryMigrationRequired)
                 .Select(item => item.PackageId)
                 .OrderBy(value => value, StringComparer.Ordinal)
                 .ToArray();
             plan.PlanId = ComputePlanId(packages);
-            plan.RequiredApprovalText = $"PUBLISH ALL {packages.Count} PACKAGES PLAN {plan.PlanId}";
+            plan.RequiredApprovalText = plan.PublishPackageIds.Length == 0
+                ? ""
+                : $"PUBLISH ALL {plan.PublishPackageIds.Length} PACKAGES PLAN {plan.PlanId}";
             plan.RequiredMigrationApprovalText = plan.RepositoryMigrationPackageIds.Length == 0
                 ? ""
                 : $"MIGRATE REPOSITORIES {string.Join(",", plan.RepositoryMigrationPackageIds)} PLAN {plan.PlanId}";
+            plan.RequiredCatalogRecoveryApprovalText = plan.CatalogRecoveryPackageIds.Length == 0
+                ? ""
+                : $"RECOVER CATALOG {string.Join(",", plan.CatalogRecoveryPackageIds)} PLAN {plan.PlanId}";
             plan.Warnings = packages.SelectMany(item => item.Warnings ?? Array.Empty<string>()).Distinct().ToArray();
             plan.Success = true;
             plan.ReadyToPublish = true;
             plan.Code = "READY_TO_PUBLISH";
-            plan.Message = $"Bulk publish plan is ready for {packages.Count} package(s). No external state was changed.";
+            plan.Message =
+                $"Bulk plan is ready for {plan.PublishPackageIds.Length} publish package(s) and " +
+                $"{plan.CatalogRecoveryPackageIds.Length} catalog recovery package(s). No external state was changed.";
             ReportProgress(onProgress, "preflight-complete", plan.Message, packages.Count, packages.Count, 0.5f);
             return LogPreparedPlan(plan, stopwatch);
         }
@@ -227,6 +274,59 @@ public static class ActionFitPackageBulkPublishApi
         {
             return LogPreparedPlan(Fail(plan, "PREPARE_FAILED", ex.Message), stopwatch);
         }
+    }
+
+    internal static ActionFitPackagePublishPlan CompleteBulkRemotePreflight(
+        ActionFitPackagePublishPlan plan,
+        ActionFitPackagePublisher.RemoteState remote,
+        ActionFitPackagePublisher.PublishRequest publishRequest,
+        Func<ActionFitPackagePublisher.PublishRequest, ActionFitPackageCatalogRecoveryVerification> recoveryVerifier)
+    {
+        if (plan == null || !plan.Success)
+            return plan ?? FailPackage(null, "PREPARE_FAILED", "Local bulk preflight is missing.");
+        if (remote == null || !remote.TagExists)
+            return ActionFitPackagePublishApi.CompleteRemotePreflight(plan, remote, publishRequest);
+
+        bool expectedPrivate = string.Equals(plan?.RepositoryVisibility, "Private", StringComparison.Ordinal);
+        if (!remote.RepositoryExists || remote.RepositoryIsPrivate != expectedPrivate)
+        {
+            return ActionFitPackagePublishApi.CompleteCatalogRecoveryPreflight(
+                plan,
+                remote,
+                false,
+                "",
+                "Catalog recovery eligibility could not be verified because the repository identity or visibility does not match.");
+        }
+
+        if (recoveryVerifier == null)
+            return FailPackage(plan, "REMOTE_TAG_VERIFICATION_FAILED", "Catalog recovery verifier is missing.");
+
+        ActionFitPackageCatalogRecoveryVerification verification = recoveryVerifier(publishRequest);
+        if (verification == null || !verification.Success)
+        {
+            return FailPackage(
+                plan,
+                "REMOTE_TAG_VERIFICATION_FAILED",
+                verification?.Message ?? "Catalog recovery verification did not return a result.");
+        }
+
+        return ActionFitPackagePublishApi.CompleteCatalogRecoveryPreflight(
+            plan,
+            remote,
+            verification.ContentMatches,
+            verification.TagCommit,
+            verification.Message);
+    }
+
+    private static ActionFitPackageCatalogRecoveryVerification VerifyCatalogRecovery(
+        ActionFitPackagePublisher.PublishRequest publishRequest)
+    {
+        bool success = ActionFitPackageCatalogRecoveryVerifier.TryVerify(
+            publishRequest,
+            out bool contentMatches,
+            out string tagCommit,
+            out string message);
+        return new ActionFitPackageCatalogRecoveryVerification(success, contentMatches, tagCommit, message);
     }
 
     public static ActionFitPackageBulkPublishExecutionResult ExecuteAll(ActionFitPackageBulkPublishExecuteRequest request)
@@ -242,9 +342,9 @@ public static class ActionFitPackageBulkPublishApi
             return LogExecutionResult(
                 ExecutionFailure(null, "INVALID_REQUEST", "Bulk publish execute request is missing."),
                 stopwatch);
-        if (string.IsNullOrWhiteSpace(request.ExpectedPlanId) || string.IsNullOrWhiteSpace(request.ApprovalText))
+        if (string.IsNullOrWhiteSpace(request.ExpectedPlanId))
             return LogExecutionResult(
-                ExecutionFailure(request, "APPROVAL_REQUIRED", "ExpectedPlanId and exact ApprovalText from PrepareAllChanged are required."),
+                ExecutionFailure(request, "APPROVAL_REQUIRED", "ExpectedPlanId from PrepareAllChanged is required."),
                 stopwatch);
 
         bool hasApprovedPlan = request.ApprovedPlan != null;
@@ -277,9 +377,17 @@ public static class ActionFitPackageBulkPublishApi
             return LogExecutionResult(
                 ExecutionFailure(request, "PLAN_CHANGED", $"Bulk publish state changed after approval. Expected plan {request.ExpectedPlanId}, current plan {current.PlanId}. Prepare and approve again.", current),
                 stopwatch);
-        if (!string.Equals(current.RequiredApprovalText, request.ApprovalText, StringComparison.Ordinal))
+        if (!PublishApprovalMatches(current, request.ApprovalText))
             return LogExecutionResult(
-                ExecutionFailure(request, "APPROVAL_TEXT_MISMATCH", "ApprovalText does not exactly match the prepared bulk publish plan.", current),
+                ExecutionFailure(request, "APPROVAL_TEXT_MISMATCH", "ApprovalText does not exactly match the prepared bulk publish items.", current),
+                stopwatch);
+        if (!CatalogRecoveryApprovalMatches(current, request.CatalogRecoveryApprovalText))
+            return LogExecutionResult(
+                ExecutionFailure(
+                    request,
+                    "CATALOG_RECOVERY_APPROVAL_REQUIRED",
+                    "CatalogRecoveryApprovalText must exactly match the separate catalog recovery approval returned by PrepareAllChanged.",
+                    current),
                 stopwatch);
 
         string[] approvedCreates = NormalizePackageIds(request.ApprovedRepositoryCreationPackageIds);
@@ -313,7 +421,7 @@ public static class ActionFitPackageBulkPublishApi
             cancellationToken.ThrowIfCancellationRequested();
             ReportProgress(onProgress, "snapshot", "Creating immutable publish snapshots...", 0, current.Packages.Length, 0.52f);
             ActionFitPackageCatalogSettings_SO settings = ActionFitPackageCatalogSettingsProvider.FindOrCreate();
-            var publishRequests = new List<ActionFitPackagePublisher.PublishRequest>();
+            var publishRequestsById = new Dictionary<string, ActionFitPackagePublisher.PublishRequest>(StringComparer.Ordinal);
             for (int index = 0; index < current.Packages.Length; index++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -331,8 +439,13 @@ public static class ActionFitPackageBulkPublishApi
                         stopwatch);
                 }
                 publishRequest.SourceRepositoryUrl = packagePlan.SourceRepositoryUrl;
-                publishRequests.Add(publishRequest);
+                publishRequestsById.Add(packagePlan.PackageId, publishRequest);
             }
+
+            ActionFitPackagePublisher.PublishRequest[] repositoryPublishRequests =
+                SelectRepositoryPublishRequests(current.Packages, publishRequestsById);
+            ActionFitPackagePublisher.PublishRequest[] catalogRecoveryRequests =
+                SelectCatalogRecoveryRequests(current.Packages, publishRequestsById);
 
             for (int index = 0; index < current.Packages.Length; index++)
             {
@@ -348,7 +461,7 @@ public static class ActionFitPackageBulkPublishApi
                     0.54f);
                 ActionFitPackageRepositoryMigration.MigrationResult migration =
                     ActionFitPackageRepositoryMigration.Execute(
-                        publishRequests[index],
+                        publishRequestsById[packagePlan.PackageId],
                         packagePlan.RepositoryMigrationFingerprint);
                 if (!migration.Success)
                 {
@@ -363,12 +476,15 @@ public static class ActionFitPackageBulkPublishApi
             }
 
             ActionFitPackagePublisher.PublishResult[] repositoryResults = PublishRepositoriesParallel(
-                publishRequests,
+                repositoryPublishRequests,
                 onProgress,
                 cancellationToken);
             ActionFitPackagePublisher.PublishResult[] succeeded = repositoryResults.Where(item => item.Success).ToArray();
             ActionFitPackagePublisher.PublishResult[] failed = repositoryResults.Where(item => !item.Success).ToArray();
-            ActionFitPackageBulkPublishPackageResult[] packageResults = repositoryResults.Select(ToPackageResult).ToArray();
+            ActionFitPackageBulkPublishPackageResult[] packageResults = CreatePackageResults(
+                current.Packages,
+                publishRequestsById,
+                repositoryResults);
             ActionFitPackagePublisher.CatalogAppendItem[] successfulCatalogItems = succeeded.Select(item => item.Request.CatalogItem).ToArray();
 
             if (failed.Length > 0)
@@ -393,6 +509,13 @@ public static class ActionFitPackageBulkPublishApi
                 }, stopwatch);
             }
 
+            ActionFitPackagePublisher.CatalogAppendItem[] recoveryCatalogItems = catalogRecoveryRequests
+                .Select(item => item.CatalogItem)
+                .ToArray();
+            ActionFitPackagePublisher.CatalogAppendItem[] allCatalogItems = successfulCatalogItems
+                .Concat(recoveryCatalogItems)
+                .ToArray();
+
             if (cancellationToken.IsCancellationRequested)
             {
                 return LogExecutionResult(new ActionFitPackageBulkPublishExecutionResult
@@ -405,13 +528,13 @@ public static class ActionFitPackageBulkPublishApi
                     Message = "Repository publishing completed, but catalog append was canceled. Retry the retained catalog rows without publishing repositories again.",
                     PlanId = current.PlanId,
                     Packages = packageResults,
-                    RetryCatalogPackageIds = successfulCatalogItems.Select(item => item.PackageId).ToArray(),
-                    RetryCatalogItems = successfulCatalogItems,
+                    RetryCatalogPackageIds = allCatalogItems.Select(item => item.PackageId).ToArray(),
+                    RetryCatalogItems = allCatalogItems,
                 }, stopwatch);
             }
 
             CatalogAppendOutcome catalogOutcome = AppendCatalogWithProgress(
-                successfulCatalogItems,
+                allCatalogItems,
                 onProgress,
                 cancellationToken);
             if (!catalogOutcome.Success)
@@ -426,24 +549,38 @@ public static class ActionFitPackageBulkPublishApi
                     Message = catalogOutcome.Message,
                     PlanId = current.PlanId,
                     Packages = packageResults,
-                    RetryCatalogPackageIds = successfulCatalogItems.Select(item => item.PackageId).ToArray(),
-                    RetryCatalogItems = successfulCatalogItems,
+                    RetryCatalogPackageIds = allCatalogItems.Select(item => item.PackageId).ToArray(),
+                    RetryCatalogItems = allCatalogItems,
                 }, stopwatch);
             }
 
-            string[] warnings = Array.Empty<string>();
-            ReportProgress(onProgress, "catalog-refresh", "Refreshing catalog after publish...", 0, 1, 0.96f);
-            if (!ActionFitPackageCatalogUpdater.UpdateCatalog(settings, out string refreshMessage, false))
-                warnings = new[] { $"Bulk publish succeeded, but catalog refresh failed: {refreshMessage}" };
+            foreach (ActionFitPackageBulkPublishPackageResult packageResult in packageResults)
+            {
+                if (!current.CatalogRecoveryPackageIds.Contains(packageResult.PackageId, StringComparer.Ordinal)) continue;
+                packageResult.CatalogRecovered = true;
+                packageResult.Message = "The existing immutable tag was registered in the catalog without repository publication.";
+            }
 
-            ReportProgress(onProgress, "complete", "Bulk publish complete.", publishRequests.Count, publishRequests.Count, 1f);
+            string[] warnings = Array.Empty<string>();
+            ReportProgress(onProgress, "catalog-refresh", "Refreshing catalog after bulk plan...", 0, 1, 0.96f);
+            if (!ActionFitPackageCatalogUpdater.UpdateCatalog(settings, out string refreshMessage, false))
+                warnings = new[] { $"Bulk package plan succeeded, but catalog refresh failed: {refreshMessage}" };
+
+            ReportProgress(onProgress, "complete", "Bulk package plan complete.", current.Packages.Length, current.Packages.Length, 1f);
+            string resultCode = current.PublishPackageIds.Length == 0
+                ? "CATALOG_RECOVERED"
+                : current.CatalogRecoveryPackageIds.Length == 0
+                    ? "PUBLISHED"
+                    : "PUBLISHED_AND_CATALOG_RECOVERED";
             return LogExecutionResult(new ActionFitPackageBulkPublishExecutionResult
             {
                 Success = true,
                 AllRepositoriesPublished = true,
                 CatalogAppended = true,
-                Code = "PUBLISHED",
-                Message = $"{publishRequests.Count} package repository(s) were published and registered in the catalog.",
+                Code = resultCode,
+                Message =
+                    $"{current.PublishPackageIds.Length} package repository(s) were published and " +
+                    $"{current.CatalogRecoveryPackageIds.Length} existing tag(s) were recovered into the catalog.",
                 PlanId = current.PlanId,
                 Packages = packageResults,
                 Warnings = warnings,
@@ -712,6 +849,63 @@ public static class ActionFitPackageBulkPublishApi
         };
     }
 
+    internal static ActionFitPackageBulkPublishPackageResult[] CreatePackageResults(
+        IReadOnlyList<ActionFitPackagePublishPlan> packagePlans,
+        IReadOnlyDictionary<string, ActionFitPackagePublisher.PublishRequest> publishRequestsById,
+        IReadOnlyList<ActionFitPackagePublisher.PublishResult> repositoryResults)
+    {
+        var repositoryResultsById = (repositoryResults ?? Array.Empty<ActionFitPackagePublisher.PublishResult>())
+            .Where(item => item?.Request != null)
+            .ToDictionary(item => item.Request.PackageId, item => item, StringComparer.Ordinal);
+
+        return (packagePlans ?? Array.Empty<ActionFitPackagePublishPlan>()).Select(plan =>
+        {
+            if (plan.ReadyToRecoverCatalog)
+            {
+                ActionFitPackagePublisher.PublishRequest recoveryRequest = publishRequestsById[plan.PackageId];
+                return new ActionFitPackageBulkPublishPackageResult
+                {
+                    PackageId = plan.PackageId,
+                    Version = plan.Version,
+                    RepositoryPublished = false,
+                    CatalogRecovered = false,
+                    RepositoryUrl = $"https://github.com/{recoveryRequest.GitHubOrganization}/{recoveryRequest.RepoName}.git",
+                    CatalogId = recoveryRequest.CatalogId,
+                    Message = "Catalog recovery is approved and waiting for catalog append.",
+                };
+            }
+
+            return repositoryResultsById.TryGetValue(plan.PackageId, out ActionFitPackagePublisher.PublishResult result)
+                ? ToPackageResult(result)
+                : new ActionFitPackageBulkPublishPackageResult
+                {
+                    PackageId = plan.PackageId,
+                    Version = plan.Version,
+                    Message = "Repository publish result is missing.",
+                };
+        }).ToArray();
+    }
+
+    internal static ActionFitPackagePublisher.PublishRequest[] SelectRepositoryPublishRequests(
+        IEnumerable<ActionFitPackagePublishPlan> packagePlans,
+        IReadOnlyDictionary<string, ActionFitPackagePublisher.PublishRequest> publishRequestsById)
+    {
+        return (packagePlans ?? Array.Empty<ActionFitPackagePublishPlan>())
+            .Where(item => item.ReadyToPublish)
+            .Select(item => publishRequestsById[item.PackageId])
+            .ToArray();
+    }
+
+    internal static ActionFitPackagePublisher.PublishRequest[] SelectCatalogRecoveryRequests(
+        IEnumerable<ActionFitPackagePublishPlan> packagePlans,
+        IReadOnlyDictionary<string, ActionFitPackagePublisher.PublishRequest> publishRequestsById)
+    {
+        return (packagePlans ?? Array.Empty<ActionFitPackagePublishPlan>())
+            .Where(item => item.ReadyToRecoverCatalog)
+            .Select(item => publishRequestsById[item.PackageId])
+            .ToArray();
+    }
+
     private static string[] NormalizePackageIds(IEnumerable<string> packageIds)
     {
         return (packageIds ?? Array.Empty<string>())
@@ -741,7 +935,8 @@ public static class ActionFitPackageBulkPublishApi
         if (plan == null || !plan.Success || !plan.ReadyToPublish || plan.Packages == null)
             return false;
         if (!string.Equals(plan.PlanId, request.ExpectedPlanId, StringComparison.Ordinal) ||
-            !string.Equals(plan.RequiredApprovalText, request.ApprovalText, StringComparison.Ordinal))
+            !PublishApprovalMatches(plan, request.ApprovalText) ||
+            !CatalogRecoveryApprovalMatches(plan, request.CatalogRecoveryApprovalText))
             return false;
 
         string[] requestIds = NormalizePackageIds(request.PackageIds);
@@ -756,13 +951,45 @@ public static class ActionFitPackageBulkPublishApi
         if (plan.Packages.Any(item =>
                 item == null ||
                 !item.Success ||
-                !item.ReadyToPublish ||
+                item.ReadyToPublish == item.ReadyToRecoverCatalog ||
                 string.IsNullOrWhiteSpace(item.PlanId)))
         {
             return false;
         }
 
+        string[] publishIds = NormalizePackageIds(plan.Packages
+            .Where(item => item.ReadyToPublish)
+            .Select(item => item.PackageId));
+        string[] recoveryIds = NormalizePackageIds(plan.Packages
+            .Where(item => item.ReadyToRecoverCatalog)
+            .Select(item => item.PackageId));
+        if (!publishIds.SequenceEqual(NormalizePackageIds(plan.PublishPackageIds), StringComparer.Ordinal) ||
+            !recoveryIds.SequenceEqual(NormalizePackageIds(plan.CatalogRecoveryPackageIds), StringComparer.Ordinal))
+        {
+            return false;
+        }
+
         return string.Equals(ComputePlanId(plan.Packages), plan.PlanId, StringComparison.Ordinal);
+    }
+
+    internal static bool PublishApprovalMatches(ActionFitPackageBulkPublishPlan plan, string approvalText)
+    {
+        if (plan == null) return false;
+        bool hasPublishes = NormalizePackageIds(plan.PublishPackageIds).Length > 0;
+        return hasPublishes
+            ? !string.IsNullOrWhiteSpace(plan.RequiredApprovalText) &&
+              string.Equals(plan.RequiredApprovalText, approvalText, StringComparison.Ordinal)
+            : string.IsNullOrEmpty(plan.RequiredApprovalText) && string.IsNullOrEmpty(approvalText);
+    }
+
+    internal static bool CatalogRecoveryApprovalMatches(ActionFitPackageBulkPublishPlan plan, string approvalText)
+    {
+        if (plan == null) return false;
+        bool hasRecoveries = NormalizePackageIds(plan.CatalogRecoveryPackageIds).Length > 0;
+        return hasRecoveries
+            ? !string.IsNullOrWhiteSpace(plan.RequiredCatalogRecoveryApprovalText) &&
+              string.Equals(plan.RequiredCatalogRecoveryApprovalText, approvalText, StringComparison.Ordinal)
+            : string.IsNullOrEmpty(plan.RequiredCatalogRecoveryApprovalText) && string.IsNullOrEmpty(approvalText);
     }
 
     internal static bool MigrationApprovalsMatch(
