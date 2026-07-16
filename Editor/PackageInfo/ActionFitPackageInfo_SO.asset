@@ -21,8 +21,8 @@ MonoBehaviour:
   _description: "ActionFit UPM \uD328\uD0A4\uC9C0 \uCE74\uD0C8\uB85C\uADF8\uB97C
     \uBCF4\uACE0 Git URL \uAE30\uBC18 \uC124\uCE58\uC640 \uBC84\uC804 \uC801\uC6A9\uC744
     \uB3C4\uC640\uC8FC\uB294 Unity \uC5D0\uB514\uD130 \uD234."
-  _releaseNote: "- PACKAGE_AI_GUIDE_ROUTER.md\uC5D0 Private `com.actionfit.time.server`
-    \uAC00\uC774\uB4DC \uACBD\uB85C\uB97C \uB4F1\uB85D\uD588\uC2B5\uB2C8\uB2E4.\n-
-    \uD328\uD0A4\uC9C0 \uC124\uCE58, \uC5C5\uB370\uC774\uD2B8, \uAC8C\uC2DC \uB3D9\uC791\uC740
-    \uBCC0\uACBD\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4."
+  _releaseNote: "- PACKAGE_AI_GUIDE_ROUTER.md\uC5D0 Private `com.actionfit.lava-rush.ui`\uC640
+    `com.actionfit.lava-rush.theme.catmerge` \uAC00\uC774\uB4DC \uACBD\uB85C\uB97C
+    \uB4F1\uB85D\uD588\uC2B5\uB2C8\uB2E4.\n- \uD328\uD0A4\uC9C0 \uC124\uCE58, \uC5C5\uB370\uC774\uD2B8,
+    \uAC8C\uC2DC \uB3D9\uC791\uC740 \uBCC0\uACBD\uD558\uC9C0 \uC54A\uC2B5\uB2C8\uB2E4."
   _dependenciesOverride: 
