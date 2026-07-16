@@ -55,9 +55,10 @@ Do not silently create `Docs/AI/PROJECT.md` or any other AI entry point in a pro
 - `Packages/com.actionfit.inbox/AI_GUIDE.md` - ActionFit Inbox owns backend-neutral message models, durable idempotent claim receipts, cache flow, retry, and restart recovery contracts.
 - `Packages/com.actionfit.inbox.firebase/AI_GUIDE.md` - ActionFit Inbox Firebase owns RTDB inbox transport, legacy reward schema conversion, Firebase failure mapping, connectivity adaptation, and FCM cache invalidation signals.
 - `Packages/com.actionfit.lava-rush/AI_GUIDE.md` - ActionFit Lava Rush owns the reusable timed stage-rush state machine, UTC+09/legacy timer contract, pinned catalog, and durable reward recovery.
-- `Packages/com.actionfit.lava-rush.ui/AI_GUIDE.md` - ActionFit Lava Rush UI owns the neutral UGUI presentation, immutable engine-derived view model, standalone demo bootstrap, and project service contracts.
-- `Packages/com.actionfit.lava-rush.theme.catmerge/AI_GUIDE.md` - ActionFit Lava Rush Cat Merge Theme owns the private redistribution-safe palette, localized presentation preset, and synthesized UI cues.
+- `Packages/com.actionfit.lava-rush.theme.catmerge/AI_GUIDE.md` - ActionFit Lava Rush Cat Merge Theme owns the redistribution-safe Cat Merge palette and presentation preset layered over the neutral Lava Rush UI.
+- `Packages/com.actionfit.lava-rush.ui/AI_GUIDE.md` - ActionFit Lava Rush UI owns the neutral UGUI presentation, immutable view model, replaceable project service boundaries, and standalone PlayerPrefs demo bootstrap.
 - `Packages/com.actionfit.match-rival/AI_GUIDE.md` - ActionFit Match Rival owns the reusable scheduled rival match state machine, pinned catalog state, and durable round/box reward recovery.
+- `Packages/com.actionfit.match-rival.ui/AI_GUIDE.md` - ActionFit Match Rival UI owns the optional UI Foundation presentation, strict ReferenceBinding Refs contract, replaceable services, and standalone engine-backed demo.
 - `Packages/com.actionfit.notifications/AI_GUIDE.md` - ActionFit Notifications owns backend-neutral local notification permission, scheduling, cancellation, app-state, activation, and Unity Android/iOS platform adapters.
 - `Packages/com.actionfit.notifications.firebase/AI_GUIDE.md` - ActionFit Notifications Firebase owns SDK-neutral remote message events and the isolated Firebase Messaging topic/data/token bridge.
 - `Packages/com.actionfit.playmodelogsaver/AI_GUIDE.md` - Play Mode Log Saver saves editor play mode logs. Read when changing log capture, save paths, or play mode log settings.
