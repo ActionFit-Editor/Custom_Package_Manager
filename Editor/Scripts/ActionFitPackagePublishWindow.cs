@@ -142,6 +142,21 @@ public class ActionFitPackagePublishWindow : EditorWindow
             EditorGUILayout.PropertyField(serialized.FindProperty("_displayName"));
             EditorGUILayout.PropertyField(serialized.FindProperty("_repoName"));
             EditorGUILayout.PropertyField(serialized.FindProperty("_repositoryVisibility"));
+            if (_mode != Mode.Create)
+            {
+                entry.SourceRetirementMode = (ActionFitPackageRepositoryRetirementMode)EditorGUILayout.EnumPopup(
+                    "Previous Repository",
+                    entry.SourceRetirementMode);
+                if (entry.SourceRetirementMode != ActionFitPackageRepositoryRetirementMode.Keep)
+                {
+                    EditorGUILayout.HelpBox(
+                        $"{entry.SourceRetirementMode} is prepared only after a verified Private-to-Public migration, " +
+                        "successful publish, Catalog append and refresh, and a separate exact approval. Keep is used when any gate fails.",
+                        entry.SourceRetirementMode == ActionFitPackageRepositoryRetirementMode.Delete
+                            ? MessageType.Error
+                            : MessageType.Warning);
+                }
+            }
             EditorGUILayout.PropertyField(serialized.FindProperty("_description"));
             EditorGUILayout.PropertyField(serialized.FindProperty("_releaseNote"));
             EditorGUILayout.PropertyField(serialized.FindProperty("_dependenciesOverride"));
@@ -285,14 +300,26 @@ public class ActionFitPackagePublishWindow : EditorWindow
             return;
         }
 
+        if (entry.SourceRetirementMode != ActionFitPackageRepositoryRetirementMode.Keep &&
+            !plan.SourceRepositoryRetirementCandidate)
+        {
+            EditorUtility.DisplayDialog(
+                "Source Repository Retirement Blocked",
+                $"{entry.SourceRetirementMode} is available only when this publish plan moves a Private source to a different verified Public target. " +
+                "The source remains unchanged.",
+                "OK");
+            return;
+        }
+
         if (plan.RepositoryMigrationRequired &&
             !EditorUtility.DisplayDialog(
                 "Approve Repository Migration",
-                $"Move catalog history to the selected Private repository?\n\n" +
+                $"Move catalog history to the selected {plan.RepositoryVisibility} repository?\n\n" +
                 $"Source ({plan.SourceRepositoryVisibility}): {plan.SourceRepositoryUrl}\n" +
-                $"Target (Private): {plan.RepositoryUrl}\n" +
+                $"Target ({plan.RepositoryVisibility}): {plan.RepositoryUrl}\n" +
                 $"Branches: {plan.SourceBranchCount}, tags: {plan.SourceTagCount}, missing refs: {plan.MissingRepositoryRefCount}\n\n" +
-                "All source branches and tags will be copied and verified. The source repository will remain unchanged. " +
+                "All source branches and tags will be copied and verified. " +
+                $"The source repository remains unchanged during publishing; requested post-publish disposition: {entry.SourceRetirementMode}. " +
                 "The catalog URL changes only after migration verification and package publish both succeed.\n\n" +
                 $"Migration approval: {plan.RequiredMigrationApprovalText}",
                 "Approve Migration",
@@ -333,7 +360,77 @@ public class ActionFitPackagePublishWindow : EditorWindow
         Debug.Log($"[ActionFitPackageManager] Publish complete: {result.Message}");
         foreach (string warning in result.Warnings ?? Array.Empty<string>())
             Debug.LogWarning($"[ActionFitPackageManager] {warning}");
+        if (entry.SourceRetirementMode != ActionFitPackageRepositoryRetirementMode.Keep &&
+            !RetireSourceAfterPublish(plan, entry.SourceRetirementMode))
+        {
+            ScheduleReload();
+            return;
+        }
         ScheduleReload();
+    }
+
+    private static bool RetireSourceAfterPublish(
+        ActionFitPackagePublishPlan publishPlan,
+        ActionFitPackageRepositoryRetirementMode mode)
+    {
+        ActionFitPackageRepositoryRetirementPlan plan = ActionFitPackageRepositoryRetirementApi.Prepare(
+            new ActionFitPackageRepositoryRetirementPrepareRequest
+            {
+                PackageId = publishPlan.PackageId,
+                Version = publishPlan.Version,
+                SourceRepositoryUrl = publishPlan.SourceRepositoryUrl,
+                TargetRepositoryUrl = publishPlan.RepositoryUrl,
+                Mode = mode,
+                RefreshCatalog = true,
+            });
+        if (!plan.Success || !plan.ReadyToExecute)
+        {
+            string message =
+                $"Package publish completed, but {mode} was not prepared. The Private source remains unchanged.\n\n" +
+                $"{plan.Code}: {plan.Message}";
+            Debug.LogWarning($"[ActionFitPackageManager] {message}");
+            EditorUtility.DisplayDialog("Source Repository Preserved", message, "OK");
+            return false;
+        }
+
+        string warningText = string.Join("\n", (plan.Warnings ?? Array.Empty<string>()).Select(item => $"- {item}"));
+        if (!EditorUtility.DisplayDialog(
+                $"Approve Source {mode}",
+                $"Package publication and Catalog registration completed. Execute the separately prepared source retirement?\n\n" +
+                $"Package: {plan.PackageId}@{plan.Version}\n" +
+                $"Source ({plan.SourceRepositoryVisibility}): {plan.SourceRepositoryUrl}\n" +
+                $"Target ({plan.TargetRepositoryVisibility}): {plan.TargetRepositoryUrl}\n" +
+                $"Refs: {plan.SourceBranchCount} branches, {plan.SourceTagCount} tags\n\n" +
+                $"{warningText}\n\nApproval: {plan.RequiredApprovalText}",
+                $"Approve {mode}",
+                "Keep Source"))
+        {
+            Debug.Log($"[ActionFitPackageManager] Repository retirement skipped: {plan.PackageId} ({mode})");
+            return true;
+        }
+
+        ActionFitPackageRepositoryRetirementResult result = ActionFitPackageRepositoryRetirementApi.Execute(
+            new ActionFitPackageRepositoryRetirementExecuteRequest
+            {
+                PackageId = plan.PackageId,
+                Version = plan.Version,
+                SourceRepositoryUrl = plan.SourceRepositoryUrl,
+                TargetRepositoryUrl = plan.TargetRepositoryUrl,
+                Mode = plan.Mode,
+                ExpectedPlanId = plan.PlanId,
+                ApprovalText = plan.RequiredApprovalText,
+                ApprovedPlan = plan,
+            });
+        if (!result.Success)
+        {
+            string message = $"{mode} failed. The verified Public target and Catalog remain current.\n\n{result.Code}: {result.Message}";
+            Debug.LogError($"[ActionFitPackageManager] {message}");
+            EditorUtility.DisplayDialog("Source Repository Retirement Failed", message, "OK");
+            return false;
+        }
+
+        Debug.Log($"[ActionFitPackageManager] Repository retirement complete: {result.Message}");
+        return true;
     }
 
     private void RecoverCatalogEntry(Entry entry)
@@ -434,6 +531,31 @@ public class ActionFitPackagePublishWindow : EditorWindow
                       ? $"create {item.RepositoryVisibility} {item.GitHubOrganization}/{item.RepositoryName}"
                       : $"publish to {item.GitHubOrganization}/{item.RepositoryName}") +
                   (item.RepositoryMigrationRequired ? $" (migrate from {item.SourceRepositoryUrl})" : "")));
+        var retirementRequests = new List<ActionFitPackageRepositoryRetirementPrepareRequest>();
+        foreach (ActionFitPackagePublishPlan packagePlan in plan.Packages.Where(item => item.ReadyToPublish))
+        {
+            Entry entry = targets.First(item => string.Equals(item.PackageId, packagePlan.PackageId, StringComparison.Ordinal));
+            if (entry.SourceRetirementMode == ActionFitPackageRepositoryRetirementMode.Keep) continue;
+            if (!packagePlan.SourceRepositoryRetirementCandidate)
+            {
+                EditorUtility.DisplayDialog(
+                    "Source Repository Retirement Blocked",
+                    $"{entry.PackageId}: {entry.SourceRetirementMode} requires a Private-to-Public repository migration. " +
+                    "No repository was published or retired.",
+                    "OK");
+                return;
+            }
+
+            retirementRequests.Add(new ActionFitPackageRepositoryRetirementPrepareRequest
+            {
+                PackageId = packagePlan.PackageId,
+                Version = packagePlan.Version,
+                SourceRepositoryUrl = packagePlan.SourceRepositoryUrl,
+                TargetRepositoryUrl = packagePlan.RepositoryUrl,
+                Mode = entry.SourceRetirementMode,
+                RefreshCatalog = false,
+            });
+        }
         if (plan.RepositoryMigrationPackageIds.Length > 0 &&
             !EditorUtility.DisplayDialog(
                 "Approve Repository Migrations",
@@ -442,7 +564,12 @@ public class ActionFitPackagePublishWindow : EditorWindow
                     .Where(item => item.RepositoryMigrationRequired)
                     .Select(item => $"- {item.PackageId}: {item.SourceRepositoryUrl} -> {item.RepositoryUrl} " +
                                     $"({item.SourceBranchCount} branches, {item.SourceTagCount} tags)")) +
-                "\n\nSource repositories remain unchanged. Catalog rows are not changed unless all migrations and publishes succeed.\n\n" +
+                "\n\nSource repositories remain unchanged during publishing. Catalog rows are not changed unless all migrations and publishes succeed.\n" +
+                (retirementRequests.Count == 0
+                    ? "Post-publish source disposition: Keep for every package.\n\n"
+                    : "Post-publish retirement requests:\n" +
+                      string.Join("\n", retirementRequests.Select(item => $"- {item.PackageId}: {item.Mode} {item.SourceRepositoryUrl}")) +
+                      "\n\n") +
                 $"Migration approval: {plan.RequiredMigrationApprovalText}",
                 "Approve Migrations",
                 "Cancel"))
@@ -516,7 +643,66 @@ public class ActionFitPackagePublishWindow : EditorWindow
         Debug.Log($"[ActionFitPackageManager] Bulk publish complete: {result.Message}");
         foreach (string warning in result.Warnings ?? Array.Empty<string>())
             Debug.LogWarning($"[ActionFitPackageManager] {warning}");
+        if (retirementRequests.Count > 0 && !RetireSourcesAfterBulkPublish(retirementRequests.ToArray()))
+        {
+            ScheduleReload();
+            return;
+        }
         ScheduleReload();
+    }
+
+    private static bool RetireSourcesAfterBulkPublish(
+        ActionFitPackageRepositoryRetirementPrepareRequest[] requests)
+    {
+        ActionFitPackageRepositoryRetirementBatchPlan plan =
+            ActionFitPackageRepositoryRetirementApi.PrepareBatch(
+                new ActionFitPackageRepositoryRetirementBatchPrepareRequest
+                {
+                    Items = requests,
+                    RefreshCatalog = true,
+                });
+        if (!plan.Success || !plan.ReadyToExecute)
+        {
+            string message =
+                "Bulk package publication completed, but source retirement was not prepared. Every unretired source remains unchanged.\n\n" +
+                $"{plan.Code}: {plan.Message}";
+            Debug.LogWarning($"[ActionFitPackageManager] {message}");
+            EditorUtility.DisplayDialog("Source Repositories Preserved", message, "OK");
+            return false;
+        }
+
+        string items = string.Join("\n", plan.Items.Select(item =>
+            $"- {item.PackageId}: {item.Mode} {item.SourceRepositoryUrl} -> {item.TargetRepositoryUrl}"));
+        string warnings = string.Join("\n", plan.Warnings.Select(item => $"- {item}"));
+        if (!EditorUtility.DisplayDialog(
+                "Approve Source Repository Retirement",
+                $"Package publication and Catalog registration completed. Retirement executes serially and stops on the first failure.\n\n" +
+                $"{items}\n\n{warnings}\n\nApproval: {plan.RequiredApprovalText}",
+                "Approve Retirement",
+                "Keep Sources"))
+        {
+            Debug.Log("[ActionFitPackageManager] Bulk repository retirement skipped; sources were kept.");
+            return true;
+        }
+
+        ActionFitPackageRepositoryRetirementBatchResult result =
+            ActionFitPackageRepositoryRetirementApi.ExecuteBatch(
+                new ActionFitPackageRepositoryRetirementBatchExecuteRequest
+                {
+                    Items = requests,
+                    ExpectedPlanId = plan.PlanId,
+                    ApprovalText = plan.RequiredApprovalText,
+                    ApprovedPlan = plan,
+                });
+        if (!result.Success)
+        {
+            Debug.LogError($"[ActionFitPackageManager] Bulk repository retirement failed: {result.Message}");
+            EditorUtility.DisplayDialog("Source Repository Retirement Failed", result.Message, "OK");
+            return false;
+        }
+
+        Debug.Log($"[ActionFitPackageManager] Bulk repository retirement complete: {result.Message}");
+        return true;
     }
 
     private static Action<ActionFitPackageBulkPublishProgress> CreateProgressReporter(
@@ -1108,6 +1294,8 @@ public class ActionFitPackagePublishWindow : EditorWindow
         public string Version;
         public string CatalogLatestVersion;
         public bool IsRegistered;
+        public ActionFitPackageRepositoryRetirementMode SourceRetirementMode =
+            ActionFitPackageRepositoryRetirementMode.Keep;
     }
 }
 #endif

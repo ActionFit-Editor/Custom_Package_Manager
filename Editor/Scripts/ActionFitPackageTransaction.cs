@@ -455,6 +455,8 @@ internal enum ActionFitPackageTransactionPhase
 /// </summary>
 internal static class ActionFitPackageManifestUtility
 {
+    private static readonly Regex JsonStringPattern = new("\"(?<value>(?:\\\\.|[^\"\\\\])*)\"", RegexOptions.CultureInvariant);
+
     public static string LocalDependency(string packageId)
     {
         return $"file:{packageId}";
@@ -502,9 +504,94 @@ internal static class ActionFitPackageManifestUtility
             string.Equals(GetDependency(left, packageId), GetDependency(right, packageId), StringComparison.Ordinal));
     }
 
+    public static List<ActionFitSdkScopedRegistryValue> ReadScopedRegistries(string manifest)
+    {
+        if (string.IsNullOrWhiteSpace(manifest))
+            throw new InvalidOperationException("manifest.json is empty.");
+
+        int key = manifest.IndexOf("\"scopedRegistries\"", StringComparison.Ordinal);
+        if (key < 0) return new List<ActionFitSdkScopedRegistryValue>();
+        int openBracket = manifest.IndexOf('[', key);
+        if (openBracket < 0)
+            throw new InvalidOperationException("manifest.json scopedRegistries block has no opening bracket.");
+        int closeBracket = FindMatchingBracket(manifest, openBracket);
+        if (closeBracket < 0)
+            throw new InvalidOperationException("manifest.json scopedRegistries block has no closing bracket.");
+
+        string body = manifest.Substring(openBracket + 1, closeBracket - openBracket - 1);
+        var registries = new List<ActionFitSdkScopedRegistryValue>();
+        foreach (string objectJson in SplitTopLevelObjects(body))
+        {
+            string name = ReadJsonStringProperty(objectJson, "name");
+            string url = ReadJsonStringProperty(objectJson, "url");
+            string scopesBody = ReadJsonArrayProperty(objectJson, "scopes");
+            if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(url))
+                throw new InvalidOperationException("Every scoped registry requires non-empty name and url values.");
+
+            var scopes = new List<string>();
+            foreach (Match match in JsonStringPattern.Matches(scopesBody))
+                scopes.Add(UnescapeJsonString(match.Groups["value"].Value));
+
+            registries.Add(new ActionFitSdkScopedRegistryValue
+            {
+                Name = name,
+                Url = url.TrimEnd('/'),
+                Scopes = scopes.Distinct(StringComparer.Ordinal).ToArray(),
+            });
+        }
+
+        return registries;
+    }
+
+    public static string SetScopedRegistries(
+        string manifest,
+        IEnumerable<ActionFitSdkScopedRegistryValue> scopedRegistries)
+    {
+        Validate(manifest);
+        ActionFitSdkScopedRegistryValue[] registries = (scopedRegistries ?? Array.Empty<ActionFitSdkScopedRegistryValue>())
+            .Where(item => item != null)
+            .Select(item => new ActionFitSdkScopedRegistryValue
+            {
+                Name = item.Name ?? "",
+                Url = (item.Url ?? "").TrimEnd('/'),
+                Scopes = (item.Scopes ?? Array.Empty<string>())
+                    .Where(scope => !string.IsNullOrWhiteSpace(scope))
+                    .Distinct(StringComparer.Ordinal)
+                    .OrderBy(scope => scope, StringComparer.Ordinal)
+                    .ToArray(),
+            })
+            .ToArray();
+        string newline = manifest.Contains("\r\n") ? "\r\n" : "\n";
+        string arrayJson = WriteScopedRegistries(registries, newline);
+
+        int key = manifest.IndexOf("\"scopedRegistries\"", StringComparison.Ordinal);
+        if (key >= 0)
+        {
+            int openBracket = manifest.IndexOf('[', key);
+            int closeBracket = openBracket >= 0 ? FindMatchingBracket(manifest, openBracket) : -1;
+            if (openBracket < 0 || closeBracket < 0)
+                throw new InvalidOperationException("manifest.json scopedRegistries block is invalid.");
+            return manifest.Substring(0, openBracket) + arrayJson + manifest[(closeBracket + 1)..];
+        }
+
+        if (registries.Length == 0) return manifest;
+        int rootOpen = manifest.IndexOf('{');
+        int rootClose = rootOpen >= 0 ? FindMatchingBrace(manifest, rootOpen) : -1;
+        if (rootClose < 0)
+            throw new InvalidOperationException("manifest.json root object is invalid.");
+
+        string prefix = manifest.Substring(0, rootClose);
+        int lastContent = prefix.Length - 1;
+        while (lastContent >= 0 && char.IsWhiteSpace(prefix[lastContent])) lastContent--;
+        bool needsComma = lastContent >= 0 && prefix[lastContent] != '{' && prefix[lastContent] != ',';
+        string insertion = (needsComma ? "," : "") + newline + "  \"scopedRegistries\": " + arrayJson + newline;
+        return prefix.Substring(0, lastContent + 1) + insertion + manifest[rootClose..];
+    }
+
     public static void Validate(string manifest)
     {
         ReadDependencies(manifest, out _, out _);
+        ReadScopedRegistries(manifest);
     }
 
     public static void WriteAtomic(string path, string content, bool validateManifest = true)
@@ -614,6 +701,140 @@ internal static class ActionFitPackageManifestUtility
         }
 
         return -1;
+    }
+
+    private static int FindMatchingBracket(string text, int openBracket)
+    {
+        int depth = 0;
+        bool inString = false;
+        bool escaped = false;
+        for (int i = openBracket; i < text.Length; i++)
+        {
+            char c = text[i];
+            if (inString)
+            {
+                if (escaped) escaped = false;
+                else if (c == '\\') escaped = true;
+                else if (c == '"') inString = false;
+                continue;
+            }
+
+            if (c == '"') inString = true;
+            else if (c == '[') depth++;
+            else if (c == ']' && --depth == 0) return i;
+        }
+
+        return -1;
+    }
+
+    private static IEnumerable<string> SplitTopLevelObjects(string body)
+    {
+        int index = 0;
+        while (index < body.Length)
+        {
+            while (index < body.Length && (char.IsWhiteSpace(body[index]) || body[index] == ',')) index++;
+            if (index >= body.Length) yield break;
+            if (body[index] != '{')
+                throw new InvalidOperationException($"Unsupported scoped registry entry near: {body[index..].Trim()}");
+            int close = FindMatchingBrace(body, index);
+            if (close < 0)
+                throw new InvalidOperationException("Scoped registry entry has no closing brace.");
+            yield return body.Substring(index, close - index + 1);
+            index = close + 1;
+        }
+    }
+
+    private static string ReadJsonStringProperty(string json, string property)
+    {
+        Match match = Regex.Match(
+            json,
+            $"\\\"{Regex.Escape(property)}\\\"\\s*:\\s*\\\"(?<value>(?:\\\\\\\\.|[^\\\"\\\\\\\\])*)\\\"",
+            RegexOptions.CultureInvariant);
+        return match.Success ? UnescapeJsonString(match.Groups["value"].Value) : "";
+    }
+
+    private static string ReadJsonArrayProperty(string json, string property)
+    {
+        int key = json.IndexOf($"\"{property}\"", StringComparison.Ordinal);
+        if (key < 0) throw new InvalidOperationException($"Scoped registry is missing {property}.");
+        int open = json.IndexOf('[', key);
+        int close = open >= 0 ? FindMatchingBracket(json, open) : -1;
+        if (open < 0 || close < 0) throw new InvalidOperationException($"Scoped registry {property} array is invalid.");
+        return json.Substring(open + 1, close - open - 1);
+    }
+
+    private static string WriteScopedRegistries(IReadOnlyList<ActionFitSdkScopedRegistryValue> registries, string newline)
+    {
+        var builder = new StringBuilder();
+        builder.Append('[');
+        if (registries.Count > 0) builder.Append(newline);
+        for (int i = 0; i < registries.Count; i++)
+        {
+            ActionFitSdkScopedRegistryValue registry = registries[i];
+            builder.Append("    {").Append(newline)
+                .Append("      \"name\": \"").Append(EscapeJsonString(registry.Name)).Append("\",").Append(newline)
+                .Append("      \"url\": \"").Append(EscapeJsonString(registry.Url)).Append("\",").Append(newline)
+                .Append("      \"scopes\": [").Append(newline);
+            for (int j = 0; j < registry.Scopes.Length; j++)
+            {
+                builder.Append("        \"").Append(EscapeJsonString(registry.Scopes[j])).Append('"');
+                if (j < registry.Scopes.Length - 1) builder.Append(',');
+                builder.Append(newline);
+            }
+            builder.Append("      ]").Append(newline).Append("    }");
+            if (i < registries.Count - 1) builder.Append(',');
+            builder.Append(newline);
+        }
+        if (registries.Count > 0) builder.Append("  ");
+        builder.Append(']');
+        return builder.ToString();
+    }
+
+    private static string EscapeJsonString(string value)
+    {
+        return (value ?? "")
+            .Replace("\\", "\\\\")
+            .Replace("\"", "\\\"")
+            .Replace("\b", "\\b")
+            .Replace("\f", "\\f")
+            .Replace("\t", "\\t")
+            .Replace("\r", "\\r")
+            .Replace("\n", "\\n");
+    }
+
+    private static string UnescapeJsonString(string value)
+    {
+        var builder = new StringBuilder();
+        string source = value ?? "";
+        for (int i = 0; i < source.Length; i++)
+        {
+            char c = source[i];
+            if (c != '\\' || i + 1 >= source.Length)
+            {
+                builder.Append(c);
+                continue;
+            }
+
+            char escaped = source[++i];
+            if (escaped == 'u' && i + 4 < source.Length &&
+                ushort.TryParse(source.Substring(i + 1, 4), System.Globalization.NumberStyles.HexNumber, null, out ushort unicode))
+            {
+                builder.Append((char)unicode);
+                i += 4;
+                continue;
+            }
+
+            builder.Append(escaped switch
+            {
+                'b' => '\b',
+                'f' => '\f',
+                'n' => '\n',
+                'r' => '\r',
+                't' => '\t',
+                _ => escaped,
+            });
+        }
+        return builder.ToString();
     }
 
     private static string NormalizeNewlines(string value)

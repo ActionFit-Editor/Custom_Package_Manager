@@ -22,7 +22,8 @@ public static class ActionFitPackageAiGuideRouter
 
     static ActionFitPackageAiGuideRouter()
     {
-        EditorApplication.delayCall += EnsureProjectRouter;
+        if (!Application.isBatchMode)
+            EditorApplication.delayCall += EnsureProjectRouter;
     }
 
     public static void EnsureProjectRouter()

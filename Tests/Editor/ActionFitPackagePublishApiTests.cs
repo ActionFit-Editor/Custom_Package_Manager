@@ -478,6 +478,26 @@ public sealed class ActionFitPackagePublishApiTests
     }
 
     [Test]
+    public void CompleteRemotePreflight_BlocksPrivateTargetWhenPublicWasSelected()
+    {
+        var plan = new ActionFitPackagePublishPlan
+        {
+            Success = true,
+            PackageId = "com.actionfit.alpha",
+            Version = "1.0.1",
+            RepositoryVisibility = "Public",
+        };
+
+        ActionFitPackagePublishPlan result = ActionFitPackagePublishApi.CompleteRemotePreflight(
+            plan,
+            new ActionFitPackagePublisher.RemoteState(true, false, true, "main"));
+
+        Assert.That(result.Success, Is.False);
+        Assert.That(result.Code, Is.EqualTo("TARGET_REPOSITORY_VISIBILITY_MISMATCH"));
+        Assert.That(result.Message, Does.Contain("selected Public"));
+    }
+
+    [Test]
     public void CompleteRemotePreflight_BlocksSamePublicSourceInsteadOfChangingVisibility()
     {
         var plan = new ActionFitPackagePublishPlan
@@ -512,6 +532,126 @@ public sealed class ActionFitPackagePublishApiTests
         Assert.That(result.Success, Is.False);
         Assert.That(result.Code, Is.EqualTo("SOURCE_REPOSITORY_VISIBILITY_CHANGE_BLOCKED"));
         Assert.That(result.Message, Does.Contain("different Private organization or repository name"));
+    }
+
+    [Test]
+    public void CompleteRemotePreflight_BlocksSamePrivateSourceInsteadOfChangingVisibility()
+    {
+        var plan = new ActionFitPackagePublishPlan
+        {
+            Success = true,
+            PackageId = "com.actionfit.alpha",
+            Version = "1.0.1",
+            RepositoryVisibility = "Public",
+            GitHubOrganization = "SharedOrg",
+            RepositoryName = "AlphaRepo",
+        };
+        var request = new ActionFitPackagePublisher.PublishRequest(
+            "~/upm-publish",
+            "Packages/com.actionfit.alpha",
+            "AlphaRepo",
+            "Public",
+            "SharedOrg",
+            "token-not-used",
+            false,
+            plan.PackageId,
+            plan.Version,
+            null)
+        {
+            SourceRepositoryUrl = "https://github.com/SharedOrg/AlphaRepo.git",
+        };
+
+        ActionFitPackagePublishPlan result = ActionFitPackagePublishApi.CompleteRemotePreflight(
+            plan,
+            new ActionFitPackagePublisher.RemoteState(true, false, true, "main"),
+            request);
+
+        Assert.That(result.Success, Is.False);
+        Assert.That(result.Code, Is.EqualTo("SOURCE_REPOSITORY_VISIBILITY_CHANGE_BLOCKED"));
+        Assert.That(result.Message, Does.Contain("different Public organization or repository name"));
+    }
+
+    [Test]
+    public void RepositoryRetirementPrepare_KeepRequiresNoExternalState()
+    {
+        ActionFitPackageRepositoryRetirementPlan plan = ActionFitPackageRepositoryRetirementApi.Prepare(
+            new ActionFitPackageRepositoryRetirementPrepareRequest
+            {
+                PackageId = "com.actionfit.alpha",
+                Version = "1.0.1",
+                SourceRepositoryUrl = "https://github.com/PrivateOrg/AlphaRepo.git",
+                TargetRepositoryUrl = "https://github.com/ActionFit/AlphaRepo.git",
+                Mode = ActionFitPackageRepositoryRetirementMode.Keep,
+            });
+
+        Assert.That(plan.Success, Is.True);
+        Assert.That(plan.ReadyToExecute, Is.False);
+        Assert.That(plan.Code, Is.EqualTo("SOURCE_REPOSITORY_KEPT"));
+    }
+
+    [Test]
+    public void RepositoryRetirementApprovedPlanMatches_RequiresExactBoundFields()
+    {
+        var plan = new ActionFitPackageRepositoryRetirementPlan
+        {
+            Success = true,
+            ReadyToExecute = true,
+            PackageId = "com.actionfit.alpha",
+            Version = "1.0.1",
+            SourceRepositoryUrl = "https://github.com/PrivateOrg/AlphaRepo.git",
+            TargetRepositoryUrl = "https://github.com/ActionFit/AlphaRepo.git",
+            Mode = ActionFitPackageRepositoryRetirementMode.Archive,
+            PlanId = "EXACT_PLAN",
+            RequiredApprovalText = "ARCHIVE SOURCE PrivateOrg/AlphaRepo FOR com.actionfit.alpha@1.0.1 PLAN EXACT_PLAN",
+        };
+
+        Assert.That(
+            ActionFitPackageRepositoryRetirementApi.ApprovedPlanMatches(
+                plan,
+                plan.PackageId,
+                plan.Version,
+                plan.SourceRepositoryUrl,
+                plan.TargetRepositoryUrl,
+                plan.Mode,
+                plan.PlanId,
+                plan.RequiredApprovalText),
+            Is.True);
+        Assert.That(
+            ActionFitPackageRepositoryRetirementApi.ApprovedPlanMatches(
+                plan,
+                plan.PackageId,
+                plan.Version,
+                plan.SourceRepositoryUrl,
+                plan.TargetRepositoryUrl,
+                ActionFitPackageRepositoryRetirementMode.Delete,
+                plan.PlanId,
+                plan.RequiredApprovalText),
+            Is.False);
+    }
+
+    [Test]
+    public void RepositoryRetirementBatchApprovedPlanMatches_RejectsChangedApproval()
+    {
+        var plan = new ActionFitPackageRepositoryRetirementBatchPlan
+        {
+            Success = true,
+            ReadyToExecute = true,
+            PlanId = "BATCH_PLAN",
+            RequiredApprovalText = "RETIRE SOURCES com.actionfit.alpha:Archive PLAN BATCH_PLAN",
+        };
+
+        Assert.That(
+            ActionFitPackageRepositoryRetirementApi.BatchApprovedPlanMatches(
+                plan,
+                plan.PlanId,
+                plan.RequiredApprovalText),
+            Is.True);
+        Assert.That(
+            ActionFitPackageRepositoryRetirementApi.BatchApprovedPlanMatches(
+                plan,
+                plan.PlanId,
+                plan.RequiredApprovalText + " changed"),
+            Is.False);
     }
 
     [Test]

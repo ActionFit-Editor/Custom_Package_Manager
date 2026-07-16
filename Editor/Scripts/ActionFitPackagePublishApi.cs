@@ -60,6 +60,8 @@ public sealed class ActionFitPackagePublishPlan
     public int TargetTagCount;
     public int MissingRepositoryRefCount;
     public string RepositoryMigrationFingerprint;
+    public bool SourceRepositoryRetirementCandidate;
+    public string SourceRepositoryRetirementWarning;
     public string PlanId;
     public string RequiredApprovalText;
     public string RequiredMigrationApprovalText;
@@ -324,8 +326,10 @@ public static class ActionFitPackagePublishApi
                 plan,
                 sourceIsTarget ? "SOURCE_REPOSITORY_VISIBILITY_CHANGE_BLOCKED" : "TARGET_REPOSITORY_VISIBILITY_MISMATCH",
                 sourceIsTarget
-                    ? "The selected Public-to-Private change resolves to the same existing Public repository. " +
-                      "Configure a different Private organization or repository name; the source repository visibility is never changed automatically."
+                    ? $"The selected visibility change resolves to the same existing " +
+                      $"{(remote.RepositoryIsPrivate ? "Private" : "Public")} repository. " +
+                      $"Configure a different {(string.Equals(plan.RepositoryVisibility, "Private", StringComparison.Ordinal) ? "Private" : "Public")} " +
+                      "organization or repository name; source visibility is never changed in place."
                     : $"Existing target repository visibility does not match selected {plan.RepositoryVisibility}. " +
                       "Repository visibility is never changed automatically.");
         }
@@ -358,6 +362,13 @@ public static class ActionFitPackagePublishApi
             plan.TargetTagCount = migration.TargetTagCount;
             plan.MissingRepositoryRefCount = migration.MissingRefCount;
             plan.RepositoryMigrationFingerprint = migration.Fingerprint;
+            plan.SourceRepositoryRetirementCandidate =
+                migration.Required &&
+                migration.SourceRepositoryIsPrivate &&
+                !publishRequest.GitHubIsPrivate;
+            plan.SourceRepositoryRetirementWarning = plan.SourceRepositoryRetirementCandidate
+                ? "The Private source can be prepared for Keep, Archive, or Delete only after publication and Catalog verification. Keep is the default."
+                : "";
         }
 
         var actions = new System.Collections.Generic.List<string>
@@ -367,9 +378,11 @@ public static class ActionFitPackagePublishApi
         if (plan.RepositoryMigrationRequired)
         {
             actions.Add(plan.WillMirrorRepository
-                ? $"Mirror all source branches and tags from {plan.SourceRepositoryUrl} and verify the private target"
-                : "Verify the existing private target contains every source branch and tag");
-            actions.Add("Keep the source repository unchanged");
+                ? $"Mirror all source branches and tags from {plan.SourceRepositoryUrl} and verify the {plan.RepositoryVisibility} target"
+                : $"Verify the existing {plan.RepositoryVisibility} target contains every source branch and tag");
+            actions.Add(plan.SourceRepositoryRetirementCandidate
+                ? "Keep the Private source unless a separate post-publish Archive or Delete plan is explicitly approved"
+                : "Keep the source repository unchanged");
         }
         actions.Add($"Push package content to main for {plan.PackageId}@{plan.Version}");
         actions.Add($"Create and push immutable tag {plan.Version}");
@@ -878,6 +891,7 @@ public static class ActionFitPackagePublishApi
             plan.RepositoryMigrationRequired.ToString(),
             plan.WillMirrorRepository.ToString(),
             plan.RepositoryMigrationFingerprint ?? "",
+            plan.SourceRepositoryRetirementCandidate.ToString(),
         });
         using SHA256 sha = SHA256.Create();
         return BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(canonical))).Replace("-", "").Substring(0, 20);

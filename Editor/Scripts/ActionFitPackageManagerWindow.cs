@@ -99,6 +99,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
             if (GUILayout.Button("Force Update", EditorStyles.toolbarButton, GUILayout.Width(105))) ForceUpdateDownloadedPackages();
             if (GUILayout.Button(_showUpdateManager ? "Hide Check Update" : "Check Update", EditorStyles.toolbarButton, GUILayout.Width(130)))
                 _showUpdateManager = !_showUpdateManager;
+            if (GUILayout.Button("SDK Profiles", EditorStyles.toolbarButton, GUILayout.Width(95))) ActionFitSdkProfileWindow.Open();
             if (GUILayout.Button("Console", EditorStyles.toolbarButton, GUILayout.Width(80))) ActionFitPackageManagerConsoleWindow.Open();
             GUILayout.FlexibleSpace();
         }
@@ -106,6 +107,11 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
     private void DrawPackageSections()
     {
+        DrawContentBundleSection();
+        EditorGUILayout.Space(4);
+        EditorGUILayout.LabelField("", GUI.skin.horizontalSlider);
+        EditorGUILayout.Space(4);
+
         var filtered = FilteredPackages().ToList();
         var manager = filtered.Where(p => p.Id == PackageName).ToList();
         var catalogPackages = filtered.Where(p => p.Id != PackageName).ToList();
@@ -137,6 +143,69 @@ public class ActionFitPackageManagerWindow : EditorWindow
         EditorGUILayout.LabelField("", GUI.skin.horizontalSlider);
         EditorGUILayout.Space(4);
         DrawPackageSection("Available Packages", available);
+    }
+
+    private void DrawContentBundleSection()
+    {
+        ActionFitContentBundleStatus[] statuses = ActionFitContentBundleApi.GetStatuses();
+        EditorGUILayout.LabelField($"Content Bundles ({statuses.Length})", EditorStyles.boldLabel);
+        if (statuses.Length == 0)
+        {
+            EditorGUILayout.HelpBox("No active or pending content bundles.", MessageType.None);
+            return;
+        }
+
+        foreach (ActionFitContentBundleStatus status in statuses)
+        {
+            using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+            {
+                EditorGUILayout.LabelField(
+                    $"{status.displayName} ({status.bundleId}@{status.bundleVersion})",
+                    EditorStyles.boldLabel);
+                EditorGUILayout.LabelField("State", status.state);
+                EditorGUILayout.LabelField("Required", string.Join(", ", status.requiredPackageIds));
+                EditorGUILayout.LabelField("Installer", status.bootstrapInstalled ? "installed" : "cleaned up");
+                EditorGUILayout.LabelField("Release", status.releaseAuthorized ? "authorized" : "not authorized");
+
+                foreach (string conflict in status.conflicts)
+                    EditorGUILayout.HelpBox(conflict, MessageType.Warning);
+
+                EditorGUI.BeginDisabledGroup(!status.releaseAuthorized);
+                if (GUILayout.Button("Release Content Bundle", GUILayout.Width(190)))
+                    ReleaseContentBundle(status);
+                EditorGUI.EndDisabledGroup();
+            }
+        }
+    }
+
+    private void ReleaseContentBundle(ActionFitContentBundleStatus status)
+    {
+        ActionFitContentBundlePlan plan = ActionFitContentBundleApi.PlanRelease(status.bundleId);
+        if (!plan.success)
+        {
+            EditorUtility.DisplayDialog("Content Bundle Release", plan.message, "OK");
+            return;
+        }
+
+        string changes = string.Join("\n", plan.changes.Select(change =>
+            $"- {change.packageId}: {change.kind} ({change.from} -> {change.to})"));
+        if (!EditorUtility.DisplayDialog(
+                "Content Bundle Release",
+                $"Release {status.displayName}?\n\n{changes}\n\nEmbedded, shared, and user-modified dependencies are preserved.",
+                "Release",
+                "Cancel"))
+            return;
+
+        ActionFitContentBundleResult result = ActionFitContentBundleApi.Release(status.bundleId);
+        if (!result.success)
+        {
+            string recovery = result.recoveryRequired ? $"\n\nRecovery journal: {result.journalPath}" : "";
+            EditorUtility.DisplayDialog("Content Bundle Release", result.message + recovery, "OK");
+            return;
+        }
+
+        Debug.Log($"[ActionFitContentBundle] Release: {result.message}");
+        QueueReload();
     }
 
     private void DrawPackageSection(string title, List<PackageGroup> packages)
@@ -183,6 +252,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
         var versions = package.Versions;
         int selected = GetSelectedVersionIndex(package, installed.Version);
         var selectedVersion = versions[selected];
+        bool requiredByBundle = ActionFitContentBundleApi.IsRequiredPackage(package.Id, out string bundleDisplayName);
 
         using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
         {
@@ -221,7 +291,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
                     ApplyPackage(package, selectedVersion);
                 EditorGUI.EndDisabledGroup();
 
-                EditorGUI.BeginDisabledGroup(!installed.IsInstalled);
+                EditorGUI.BeginDisabledGroup(!installed.IsInstalled || requiredByBundle);
                 if (GUILayout.Button("Remove", GUILayout.Width(90)))
                     RemovePackage(package);
                 EditorGUI.EndDisabledGroup();
@@ -257,6 +327,11 @@ public class ActionFitPackageManagerWindow : EditorWindow
                 EditorGUILayout.HelpBox(
                     "This editable package is stored under Packages/. Applying another version creates a backup, replaces it with a downloaded Git UPM dependency, and removes the embedded folder from the project. Local modifications are not merged automatically.",
                     MessageType.Warning);
+
+            if (requiredByBundle)
+                EditorGUILayout.HelpBox(
+                    $"Required by active content bundle: {bundleDisplayName}. Release the bundle before removing this package.",
+                    MessageType.Info);
 
             DrawDependencyDetails(selectedVersion);
 
@@ -1358,6 +1433,15 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
     private void RemovePackage(PackageGroup package)
     {
+        if (ActionFitContentBundleApi.IsRequiredPackage(package.Id, out string bundleDisplayName))
+        {
+            EditorUtility.DisplayDialog(
+                "ActionFit Package Manager",
+                $"{package.Id} is required by active content bundle {bundleDisplayName}. Release the bundle first.",
+                "OK");
+            return;
+        }
+
         var installed = GetInstalledVersion(package.Id);
         if (!installed.IsInstalled)
         {

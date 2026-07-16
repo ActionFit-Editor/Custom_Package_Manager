@@ -7,7 +7,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.91"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.95"
   }
 }
 ```
@@ -15,6 +15,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ## Menu
 
 - `Tools > Package > Custom Package Manager > Package Manager`: install, apply versions, remove packages, inspect package details, and check updates.
+- `Tools > Package > Custom Package Manager > SDK Profiles`: load a bridge package's versioned SDK profile, inspect current state, review an exact plan, and explicitly apply, repair, update, remove, or recover it.
 - `Tools > Package > Custom Package Manager > Manager Console`: create packages, publish changed or selected package versions, add schema v2 agent skills, open catalog/manifest files, and refresh the AI guide router.
 - `Tools > Package > Custom Package Manager > Install or Refresh Agent Skills`: discovers registered skills from installed ActionFit packages and safely synchronizes their managed project-local copies.
 - `Tools > Package > Custom Package Manager > Remove Managed Agent Skills`: removes only unchanged managed copies and disables automatic recreation until an explicit refresh.
@@ -70,6 +71,24 @@ Skill names are limited to lowercase letters, digits, and hyphens. The manifest 
 
 Projects previously managed by AI Jira keep their old `UserSettings/AIJira/skill-install-state.json`. Custom Package Manager reads that file as migration input, adopts ownership only when the target still matches its recorded hash, preserves the legacy file, and respects a previously disabled automatic-install preference.
 
+## External SDK Install Profiles
+
+`SDKInstallProfile.json` is a versioned, vendor-neutral declaration for installing one external SDK from immutable official sources. A profile declares vendor and license metadata, Unity/platform compatibility, allowed HTTPS domains, artifact/Git/registry sources, optional modules and their dependency closure, scoped registries, and existing-install detection rules. Git sources may declare a safe relative `GitSubpath`; the planner composes it as the UPM `?path=<subpath>#<immutable-revision>` dependency value. Profiles never contain credentials or vendor configuration values.
+
+Use `Tools > Package > Custom Package Manager > SDK Profiles` or the `SDK Profiles` toolbar button:
+
+1. Load an installed bridge package's `Editor/SDKInstallProfile.json`.
+2. Select optional modules and run `Inspect (read-only)`.
+3. Choose `Apply`, `Repair`, `Update`, or `Remove`, then prepare a read-only plan.
+4. Review every dependency, scoped-registry, artifact-cache, and ownership change plus the content-bound plan ID.
+5. Use the separate confirmation dialog to execute that exact plan.
+
+Execution revalidates the profile, plan ID, `Packages/manifest.json`, and `ProjectSettings/ActionFitSdkProfiles.json` snapshots before mutation. Artifact downloads require credential-free HTTPS on declared domains, a verified SHA-256, and matching `package/package.json` identity. Manifest and ownership writes are atomic and transaction journals are kept under `UserSettings/ActionFitPackageManager/SdkTransactions`. A domain reload only reports pending journals; recovery changes project state only through the explicit recovery action.
+
+Ownership schema version 1 records only entries created or deliberately adopted by each profile. Removal preserves compatible dependencies, registry scopes, cached artifacts, or shared entries that were not created by that profile, and conflicts block execution instead of overwriting user-managed state.
+
+Bridge package authors can call `ActionFitSdkBridgePackageTemplate.Create`. The template requires `Public` repository visibility and a valid profile whose `BridgePackageId` matches the package ID. It adds the installed `com.actionfit.custompackagemanager` version as an explicit package dependency plus `Editor/SDKInstallProfile.json`, `THIRD_PARTY_NOTICES.md`, and an Editor contract-test assembly. Bridge packages are source-only: no SDK binaries, archives, credentials, `google-services.json`, or `GoogleService-Info.plist` may be redistributed.
+
 ## Package Contract Validator
 
 `Tools~/package_contract_validator.py` validates embedded `Packages/com.actionfit.*` packages without starting Unity or contacting external services. Run it from the consuming Unity project root with Python 3:
@@ -90,7 +109,7 @@ python Packages/com.actionfit.custompackagemanager/Tools~/package_contract_valid
 python Packages/com.actionfit.custompackagemanager/Tools~/package_contract_validator.py --all
 ```
 
-The validator checks `package.json`, SemVer and changed-package version bumps, README install tags, `AI_GUIDE.md` identity/version/router entries, schema v2 prefix/help/access rules, registered skill sources and `SKILL.md` frontmatter, `ActionFitPackageInfo_SO`, and package asmdefs. It writes the same JSON schema to stdout and optional `--output`; every diagnostic includes `code`, `severity`, `path`, `line`, `message`, and `suggestedFix`.
+The validator checks `package.json`, SemVer and changed-package version bumps, README install tags, `AI_GUIDE.md` identity/version/router entries, schema v2 prefix/help/access rules, registered skill sources and `SKILL.md` frontmatter, `ActionFitPackageInfo_SO`, and package asmdefs. When a package contains `Editor/SDKInstallProfile.json`, it also enforces profile schema/source immutability, public bridge visibility, third-party notices, source-only size boundaries, and forbidden vendor files or credentials. It writes the same JSON schema to stdout and optional `--output`; every diagnostic includes `code`, `severity`, `path`, `line`, `message`, and `suggestedFix`.
 
 Exit codes are stable for local automation and CI:
 
@@ -104,11 +123,27 @@ When Unity invokes the package-owned validator from an isolated `file:` dependen
 
 ## Package Manager
 
+### Content Bundles
+
+A bootstrap package can pass a versioned JSON profile to `ActionFitContentBundleApi` so one Git URL installs a complete, required package set. The manager plans all dependency changes first, preserves compatible embedded packages and equal/newer canonical tags, upgrades only older tags from the same canonical repository, and blocks local, forked, branch-based, unparseable, or user-modified values instead of overwriting them.
+
+Successful installation is journaled, writes `Packages/manifest.json` atomically, waits until every required package is registered, persists ownership in `ProjectSettings/ActionFitContentBundles.json`, then removes the bootstrap dependency. Interrupted install/release transactions remain under `UserSettings/ActionFitPackageManager/ContentBundleTransactions` for Editor-load recovery.
+
+Active bundles appear above normal package rows. Required packages cannot be removed from the Package Manager UI, and package-registration events reconcile missing required manifest entries. Release requires the profile's exact GitHub-login allowlist and preserves shared, embedded, non-owned, and user-modified dependencies. Batchmode mutation is disabled; `InspectJson`, `PlanJson`, and pure planners remain read-only.
+
+Public Editor APIs:
+
+- `ActionFitContentBundleApi.InspectJson` / `PlanJson`
+- `ActionFitContentBundleApi.InstallJson` / `RepairJson`
+- `ActionFitContentBundleApi.PlanRelease` / `Release` / `Remove`
+- `ActionFitContentBundleApi.Recover`, `GetStatuses`, and `IsRequiredPackage`
+
 - `Reload`: reloads the active catalog and current package install state.
 - `Update Catalog`: downloads the local catalog CSV from the configured spreadsheet/web app.
 - `Force Update`: runs `Update Catalog`, lists downloaded packages, and re-applies their catalog latest Git UPM URLs to `Packages/manifest.json` after confirmation. Embedded packages are skipped.
 - `Check Update`: shows installed packages whose catalog latest version is higher than the current version.
 - `Console`: opens the Manager Console.
+- `SDK Profiles`: opens the external SDK inspection, plan, execution, and explicit recovery window.
 
 Package sections are grouped as Package Manager, Embedded Packages, Downloaded Packages, and Available Packages. Git/registry dependencies in `Packages/manifest.json` are shown as Downloaded Packages. Local `file:` dependencies or package folders under `Packages/` without a manifest dependency are shown as Embedded Packages.
 
@@ -222,6 +257,16 @@ var skill = ActionFitPackageSkillScaffoldApi.Add(new ActionFitPackageSkillScaffo
     Agents = new[] { "codex", "claude" },
     Access = "write-capable",
 });
+
+var sdkProfile = ActionFitSdkInstallApi.ReadProfile(
+    "Packages/com.actionfit.vendor.sdk/Editor/SDKInstallProfile.json");
+var sdkPlan = ActionFitSdkInstallApi.Plan(sdkProfile, new ActionFitSdkPlanRequest
+{
+    Operation = ActionFitSdkInstallOperation.Apply,
+    SelectedModuleIds = new[] { "core" },
+});
+// Show sdkPlan.Findings, sdkPlan.Changes, and sdkPlan.PlanId to the user first.
+ActionFitSdkExecutionResult sdkResult = await ActionFitSdkInstallApi.ApplyAsync(sdkPlan, sdkPlan.PlanId);
 ```
 
 - `ActionFitPackageWorkflowApi.Inspect`: optionally refreshes the shared spreadsheet without confirmation UI, reads the latest catalog row, compares it with the installed version, reports embedded change state, and returns safe workflow options.
@@ -233,13 +278,18 @@ var skill = ActionFitPackageSkillScaffoldApi.Add(new ActionFitPackageSkillScaffo
 - `ActionFitPackageEmbedApi.ExecuteJson`: JSON start-result wrapper for Unity connectors and AI tools. A returned `EMBED_STARTED` is not the final conversion result.
 - `ActionFitPackageEmbedApi.RecoverPendingTransactions`: explicit recovery entry point in addition to automatic Editor-load recovery.
 - `ActionFitPackageSkillScaffoldApi.Add` / `AddJson`: adds a schema v2 package skill to an embedded package without overwriting existing sources. The first addition creates `<skillPrefix>-help` for Codex and Claude plus Codex `agents/openai.yaml` metadata.
-- `ActionFitPackagePublishApi.Prepare`: runs the local package contract first, then refreshes the catalog, blocks reused versions, validates package metadata/authentication, checks the GitHub repository and immutable tag, and returns a content-bound plan ID without changing external state. When the catalog source URL differs from a selected Private target, it also compares actual visibility, default branch, every branch/tag ref, and target documentation before preparing a repository migration.
+- `ActionFitSdkInstallApi.ReadProfile` / `Inspect` / `Plan`: validates a bridge profile and returns read-only installation state or a content-bound plan.
+- `ActionFitSdkInstallApi.ApplyAsync` / `RepairAsync` / `UpdateAsync` / `RemoveAsync`: executes only the matching reviewed operation and exact plan ID; it has no dialog or implicit approval.
+- `ActionFitSdkInstallApi.InspectPendingTransactions` / `RecoverPendingTransactions`: reports pending journals without mutation, then restores them only through an explicit recovery call.
+- `ActionFitPackagePublishApi.Prepare`: runs the local package contract first, then refreshes the catalog, blocks reused versions, validates package metadata/authentication, checks the GitHub repository and immutable tag, and returns a content-bound plan ID without changing external state. When the catalog source URL differs from the selected Public or Private target, it also compares actual visibility, default branch, every branch/tag ref, and target documentation before preparing a repository migration.
 - `ActionFitPackagePublishApi.Execute`: re-runs every preflight and requires the same plan ID plus the exact `RequiredApprovalText` before repository push, tag push, and catalog upsert. Repository relocation additionally requires `ApproveRepositoryMigration = true` and the exact separate `MigrationApprovalText`.
 - `ActionFitPackagePublishApi.PrepareJson` / `ExecuteJson`: JSON wrappers for AI connectors. Execution never infers approval from preparation.
 - `ActionFitPackagePublishApi.PrepareCatalogRecovery` / `ExecuteCatalogRecovery`: verifies an existing immutable remote tag against the local package, requires an exact recovery approval, and appends only the missing catalog row without pushing `main` or tags. JSON wrappers are available as `PrepareCatalogRecoveryJson` / `ExecuteCatalogRecoveryJson`.
 - `ActionFitPackageBulkPublishApi.PrepareAllChanged`: discovers changed embedded packages or validates an explicit package ID list, refreshes catalog/GitHub state, and returns one content-bound bulk plan without external changes. A package whose immutable tag already exists while its Catalog version is missing is verified and classified under `CatalogRecoveryPackageIds` instead of failing as a normal publish conflict.
 - `ActionFitPackageBulkPublishApi.ExecuteAll`: requires the exact bulk plan ID, exact publish approval, exact repository-creation package set, and—when needed—the exact migration and Catalog recovery approvals. Approved migrations finish first; only `PublishPackageIds` enter repository workers, while verified recovery rows join the Catalog batch without any repository action.
 - `ActionFitPackageBulkPublishApi.PrepareAllChangedJson` / `ExecuteAllJson`: JSON wrappers for AI connectors. The Manager Console's `Publish All Changed` button calls this same API.
+- `ActionFitPackageRepositoryRetirementApi.Prepare` / `Execute`: after a verified Private-to-Public publication and Catalog refresh, prepares and executes one exact `Keep`, `Archive`, or `Delete` source disposition. `Keep` performs no mutation; Archive/Delete recheck the Public immutable tag, every migrated ref, every known Catalog version URL, current PackageInfo target, source visibility, and local dependency references before mutation.
+- `ActionFitPackageRepositoryRetirementApi.PrepareBatch` / `ExecuteBatch`: binds an exact selected package/mode set, revalidates the full set and each item again immediately before mutation, and retires sources serially. It stops on the first failure and preserves every later source. JSON wrappers are available for all four operations.
 
 Batchmode callers can use:
 
@@ -250,7 +300,7 @@ Batchmode callers can use:
 
 Inspection is advisory and never publishes. Workflow options mark repository publishing with `RequiresExplicitPublishApproval`; AI must not push, tag, create a repository, or append a catalog row unless the user explicitly requests that external action.
 
-`Prepare` is always read-only. A successful plan returns an exact approval string such as `PUBLISH com.actionfit.example@1.2.3 PLAN <planId>`. `Execute` rejects missing or mismatched approval, rechecks the refreshed catalog and remote tag, and rejects a changed content hash or plan. New repository creation additionally requires `ApproveRepositoryCreation = true`. Public-to-Private repository relocation has a separate `MIGRATE ... PLAN <planId>` approval and never changes, archives, or deletes the source repository. If repository push succeeds but catalog upsert fails, the result reports `RetryCatalogAppendAvailable = true` instead of pushing the repository again.
+`Prepare` is always read-only. A successful plan returns an exact approval string such as `PUBLISH com.actionfit.example@1.2.3 PLAN <planId>`. `Execute` rejects missing or mismatched approval, rechecks the refreshed catalog and remote tag, and rejects a changed content hash or plan. New repository creation additionally requires `ApproveRepositoryCreation = true`. Bidirectional repository relocation has a separate `MIGRATE ... PLAN <planId>` approval and never changes source visibility in place or mutates the source during publication. A Private source may be archived or deleted only by a later retirement plan with its own exact approval. If repository push succeeds but catalog upsert fails, the result reports `RetryCatalogAppendAvailable = true` instead of pushing the repository again.
 
 Custom Package Manager scans installed `AI_GUIDE.md` files from embedded `Packages/com.actionfit.*` folders and Git UPM `Library/PackageCache/com.actionfit.*@*` folders, then refreshes `PACKAGE_AI_GUIDE_ROUTER.md` from their `Requested router entry` blocks. Router entries are rewritten to the actual discovered guide path, so Git UPM packages point at `Library/PackageCache/...@hash/AI_GUIDE.md`. When a consuming project already has a primary AI markdown entry point, it also generates a `packages/actionfit-packages.md` compatibility pointer next to that entry point and adds an auto-managed section so the project-level AI router can discover `PACKAGE_AI_GUIDE_ROUTER.md`.
 
@@ -286,7 +336,9 @@ Publish preflight also supports a repository that exists but has no first commit
 
 `Publish All Changed` validates package contracts once before approval, reuses the same in-process approved plan during execution, and rechecks the mutable catalog, content hash, version, repository, tag, and recovery equivalence immediately before mutation. Deserialized/API-supplied plan data cannot bypass contract validation because its validation receipt is not serialized. A matching existing tag is marked `Recover Catalog only` in the plan; content or visibility mismatches remain blocked and recommend the next patch version. GitHub remote preflight and normal repository publishing run with up to 4 workers. Recovery candidates never enter repository workers and require `CatalogRecoveryApprovalText` separately from the publish approval. The progress dialog identifies local validation, GitHub checks, repository publishing, catalog batch/fallback, and final refresh stages and can cancel before mutation or stop before catalog registration after repository publishing completes.
 
-When an existing catalog repository URL differs from the selected Private publish target, `Publish Changed` treats it as an explicit repository migration. Preflight checks both repositories' actual GitHub visibility, default branch, all branch/tag refs, current-version tag conflicts, and requires both `README.md` and `AI_GUIDE.md` to reference the target URL. A missing target may be created only with the existing creation approval; source branches and tags are then mirrored without force or prune against the target, the target default branch is aligned, and all refs are rechecked. Existing Public targets and conflicting target refs are blocked. The source repository is never modified, archived, deleted, or made Private. The package version and catalog URL are published only after migration verification, so a failed or partially completed attempt leaves catalog rows unchanged and can be retried safely.
+When an existing catalog repository URL differs from the selected Public or Private publish target, `Publish Changed` treats it as an explicit repository migration. Preflight shows both repositories' actual GitHub visibility, default branch, all branch/tag refs, current-version tag conflicts, and requires both `README.md` and `AI_GUIDE.md` to reference the target URL. A missing target may be created only with the existing creation approval; source branches and tags are then mirrored without force or prune against the target, the target default branch is aligned, and all refs are rechecked. A target with the wrong visibility and conflicting target refs are blocked, and the same repository is never changed in place. The source remains unchanged throughout migration, package publication, and Catalog update.
+
+For a verified Private-to-Public migration, each publish row exposes `Previous Repository` with `Keep` as the default. `Archive` and `Delete` are separate post-publish phases: they are prepared only after the new Public tag and Catalog row exist, show the exact source/target/ref changes and warnings, require a content-bound approval, refresh all checks immediately before mutation, and block while any known Catalog version or the current project's manifest, lock file, or embedded package metadata still references the old Private URL. Archive is reversible and recommended. Delete is irreversible; GitHub Issues, pull requests, settings, secrets, Actions configuration, stars, forks, and other repository metadata are not migrated. External consumers cannot be proven from the current checkout, so their dependencies must be checked separately. Bulk retirement applies only to explicitly selected rows and stops at the first failure, preserving later sources.
 
 Catalog and GitHub HTTP requests use a 30-second connection/read timeout. The catalog Web App should support `upsertPackageVersions` and return either a matching `count` or per-item confirmations. Unsupported batch responses fall back to serial `upsertPackageVersion`; timeout and cancellation failures do not start a potentially long serial fallback. If repository publishing succeeds but catalog append fails or is canceled, the window keeps those rows and shows `Retry Catalog Append` so the spreadsheet update can be retried without pushing repositories again. The Unity Console logs elapsed milliseconds for catalog refresh, GitHub preflight, repository publish, batch append, serial fallback, and total bulk execution.
 

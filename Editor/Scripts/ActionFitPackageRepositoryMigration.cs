@@ -11,7 +11,7 @@ using Debug = UnityEngine.Debug;
 
 /// <summary>
 /// Read-only preflight and explicitly approved execution for catalog repository relocation.
-/// The source repository is never mutated, archived, deleted, or made private by this workflow.
+/// The source repository is never mutated by this workflow. Source retirement is a separate approval-gated phase.
 /// </summary>
 internal static class ActionFitPackageRepositoryMigration
 {
@@ -56,26 +56,19 @@ internal static class ActionFitPackageRepositoryMigration
             return true;
 
         state.Required = true;
-        if (!request.GitHubIsPrivate)
-        {
-            code = "REPOSITORY_RELOCATION_REQUIRES_PRIVATE_TARGET";
-            message =
-                $"Catalog repository {source.DisplayName} differs from publish target {target.DisplayName}. " +
-                "Automatic relocation is limited to an explicitly selected Private target.";
-            return false;
-        }
-
         if (targetRemote == null)
         {
             code = "TARGET_REPOSITORY_STATE_MISSING";
             message = "Target repository state is missing.";
             return false;
         }
-        if (targetRemote.RepositoryExists && !targetRemote.RepositoryIsPrivate)
+        if (targetRemote.RepositoryExists && targetRemote.RepositoryIsPrivate != request.GitHubIsPrivate)
         {
-            code = "TARGET_REPOSITORY_PUBLIC";
+            code = "TARGET_REPOSITORY_VISIBILITY_MISMATCH";
             message =
-                $"Target repository {target.DisplayName} already exists as Public. " +
+                $"Target repository {target.DisplayName} exists as " +
+                $"{(targetRemote.RepositoryIsPrivate ? "Private" : "Public")}, but the selected target is " +
+                $"{(request.GitHubIsPrivate ? "Private" : "Public")}. " +
                 "The publisher will not change its visibility or overwrite it.";
             return false;
         }
@@ -169,7 +162,8 @@ internal static class ActionFitPackageRepositoryMigration
             message = state.WillMirrorRepository
                 ? $"Repository migration is ready: {source.DisplayName} -> {target.DisplayName}. " +
                   $"Source refs: {state.SourceBranchCount} branch(es), {state.SourceTagCount} tag(s); missing target refs: {state.MissingRefCount}."
-                : $"Private target {target.DisplayName} already contains all source refs. Catalog relocation still requires explicit migration approval.";
+                : $"{(request.GitHubIsPrivate ? "Private" : "Public")} target {target.DisplayName} already contains all source refs. " +
+                  "Catalog relocation still requires explicit migration approval.";
             return true;
         }
         catch (Exception ex)
@@ -221,8 +215,13 @@ internal static class ActionFitPackageRepositoryMigration
                 return MigrationResult.Failed(remoteError);
             if (!TryInspect(request, targetRemote, out RepositoryMigrationState after, out code, out inspectionMessage))
                 return MigrationResult.Failed($"Post-migration verification failed: {code}: {inspectionMessage}");
-            if (!after.TargetRepositoryExists || !after.TargetRepositoryIsPrivate || after.WillMirrorRepository)
-                return MigrationResult.Failed("Post-migration verification found missing refs, a default-branch mismatch, or a non-private target.");
+            if (!after.TargetRepositoryExists ||
+                after.TargetRepositoryIsPrivate != request.GitHubIsPrivate ||
+                after.WillMirrorRepository)
+            {
+                return MigrationResult.Failed(
+                    "Post-migration verification found missing refs, a default-branch mismatch, or an unexpected target visibility.");
+            }
 
             string resultMessage =
                 $"Repository migration verified in {stopwatch.ElapsedMilliseconds} ms: " +

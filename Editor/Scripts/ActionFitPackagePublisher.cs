@@ -351,9 +351,31 @@ public static class ActionFitPackagePublisher
         out string defaultBranch,
         out string message)
     {
+        return TryGetRepositoryMetadata(
+            organization,
+            repoName,
+            token,
+            out exists,
+            out isPrivate,
+            out defaultBranch,
+            out _,
+            out message);
+    }
+
+    internal static bool TryGetRepositoryMetadata(
+        string organization,
+        string repoName,
+        string token,
+        out bool exists,
+        out bool isPrivate,
+        out string defaultBranch,
+        out bool archived,
+        out string message)
+    {
         exists = false;
         isPrivate = false;
         defaultBranch = "";
+        archived = false;
         message = "";
         try
         {
@@ -373,6 +395,7 @@ public static class ActionFitPackagePublisher
             exists = true;
             isPrivate = repository.@private;
             defaultBranch = repository.default_branch ?? "";
+            archived = repository.archived;
             return true;
         }
         catch (WebException ex) when ((ex.Response as HttpWebResponse)?.StatusCode == HttpStatusCode.NotFound)
@@ -423,7 +446,7 @@ public static class ActionFitPackagePublisher
         => statusCode == HttpStatusCode.NotFound ||
            conflictMeansMissing && statusCode == HttpStatusCode.Conflict;
 
-    private static HttpWebRequest CreateGitHubRequest(string url, string token, string method)
+    internal static HttpWebRequest CreateGitHubRequest(string url, string token, string method)
     {
         var request = (HttpWebRequest)WebRequest.Create(url);
         request.Method = method;
@@ -740,7 +763,7 @@ public static class ActionFitPackagePublisher
     internal static string BuildTokenRemote(string organization, string repoName, string token)
         => $"https://x-access-token:{token}@github.com/{organization}/{repoName}.git";
 
-    private static void WriteBody(HttpWebRequest request, string body)
+    internal static void WriteBody(HttpWebRequest request, string body)
     {
         byte[] bytes = Encoding.UTF8.GetBytes(body);
         request.ContentLength = bytes.Length;
@@ -939,6 +962,7 @@ public static class ActionFitPackagePublisher
     {
         public bool @private;
         public string default_branch;
+        public bool archived;
     }
 
     [Serializable]

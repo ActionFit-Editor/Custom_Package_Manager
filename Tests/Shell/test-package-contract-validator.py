@@ -97,6 +97,94 @@ class PackageContractValidatorTests(unittest.TestCase):
         self.assertEqual(1, code)
         self.assertIn("PACKAGE_JSON_INVALID", {item["code"] for item in result["diagnostics"]})
 
+    def test_valid_source_only_sdk_bridge_passes(self) -> None:
+        temporary, repo_root, package_root = self.make_repo("valid-package")
+        self.addCleanup(temporary.cleanup)
+        self.write_sdk_bridge_contract(package_root)
+
+        code, result = self.run_cli(repo_root, "--package", PACKAGE_ID)
+
+        self.assertEqual(0, code, result["diagnostics"])
+        self.assertTrue(result["success"])
+
+    def test_sdk_bridge_accepts_safe_git_subpath_and_rejects_traversal(self) -> None:
+        temporary, repo_root, package_root = self.make_repo("valid-package")
+        self.addCleanup(temporary.cleanup)
+        self.write_sdk_bridge_contract(package_root)
+        profile_path = package_root / "Editor" / "SDKInstallProfile.json"
+        profile = json.loads(profile_path.read_text(encoding="utf-8"))
+        profile["Sources"][0] = {
+            "Id": "git",
+            "Kind": "git",
+            "Url": "https://example.com/vendor/sdk.git",
+            "ImmutableRevision": "0123456789abcdef0123456789abcdef01234567",
+            "GitSubpath": "Assets/VendorSdk",
+            "PackageId": "com.vendor.sdk",
+        }
+        profile_path.write_text(json.dumps(profile), encoding="utf-8")
+
+        valid_code, valid_result = self.run_cli(repo_root, "--package", PACKAGE_ID)
+
+        self.assertEqual(0, valid_code, valid_result["diagnostics"])
+
+        profile["Sources"][0]["GitSubpath"] = "Assets/../VendorSdk"
+        profile_path.write_text(json.dumps(profile), encoding="utf-8")
+        invalid_code, invalid_result = self.run_cli(repo_root, "--package", PACKAGE_ID)
+
+        self.assertEqual(1, invalid_code)
+        self.assertIn(
+            "SDK_PROFILE_GIT_SUBPATH_INVALID",
+            {item["code"] for item in invalid_result["diagnostics"]},
+        )
+
+    def test_sdk_bridge_rejects_vendor_files_credentials_and_mutable_sources(self) -> None:
+        temporary, repo_root, package_root = self.make_repo("valid-package")
+        self.addCleanup(temporary.cleanup)
+        self.write_sdk_bridge_contract(package_root)
+        profile_path = package_root / "Editor" / "SDKInstallProfile.json"
+        profile = json.loads(profile_path.read_text(encoding="utf-8"))
+        profile["Sources"][0] = {
+            "Id": "git",
+            "Kind": "git",
+            "Url": "https://token@example.com/vendor/sdk.git",
+            "ImmutableRevision": "main",
+            "PackageId": "com.vendor.sdk",
+        }
+        profile_path.write_text(json.dumps(profile), encoding="utf-8")
+        (package_root / "Runtime").mkdir(exist_ok=True)
+        (package_root / "Runtime" / "VendorSdk.dll").write_bytes(b"binary")
+        (package_root / "Runtime" / "VendorSdk.framework").mkdir()
+        (package_root / "Editor" / "LocalConfig.txt").write_text(
+            'access_token = "secret-value-123"\n', encoding="utf-8"
+        )
+
+        code, result = self.run_cli(repo_root, "--package", PACKAGE_ID)
+
+        self.assertEqual(1, code)
+        codes = {item["code"] for item in result["diagnostics"]}
+        self.assertTrue(
+            {
+                "SDK_PROFILE_SOURCE_URL_UNSAFE",
+                "SDK_PROFILE_GIT_REVISION_MUTABLE",
+                "SDK_BRIDGE_VENDOR_FILE_FORBIDDEN",
+                "SDK_BRIDGE_CREDENTIAL_FORBIDDEN",
+            }.issubset(codes)
+        )
+
+    @unittest.skipIf(os.name == "nt", "Windows symlink creation requires developer-mode privileges")
+    def test_sdk_bridge_rejects_linked_content(self) -> None:
+        temporary, repo_root, package_root = self.make_repo("valid-package")
+        self.addCleanup(temporary.cleanup)
+        self.write_sdk_bridge_contract(package_root)
+        outside = repo_root / "vendor-sdk.tgz"
+        outside.write_bytes(b"vendor")
+        (package_root / "Editor" / "linked-sdk").symlink_to(outside)
+
+        code, result = self.run_cli(repo_root, "--package", PACKAGE_ID)
+
+        self.assertEqual(1, code)
+        self.assertIn("SDK_BRIDGE_LINK_FORBIDDEN", {item["code"] for item in result["diagnostics"]})
+
     def test_valid_registered_skills_pass_package_contract(self) -> None:
         temporary, repo_root, package_root = self.make_repo("valid-package")
         self.addCleanup(temporary.cleanup)
@@ -154,6 +242,56 @@ class PackageContractValidatorTests(unittest.TestCase):
 
         self.assertEqual(0, code)
         self.assertTrue(result["success"])
+
+    def write_sdk_bridge_contract(self, package_root: Path) -> None:
+        package_json_path = package_root / "package.json"
+        package_json = json.loads(package_json_path.read_text(encoding="utf-8"))
+        package_json["dependencies"]["com.actionfit.custompackagemanager"] = "1.1.92"
+        package_json_path.write_text(json.dumps(package_json), encoding="utf-8")
+        profile = {
+            "SchemaVersion": 1,
+            "ProfileId": "vendor.sdk",
+            "ProfileVersion": "1.0.0",
+            "Vendor": "Vendor",
+            "DisplayName": "Vendor SDK",
+            "BridgePackageId": PACKAGE_ID,
+            "MinimumUnityVersion": "6000.2",
+            "MaximumUnityVersion": "",
+            "LicenseUrl": "https://example.com/license",
+            "SupportUrl": "https://example.com/support",
+            "SupportedPlatforms": ["Android", "iOS"],
+            "AllowedDomains": ["example.com"],
+            "Sources": [
+                {
+                    "Id": "registry",
+                    "Kind": "registry",
+                    "Url": "https://registry.example.com",
+                    "ImmutableVersion": "1.2.3",
+                    "ImmutableRevision": "",
+                    "GitSubpath": "",
+                    "PackageId": "com.vendor.sdk",
+                    "PackageVersion": "",
+                    "Sha256": "",
+                    "CacheRelativePath": "",
+                }
+            ],
+            "Modules": [],
+            "Dependencies": [],
+            "ScopedRegistries": [],
+            "DetectionRules": [],
+        }
+        (package_root / "Editor" / "SDKInstallProfile.json").write_text(
+            json.dumps(profile), encoding="utf-8"
+        )
+        (package_root / "THIRD_PARTY_NOTICES.md").write_text(
+            "# Third-Party Notices\n\nThis package contains no redistributed vendor SDK files.\n",
+            encoding="utf-8",
+        )
+        package_info_path = package_root / "Editor" / "PackageInfo" / "ActionFitPackageInfo_SO.asset"
+        package_info_path.write_text(
+            package_info_path.read_text(encoding="utf-8") + "  _repositoryVisibility: 0\n",
+            encoding="utf-8",
+        )
 
     def test_invalid_registered_skills_report_stable_contract_codes(self) -> None:
         temporary, repo_root, package_root = self.make_repo("valid-package")

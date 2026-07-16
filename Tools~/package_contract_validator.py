@@ -11,6 +11,7 @@ import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable, Sequence
+from urllib.parse import urlparse
 
 
 SCHEMA_VERSION = "1.0"
@@ -32,6 +33,35 @@ SKILL_NAME_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 SKILL_AGENTS = {"codex": "Codex", "claude": "Claude"}
 SKILL_ACCESS = {"read-only", "write-capable"}
 GENERATED_SKILL_INVENTORY = "PACKAGE_SKILLS.md"
+SDK_PROFILE_RELATIVE_PATH = Path("Editor/SDKInstallProfile.json")
+SDK_FORBIDDEN_FILE_NAMES = {"google-services.json", "googleservice-info.plist"}
+SDK_FORBIDDEN_SUFFIXES = {
+    ".7z",
+    ".a",
+    ".aar",
+    ".bundle",
+    ".dll",
+    ".dylib",
+    ".exe",
+    ".framework",
+    ".gz",
+    ".jar",
+    ".lib",
+    ".mdb",
+    ".pdb",
+    ".rar",
+    ".so",
+    ".tar",
+    ".tgz",
+    ".unitypackage",
+    ".xcframework",
+    ".zip",
+}
+SDK_CREDENTIAL_PATTERN = re.compile(
+    r"(?:-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|"
+    r"(?:api[_-]?key|client[_-]?secret|access[_-]?token)\s*[:=]\s*[\"'][^\"']{8,}[\"'])",
+    re.IGNORECASE,
+)
 
 
 class InfrastructureError(RuntimeError):
@@ -1022,6 +1052,287 @@ def validate_asmdefs(
             )
 
 
+def validate_sdk_bridge(
+    repo_root: Path,
+    package_id: str,
+    package_root: Path,
+    manifest: dict[str, Any] | None,
+    diagnostics: list[Diagnostic],
+) -> None:
+    profile_path = package_root / SDK_PROFILE_RELATIVE_PATH
+    if not profile_path.is_file():
+        return
+
+    dependencies = manifest.get("dependencies") if isinstance(manifest, dict) else None
+    manager_version = dependencies.get("com.actionfit.custompackagemanager") if isinstance(dependencies, dict) else None
+    if not isinstance(manager_version, str) or parse_semver(manager_version) is None:
+        diagnostics.append(
+            diagnostic(
+                "SDK_BRIDGE_MANAGER_DEPENDENCY_MISSING",
+                relative_path(repo_root, package_root / "package.json"),
+                "SDK bridge package must declare an exact com.actionfit.custompackagemanager dependency.",
+                "Regenerate the bridge package or add the installed manager version to package.json dependencies.",
+            )
+        )
+
+    profile, text = load_json(repo_root, profile_path, diagnostics, "SDK_PROFILE_JSON_INVALID")
+    rel_profile = relative_path(repo_root, profile_path)
+    if profile is not None and text is not None:
+        if profile.get("SchemaVersion") != 1:
+            diagnostics.append(
+                diagnostic(
+                    "SDK_PROFILE_SCHEMA_UNSUPPORTED",
+                    rel_profile,
+                    "SDK install profile must declare SchemaVersion 1.",
+                    "Regenerate the profile with the current SDK bridge package template.",
+                    line=line_for(text, '"SchemaVersion"'),
+                )
+            )
+        if profile.get("BridgePackageId") != package_id:
+            diagnostics.append(
+                diagnostic(
+                    "SDK_PROFILE_BRIDGE_PACKAGE_MISMATCH",
+                    rel_profile,
+                    f"SDK profile BridgePackageId must be {package_id}.",
+                    "Set BridgePackageId to the package directory ID.",
+                    line=line_for(text, '"BridgePackageId"'),
+                )
+            )
+        for field in ("ProfileId", "ProfileVersion", "Vendor", "DisplayName", "LicenseUrl", "SupportUrl"):
+            if not isinstance(profile.get(field), str) or not profile[field].strip():
+                diagnostics.append(
+                    diagnostic(
+                        "SDK_PROFILE_REQUIRED_FIELD",
+                        rel_profile,
+                        f"SDK install profile field {field} must be a non-empty string.",
+                        f"Set {field} in Editor/SDKInstallProfile.json.",
+                        line=line_for(text, f'"{field}"'),
+                    )
+                )
+
+        domains = profile.get("AllowedDomains")
+        allowed_domains = {
+            value.strip().rstrip(".").lower()
+            for value in domains
+            if isinstance(value, str) and value.strip()
+        } if isinstance(domains, list) else set()
+        if not allowed_domains:
+            diagnostics.append(
+                diagnostic(
+                    "SDK_PROFILE_ALLOWED_DOMAINS_MISSING",
+                    rel_profile,
+                    "SDK install profile must declare official AllowedDomains.",
+                    "List each official source host without scheme, port, wildcard, or path.",
+                    line=line_for(text, '"AllowedDomains"'),
+                )
+            )
+
+        sources = profile.get("Sources")
+        if not isinstance(sources, list) or not sources:
+            diagnostics.append(
+                diagnostic(
+                    "SDK_PROFILE_SOURCES_MISSING",
+                    rel_profile,
+                    "SDK install profile must declare at least one immutable official source.",
+                    "Add an artifact, git, or registry source with immutable version data.",
+                    line=line_for(text, '"Sources"'),
+                )
+            )
+        else:
+            for index, source in enumerate(sources):
+                if not isinstance(source, dict):
+                    diagnostics.append(
+                        diagnostic(
+                            "SDK_PROFILE_SOURCE_INVALID",
+                            rel_profile,
+                            f"SDK source at index {index} must be an object.",
+                            "Replace the source entry with the bridge profile source schema.",
+                        )
+                    )
+                    continue
+                url = source.get("Url")
+                parsed = urlparse(url) if isinstance(url, str) else None
+                host = (parsed.hostname or "").lower() if parsed else ""
+                host_allowed = any(host == domain or host.endswith(f".{domain}") for domain in allowed_domains)
+                if (
+                    parsed is None
+                    or parsed.scheme.lower() != "https"
+                    or not host
+                    or parsed.username is not None
+                    or parsed.password is not None
+                    or bool(parsed.query)
+                    or bool(parsed.fragment)
+                    or not host_allowed
+                ):
+                    diagnostics.append(
+                        diagnostic(
+                            "SDK_PROFILE_SOURCE_URL_UNSAFE",
+                            rel_profile,
+                            f"SDK source at index {index} must use credential-free HTTPS on AllowedDomains.",
+                            "Use an official HTTPS URL and declare its host in AllowedDomains.",
+                            line=line_for(text, str(url)) if isinstance(url, str) else 1,
+                        )
+                    )
+                kind = source.get("Kind")
+                if kind == "artifact":
+                    checksum = source.get("Sha256")
+                    if not isinstance(checksum, str) or re.fullmatch(r"[0-9A-Fa-f]{64}", checksum) is None:
+                        diagnostics.append(
+                            diagnostic(
+                                "SDK_PROFILE_ARTIFACT_CHECKSUM_INVALID",
+                                rel_profile,
+                                f"Artifact source at index {index} requires a SHA-256 checksum.",
+                                "Record the verified official artifact SHA-256.",
+                                line=line_for(text, '"Sha256"'),
+                            )
+                        )
+                elif kind == "git":
+                    revision = source.get("ImmutableRevision")
+                    immutable = isinstance(revision, str) and (
+                        re.fullmatch(r"[0-9A-Fa-f]{40}", revision) is not None
+                        or re.fullmatch(r"v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?", revision) is not None
+                    )
+                    if not immutable:
+                        diagnostics.append(
+                            diagnostic(
+                                "SDK_PROFILE_GIT_REVISION_MUTABLE",
+                                rel_profile,
+                                f"Git source at index {index} must use a full commit or exact SemVer tag.",
+                                "Replace branch names with an immutable revision.",
+                                line=line_for(text, '"ImmutableRevision"'),
+                            )
+                        )
+                    git_subpath = source.get("GitSubpath")
+                    if isinstance(git_subpath, str) and git_subpath:
+                        segments = git_subpath.split("/")
+                        valid_subpath = (
+                            git_subpath == git_subpath.strip()
+                            and not git_subpath.startswith("/")
+                            and not git_subpath.endswith("/")
+                            and "\\" not in git_subpath
+                            and all(
+                                segment not in {"", ".", ".."}
+                                and re.fullmatch(r"[0-9A-Za-z._-]+", segment) is not None
+                                for segment in segments
+                            )
+                        )
+                        if not valid_subpath:
+                            diagnostics.append(
+                                diagnostic(
+                                    "SDK_PROFILE_GIT_SUBPATH_INVALID",
+                                    rel_profile,
+                                    f"Git source at index {index} has an unsafe UPM package subpath.",
+                                    "Use a relative GitSubpath with safe path segments and no traversal.",
+                                    line=line_for(text, '"GitSubpath"'),
+                                )
+                            )
+                elif kind == "registry":
+                    version = source.get("ImmutableVersion")
+                    package_name = source.get("PackageId")
+                    if (
+                        not isinstance(version, str)
+                        or parse_semver(version) is None
+                        or not isinstance(package_name, str)
+                        or not package_name.strip()
+                    ):
+                        diagnostics.append(
+                            diagnostic(
+                                "SDK_PROFILE_REGISTRY_VERSION_INVALID",
+                                rel_profile,
+                                f"Registry source at index {index} must use exact SemVer and a package ID.",
+                                "Set ImmutableVersion to MAJOR.MINOR.PATCH and PackageId to the resolved package.",
+                                line=line_for(text, '"ImmutableVersion"'),
+                            )
+                        )
+                else:
+                    diagnostics.append(
+                        diagnostic(
+                            "SDK_PROFILE_SOURCE_KIND_INVALID",
+                            rel_profile,
+                            f"SDK source at index {index} has unsupported Kind {kind!r}.",
+                            "Use artifact, git, or registry.",
+                        )
+                    )
+
+    notices_path = package_root / "THIRD_PARTY_NOTICES.md"
+    notices = read_text(repo_root, notices_path, diagnostics)
+    if notices is not None and "contains no redistributed" not in notices.lower():
+        diagnostics.append(
+            diagnostic(
+                "SDK_THIRD_PARTY_NOTICE_BOUNDARY_MISSING",
+                relative_path(repo_root, notices_path),
+                "Third-party notices must state that vendor SDK files are not redistributed.",
+                "Document the source-only bridge boundary and vendor license links.",
+            )
+        )
+
+    package_info_path = package_root / "Editor/PackageInfo/ActionFitPackageInfo_SO.asset"
+    package_info = read_text(repo_root, package_info_path, diagnostics)
+    if package_info is not None and not re.search(r"^\s*_repositoryVisibility:\s*0\s*$", package_info, re.MULTILINE):
+        diagnostics.append(
+            diagnostic(
+                "SDK_BRIDGE_REPOSITORY_NOT_PUBLIC",
+                relative_path(repo_root, package_info_path),
+                "SDK bridge packages must use Public repository visibility.",
+                "Set PackageInfo _repositoryVisibility to 0 (Public).",
+                line=line_for(package_info, "_repositoryVisibility:"),
+            )
+        )
+
+    for path in sorted(package_root.rglob("*")):
+        if path.is_symlink():
+            diagnostics.append(
+                diagnostic(
+                    "SDK_BRIDGE_LINK_FORBIDDEN",
+                    relative_path(repo_root, path),
+                    "Source-only SDK bridge packages must not contain symbolic links.",
+                    "Replace the link with package-owned source text or remove it.",
+                )
+            )
+            continue
+        relative = path.relative_to(package_root).as_posix()
+        lower_name = path.name.lower()
+        lower_relative = relative.lower()
+        forbidden_suffix = next((suffix for suffix in SDK_FORBIDDEN_SUFFIXES if lower_relative.endswith(suffix)), None)
+        if lower_name in SDK_FORBIDDEN_FILE_NAMES or forbidden_suffix or lower_relative.endswith(".tar.gz"):
+            diagnostics.append(
+                diagnostic(
+                    "SDK_BRIDGE_VENDOR_FILE_FORBIDDEN",
+                    relative_path(repo_root, path),
+                    f"Source-only SDK bridge package contains forbidden vendor file {relative}.",
+                    "Remove SDK binaries, archives, and vendor configuration files from the bridge package.",
+                )
+            )
+            continue
+        if not path.is_file():
+            continue
+        if path.stat().st_size > 5 * 1024 * 1024:
+            diagnostics.append(
+                diagnostic(
+                    "SDK_BRIDGE_FILE_TOO_LARGE",
+                    relative_path(repo_root, path),
+                    f"SDK bridge file {relative} exceeds the 5 MiB source-only limit.",
+                    "Remove redistributed or generated vendor content from the bridge package.",
+                )
+            )
+            continue
+        if path.suffix.lower() not in {".md", ".json", ".cs", ".asmdef", ".asset", ".meta", ".txt", ".py", ".sh"}:
+            continue
+        try:
+            candidate_text = path.read_text(encoding="utf-8-sig")
+        except (OSError, UnicodeError):
+            continue
+        if SDK_CREDENTIAL_PATTERN.search(candidate_text):
+            diagnostics.append(
+                diagnostic(
+                    "SDK_BRIDGE_CREDENTIAL_FORBIDDEN",
+                    relative_path(repo_root, path),
+                    f"SDK bridge file {relative} appears to contain a credential or private key.",
+                    "Remove credentials and keep local vendor configuration outside the package.",
+                )
+            )
+
+
 def run_git(repo_root: Path, arguments: Sequence[str]) -> str:
     try:
         completed = subprocess.run(
@@ -1150,6 +1461,7 @@ def validate_package(
     validate_skills(repo_root, package_id, package_root, diagnostics)
     validate_package_info(repo_root, package_id, package_root, manifest, diagnostics)
     validate_asmdefs(repo_root, package_id, package_root, diagnostics)
+    validate_sdk_bridge(repo_root, package_id, package_root, manifest, diagnostics)
     validate_version_bump(
         repo_root,
         package_id,

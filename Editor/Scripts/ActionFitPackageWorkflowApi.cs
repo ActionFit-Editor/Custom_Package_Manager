@@ -320,6 +320,30 @@ public static class ActionFitPackageWorkflowApi
         return File.Exists(ActionFitPackagePaths.ProjectRelativeFullPath(local)) ? local : PackageCatalogFallbackPath;
     }
 
+    internal static string[] FindCatalogRepositoryReferenceVersions(
+        string packageId,
+        string repositoryUrl)
+    {
+        if (string.IsNullOrWhiteSpace(packageId) ||
+            !ActionFitPackageRepositoryMigration.TryParseRepositoryUrl(
+                repositoryUrl,
+                out ActionFitPackageRepositoryMigration.RepositoryIdentity repository))
+        {
+            return Array.Empty<string>();
+        }
+
+        return ReadCatalog(ResolveCatalogPath())
+            .Where(item => string.Equals(item.PackageId, packageId, StringComparison.Ordinal) &&
+                           ActionFitPackageRepositoryMigration.TryParseRepositoryUrl(
+                               item.RepositoryUrl,
+                               out ActionFitPackageRepositoryMigration.RepositoryIdentity itemRepository) &&
+                           itemRepository.Equals(repository))
+            .Select(item => item.Version)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(item => item, StringComparer.Ordinal)
+            .ToArray();
+    }
+
     private static List<CatalogVersion> ReadCatalog(string path)
     {
         List<string> records = ReadCsvRecords(File.ReadAllText(path));
