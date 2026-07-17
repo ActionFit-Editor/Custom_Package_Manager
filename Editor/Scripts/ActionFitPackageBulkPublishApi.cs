@@ -649,6 +649,7 @@ public static class ActionFitPackageBulkPublishApi
             try { manifest = ActionFitPackageManifest.Read(packageJson); }
             catch { continue; }
             if (string.IsNullOrWhiteSpace(manifest.Name) || string.IsNullOrWhiteSpace(manifest.Version)) continue;
+            if (ActionFitPackageProjectOverrideApi.IsProjectOverride(manifest.Name)) continue;
 
             ActionFitPackageInspectionResult inspection = ActionFitPackageWorkflowApi.Inspect(new ActionFitPackageInspectionRequest
             {

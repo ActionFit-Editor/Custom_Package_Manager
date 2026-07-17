@@ -10,7 +10,18 @@ public sealed class ActionFitContentBundleProfile
     public string displayName = "";
     public string bootstrapPackageId = "";
     public ActionFitContentBundlePackageSpec[] packages = Array.Empty<ActionFitContentBundlePackageSpec>();
+    public ActionFitContentBundleModuleSpec[] modules = Array.Empty<ActionFitContentBundleModuleSpec>();
     public string[] allowedReleaseGitHubLogins = Array.Empty<string>();
+}
+
+[Serializable]
+public sealed class ActionFitContentBundleModuleSpec
+{
+    public string moduleId = "";
+    public string displayName = "";
+    public bool required;
+    public bool defaultSelected = true;
+    public string[] packageIds = Array.Empty<string>();
 }
 
 [Serializable]
@@ -57,6 +68,9 @@ public sealed class ActionFitContentBundlePlan
     public ActionFitContentBundleChange[] changes = Array.Empty<ActionFitContentBundleChange>();
     public string[] conflicts = Array.Empty<string>();
     public string[] requiredPackageIds = Array.Empty<string>();
+    public string[] selectedModuleIds = Array.Empty<string>();
+    public string[] requiredModuleIds = Array.Empty<string>();
+    public ActionFitContentBundleModuleSpec[] modules = Array.Empty<ActionFitContentBundleModuleSpec>();
 }
 
 [Serializable]
@@ -84,6 +98,9 @@ public sealed class ActionFitContentBundleStatus
     public bool bootstrapInstalled;
     public bool releaseAuthorized;
     public string[] requiredPackageIds = Array.Empty<string>();
+    public string[] selectedModuleIds = Array.Empty<string>();
+    public string[] requiredModuleIds = Array.Empty<string>();
+    public ActionFitContentBundleModuleSpec[] modules = Array.Empty<ActionFitContentBundleModuleSpec>();
     public string[] conflicts = Array.Empty<string>();
 }
 #endif

@@ -1,0 +1,204 @@
+#if UNITY_EDITOR
+using System;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Text.RegularExpressions;
+using UnityEditor;
+using UnityEditor.PackageManager;
+using UnityEditor.PackageManager.Requests;
+using UnityEngine;
+
+namespace __INSTALLER_NAMESPACE__.Editor
+{
+    [InitializeOnLoad]
+    internal static class InstallerBootstrap
+    {
+        private const string InstallerPackageId = "__INSTALLER_PACKAGE_ID__";
+        private const string ManagerPackageId = "com.actionfit.custompackagemanager";
+        private const string ManagerVersion = "__MANAGER_VERSION__";
+        private const string ManagerRepository = "https://github.com/ActionFit-Editor/Custom_Package_Manager.git";
+        private const string ManagerGitUrl = ManagerRepository + "#" + ManagerVersion;
+        private const string ProfilePath = "Packages/__INSTALLER_PACKAGE_ID__/Editor/ContentBundleProfile.json";
+        private const string ManagerRequestedKey = "__INSTALLER_PACKAGE_ID__.manager-request.__INSTALLER_VERSION__";
+        private static AddRequest _managerRequest;
+
+        static InstallerBootstrap()
+        {
+            EditorApplication.delayCall += AutoInstall;
+            Events.registeredPackages += _ => EditorApplication.delayCall += AutoInstall;
+        }
+
+        private static void AutoInstall()
+        {
+            if (Application.isBatchMode || IsDevelopmentEmbedded()) return;
+            Type api = FindManagerApi();
+            if (api == null)
+            {
+                EnsureManagerAvailable();
+                return;
+            }
+
+            TextAsset profile = AssetDatabase.LoadAssetAtPath<TextAsset>(ProfilePath);
+            MethodInfo install = api.GetMethod(
+                "InstallJson",
+                BindingFlags.Public | BindingFlags.Static,
+                null,
+                new[] { typeof(string) },
+                null);
+            if (profile == null || install == null)
+            {
+                Debug.LogError($"[{InstallerPackageId}] Installer profile or InstallJson(string) API is unavailable.");
+                return;
+            }
+
+            try
+            {
+                install.Invoke(null, new object[] { profile.text });
+            }
+            catch (TargetInvocationException exception)
+            {
+                Debug.LogError($"[{InstallerPackageId}] Install failed: {exception.InnerException?.Message ?? exception.Message}");
+            }
+        }
+
+        private static void EnsureManagerAvailable()
+        {
+            string embeddedVersion = ReadEmbeddedVersion();
+            if (!string.IsNullOrWhiteSpace(embeddedVersion))
+            {
+                if (CompareVersions(embeddedVersion, ManagerVersion) < 0)
+                    Debug.LogError($"[{InstallerPackageId}] Embedded {ManagerPackageId}@{embeddedVersion} is older than required {ManagerVersion}; upgrade it explicitly.");
+                else
+                    Client.Resolve();
+                return;
+            }
+
+            string dependency = ReadManifestDependency();
+            if (string.IsNullOrWhiteSpace(dependency))
+            {
+                RequestManager();
+                return;
+            }
+
+            if (!TrySplitGitUrl(dependency, out string repository, out string revision) ||
+                !string.Equals(NormalizeRepository(repository), NormalizeRepository(ManagerRepository), StringComparison.OrdinalIgnoreCase) ||
+                !IsVersionTag(revision))
+            {
+                Debug.LogError($"[{InstallerPackageId}] Existing {ManagerPackageId} is local, forked, branch-based, or unparseable; it was preserved.");
+                return;
+            }
+
+            int comparison = CompareVersions(revision, ManagerVersion);
+            if (comparison < 0) RequestManager();
+            else Client.Resolve();
+        }
+
+        private static void RequestManager()
+        {
+            if (_managerRequest != null && !_managerRequest.IsCompleted) return;
+            if (SessionState.GetBool(ManagerRequestedKey, false)) return;
+            SessionState.SetBool(ManagerRequestedKey, true);
+            _managerRequest = Client.Add(ManagerGitUrl);
+            EditorApplication.update -= PollManager;
+            EditorApplication.update += PollManager;
+        }
+
+        private static void PollManager()
+        {
+            if (_managerRequest == null || !_managerRequest.IsCompleted) return;
+            EditorApplication.update -= PollManager;
+            AddRequest completed = _managerRequest;
+            _managerRequest = null;
+            if (completed.Status == StatusCode.Success) return;
+            SessionState.SetBool(ManagerRequestedKey, false);
+            string code = completed.Error == null ? "unknown" : completed.Error.errorCode.ToString();
+            Debug.LogError($"[{InstallerPackageId}] Failed to install {ManagerPackageId} (UPM error {code}).");
+        }
+
+        private static Type FindManagerApi()
+        {
+            return AppDomain.CurrentDomain.GetAssemblies()
+                .Select(assembly => assembly.GetType("ActionFitContentBundleApi", false))
+                .FirstOrDefault(type => type != null);
+        }
+
+        private static bool IsDevelopmentEmbedded()
+        {
+            try
+            {
+                PackageInfo package = PackageInfo.FindForAssembly(typeof(InstallerBootstrap).Assembly);
+                return package != null && package.source == PackageSource.Embedded;
+            }
+            catch
+            {
+                return File.Exists(Path.GetFullPath($"Packages/{InstallerPackageId}/package.json"));
+            }
+        }
+
+        private static string ReadEmbeddedVersion()
+        {
+            string path = Path.GetFullPath($"Packages/{ManagerPackageId}/package.json");
+            if (!File.Exists(path)) return "";
+            string json = File.ReadAllText(path);
+            Match name = Regex.Match(json, "\\\"name\\\"\\s*:\\s*\\\"(?<value>[^\\\"]+)\\\"");
+            if (!name.Success || !string.Equals(name.Groups["value"].Value, ManagerPackageId, StringComparison.Ordinal)) return "";
+            Match version = Regex.Match(json, "\\\"version\\\"\\s*:\\s*\\\"(?<value>[^\\\"]+)\\\"");
+            return version.Success ? version.Groups["value"].Value : "";
+        }
+
+        private static string ReadManifestDependency()
+        {
+            string path = Path.GetFullPath("Packages/manifest.json");
+            if (!File.Exists(path)) return "";
+            Match match = Regex.Match(
+                File.ReadAllText(path),
+                $"\\\"{Regex.Escape(ManagerPackageId)}\\\"\\s*:\\s*\\\"(?<value>(?:\\\\.|[^\\\"])*)\\\"");
+            return match.Success ? match.Groups["value"].Value : "";
+        }
+
+        private static bool TrySplitGitUrl(string value, out string repository, out string revision)
+        {
+            repository = "";
+            revision = "";
+            int hash = (value ?? "").LastIndexOf('#');
+            if (hash <= 0 || hash == value.Length - 1) return false;
+            repository = value[..hash];
+            revision = value[(hash + 1)..];
+            return Uri.TryCreate(repository, UriKind.Absolute, out Uri uri) &&
+                   string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string NormalizeRepository(string value)
+        {
+            string normalized = (value ?? "").Trim().TrimEnd('/');
+            return normalized.EndsWith(".git", StringComparison.OrdinalIgnoreCase) ? normalized[..^4] : normalized;
+        }
+
+        private static bool IsVersionTag(string value)
+        {
+            return Regex.IsMatch(value ?? "", "^[0-9]+(?:\\.[0-9]+){1,3}(?:[-+][A-Za-z0-9.-]+)?$");
+        }
+
+        private static int CompareVersions(string left, string right)
+        {
+            int[] a = ParseVersion(left);
+            int[] b = ParseVersion(right);
+            for (int i = 0; i < Math.Max(a.Length, b.Length); i++)
+            {
+                int comparison = (i < a.Length ? a[i] : 0).CompareTo(i < b.Length ? b[i] : 0);
+                if (comparison != 0) return comparison;
+            }
+            return 0;
+        }
+
+        private static int[] ParseVersion(string value)
+        {
+            return (value ?? "").Split('.')
+                .Select(part => new string(part.TakeWhile(char.IsDigit).ToArray()))
+                .Select(part => int.TryParse(part, out int number) ? number : 0)
+                .ToArray();
+        }
+    }
+}
+#endif

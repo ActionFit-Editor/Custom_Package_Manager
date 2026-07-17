@@ -21,5 +21,13 @@ MonoBehaviour:
   _description: "ActionFit UPM \uD328\uD0A4\uC9C0 \uCE74\uD0C8\uB85C\uADF8\uB97C
     \uBCF4\uACE0 Git URL \uAE30\uBC18 \uC124\uCE58\uC640 \uBC84\uC804 \uC801\uC6A9\uC744
     \uB3C4\uC640\uC8FC\uB294 Unity \uC5D0\uB514\uD130 \uD234."
-  _releaseNote: "- Private→Public 이전 후 새 배포 커밋으로 Public `main`이 앞서간 정상 상태를 retirement preflight가 더 이상 ref conflict로 오인하지 않습니다.\n- GitHub compare가 target branch에 source commit이 포함된 `ahead` 또는 `identical` 관계를 증명한 경우에만 Archive/Delete 계획을 허용합니다.\n- tag SHA 불일치와 `behind`, `diverged`, 누락 또는 검증 실패 branch는 계속 차단해 강제 push나 이력 손실을 방지합니다.\n- 공개 API 시그니처와 Public-default 생성 정책은 유지되어 기존 패키지 생성·배포 사용법은 변경되지 않습니다."
+  _releaseNote: "- \uAE30\uC874 Package AI Guide Router\uC5D0 com.actionfit.cat.app\uC758
+    \uC81C\uD488 \uAD6C\uC131 \uB8E8\uD2B8 \uAC00\uC774\uB4DC\uB97C \uCD94\uAC00\uD588\uC2B5\uB2C8\uB2E4.\n-
+    \uB77C\uC6B0\uD130 \uAC80\uC0C9 \uB3D9\uC791\uC774\uB098 \uC124\uCE58\xB7\uBC30\uD3EC
+    \uB3D9\uC791\uC740 \uBCC0\uACBD\uD558\uC9C0 \uC54A\uACE0, \uD328\uD0A4\uC9C0\uAC00
+    \uC694\uCCAD\uD55C \uC815\uD655\uD55C \uAC00\uC774\uB4DC \uD56D\uBAA9\uB9CC \uAC31\uC2E0\uD588\uC2B5\uB2C8\uB2E4.\n-
+    \uD328\uD0A4\uC9C0 \uBC84\uC804, README, AI guide, PackageInfo metadata\uB97C
+    1.1.100 \uD6C4\uBCF4\uB85C \uC815\uB82C\uD588\uC2B5\uB2C8\uB2E4.\n- Caution:
+    package publish, tag, catalog \uB4F1\uB85D\uC740 \uBCC4\uB3C4 \uC2B9\uC778\uC774
+    \uD544\uC694\uD569\uB2C8\uB2E4."
   _dependenciesOverride: 

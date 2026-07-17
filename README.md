@@ -7,7 +7,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.98"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.100"
   }
 }
 ```
@@ -131,18 +131,22 @@ When Unity invokes the package-owned validator from an isolated `file:` dependen
 
 ### Content Bundles
 
-A bootstrap package can pass a versioned JSON profile to `ActionFitContentBundleApi` so one Git URL installs a complete, required package set. The manager plans all dependency changes first, preserves compatible embedded packages and equal/newer canonical tags, upgrades only older tags from the same canonical repository, and blocks local, forked, branch-based, unparseable, or user-modified values instead of overwriting them.
+A bootstrap package can pass a versioned JSON profile to `ActionFitContentBundleApi` so one Git URL installs a coherent default package set. Legacy schema version 1 installs its complete package list. Schema version 2 groups packages into required and optional modules: required modules cannot be deselected, default-selected modules preserve one-click installation, and direct consumers can select a smaller closure through `PlanSelectedModulesJson` / `InstallSelectedModulesJson`. Shared packages are installed once. The manager plans all dependency changes first, preserves compatible embedded packages and equal/newer canonical tags, upgrades only older tags from the same canonical repository, and blocks local, forked, branch-based, unparseable, or user-modified values instead of overwriting them.
 
 Successful installation is journaled, writes `Packages/manifest.json` atomically, waits until every required package is registered, persists ownership in `ProjectSettings/ActionFitContentBundles.json`, then removes the bootstrap dependency. Interrupted install/release transactions remain under `UserSettings/ActionFitPackageManager/ContentBundleTransactions` for Editor-load recovery.
 
-Active bundles appear above normal package rows. Required packages cannot be removed from the Package Manager UI, and package-registration events reconcile missing required manifest entries. Release requires the profile's exact GitHub-login allowlist and preserves shared, embedded, non-owned, and user-modified dependencies. Batchmode mutation is disabled; `InspectJson`, `PlanJson`, and pure planners remain read-only.
+Active bundles appear above normal package rows. Their selected modules can be changed only through `PlanModifyModules` / `ModifyModules`; the UI shows the exact package diff before applying it. Selected packages cannot be removed directly, required modules remain selected, and package-registration events reconcile missing required manifest entries. Release requires the profile's exact GitHub-login allowlist and preserves shared, embedded, non-owned, and user-modified dependencies. Batchmode mutation is disabled; inspection and planning APIs remain read-only.
 
 Public Editor APIs:
 
 - `ActionFitContentBundleApi.InspectJson` / `PlanJson`
-- `ActionFitContentBundleApi.InstallJson` / `RepairJson`
+- `ActionFitContentBundleApi.PlanSelectedModulesJson` / `InstallSelectedModulesJson` / `RepairSelectedModulesJson`
+- `ActionFitContentBundleApi.InstallJson` / `RepairJson` for default module selection
+- `ActionFitContentBundleApi.PlanModifyModules` / `ModifyModules`
 - `ActionFitContentBundleApi.PlanRelease` / `Release` / `Remove`
-- `ActionFitContentBundleApi.Recover`, `GetStatuses`, and `IsRequiredPackage`
+- `ActionFitContentBundleApi.Recover`, `GetStatuses`, `IsRequiredPackage`, and `IsManagedPackage`
+
+New installer packages should start from `Editor/Templates~/ContentBundleInstaller/` and follow `Editor/Documentation/ContentBundleInstallerContract.md`. The Editor-only bootstrap discovers Custom Package Manager by reflection, installs only a missing or older canonical manager tag, preserves embedded/local/forked/newer manager sources, invokes the default module install, and lets the manager remove the verified bootstrap dependency.
 
 - `Reload`: reloads the active catalog and current package install state.
 - `Update Catalog`: downloads the local catalog CSV from the configured spreadsheet/web app.
@@ -161,7 +165,9 @@ Package README and settings access live in the Unity top menu, not inside the Pa
 
 Use the established priority bands unless a package has a documented reason to differ: Package Manager `0-9`, executable tools `20-99`, `Setting SO` + `README` only packages `600-699`, and README-only packages `900-999`. New packages created by `1. Create Package` include a README-only package menu file by default.
 
-Downloaded packages include `Embed for Edit` and `Fork as New`. `Embed for Edit` uses Unity Package Manager's official `Client.Embed` operation to materialize the downloaded package under `Packages/<packageId>/`. After Unity reports success, the manager validates `package.json`, removes cache-only `_fingerprint` metadata, normalizes `Packages/manifest.json` to `file:<packageId>`, and preserves catalog repository metadata so edits can be published back to the existing package repository. If a physical local package folder already exists and its `package.json` name matches, the tool can use that existing folder without overwriting it. The manager records a package file baseline under `UserSettings/ActionFitPackageManager/EmbeddedBaselines` so later conversion warnings can report whether files changed after embedding. Modifying a downloaded package requires this Embed for Edit flow; updating the upstream repository directly and hand-pushing a version tag is not an approved modification path because the catalog never records the new version.
+Downloaded packages include `Embed for Edit`, `Project Override`, and `Fork as New`. `Embed for Edit` uses Unity Package Manager's official `Client.Embed` operation to materialize the downloaded package under `Packages/<packageId>/`. After Unity reports success, the manager validates `package.json`, removes cache-only `_fingerprint` metadata, normalizes `Packages/manifest.json` to `file:<packageId>`, and preserves catalog repository metadata so edits can be published back to the existing package repository. If a physical local package folder already exists and its `package.json` name matches, the tool can use that existing folder without overwriting it. The manager records a package file baseline under `UserSettings/ActionFitPackageManager/EmbeddedBaselines` so later conversion warnings can report whether files changed after embedding. Modifying a downloaded package requires this Embed for Edit flow; updating the upstream repository directly and hand-pushing a version tag is not an approved modification path because the catalog never records the new version.
+
+`Project Override` uses the same protected embed transaction but is limited to PackageInfo-declared Public packages and records the public base repository URL, version, revision, and content hash in `ProjectSettings/ActionFitPackageOverrides.json`. It stores only a project-relative embedded path, never an absolute path or credential-bearing/private remote. Override status compares the current content hash and catalog latest version with the recorded base, is included in the generated AI package state without emitting the remote URL, and is excluded from single-package and automatic bulk upstream publishing. Use `Use Downloaded` to restore a catalog base and clear the record, or `Fork as New` with a new package ID/repository for independent publication.
 
 Downloaded embedding is delegated to Unity Package Manager so Unity's virtual `Packages/<packageId>` mapping cannot redirect a custom folder move back into `Library/PackageCache`. Existing-folder conversion and `Fork as New` continue to use the atomic, journaled transaction shared by the UI and public AI API. Manifest writes use a verified temporary file and atomic replacement, and rollback restores affected dependency values before deleting any transaction-created package folder. Pending custom transactions are recorded under `UserSettings/ActionFitPackageManager/Transactions` and recovered after an Editor restart or domain reload. If dependency recovery cannot be verified, the local package folder is preserved and the API returns `RECOVERY_REQUIRED` with the journal path.
 

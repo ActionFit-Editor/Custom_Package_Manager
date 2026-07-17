@@ -44,6 +44,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
     private readonly Dictionary<string, ActionFitPackageCommunityClient.Summary> _communitySummariesByPackage = new();
     private readonly Dictionary<string, CommentPanelState> _commentStatesByPackage = new();
     private readonly Dictionary<string, string> _communityMessagesByPackage = new();
+    private readonly Dictionary<string, HashSet<string>> _selectedModulesByBundle = new(StringComparer.Ordinal);
     private readonly List<PackageGroup> _packages = new();
     private ActionFitPackageCatalogSettings_SO _settings;
     private Vector2 _scroll;
@@ -164,6 +165,34 @@ public class ActionFitPackageManagerWindow : EditorWindow
                     EditorStyles.boldLabel);
                 EditorGUILayout.LabelField("State", status.state);
                 EditorGUILayout.LabelField("Required", string.Join(", ", status.requiredPackageIds));
+                if (status.modules.Length > 0)
+                {
+                    if (!_selectedModulesByBundle.TryGetValue(status.bundleId, out HashSet<string> selectedModules))
+                    {
+                        selectedModules = new HashSet<string>(status.selectedModuleIds, StringComparer.Ordinal);
+                        _selectedModulesByBundle[status.bundleId] = selectedModules;
+                    }
+
+                    EditorGUILayout.LabelField("Modules", EditorStyles.miniBoldLabel);
+                    foreach (ActionFitContentBundleModuleSpec module in status.modules)
+                    {
+                        bool selected = selectedModules.Contains(module.moduleId);
+                        EditorGUI.BeginDisabledGroup(module.required);
+                        bool next = EditorGUILayout.ToggleLeft(
+                            $"{(string.IsNullOrWhiteSpace(module.displayName) ? module.moduleId : module.displayName)}" +
+                            (module.required ? " (required)" : ""),
+                            selected || module.required);
+                        EditorGUI.EndDisabledGroup();
+                        if (next || module.required) selectedModules.Add(module.moduleId);
+                        else selectedModules.Remove(module.moduleId);
+                    }
+
+                    bool selectionChanged = !selectedModules.SetEquals(status.selectedModuleIds);
+                    EditorGUI.BeginDisabledGroup(!selectionChanged);
+                    if (GUILayout.Button("Apply Module Selection", GUILayout.Width(190)))
+                        ModifyContentBundleModules(status, selectedModules.ToArray());
+                    EditorGUI.EndDisabledGroup();
+                }
                 EditorGUILayout.LabelField("Installer", status.bootstrapInstalled ? "installed" : "cleaned up");
                 EditorGUILayout.LabelField("Release", status.releaseAuthorized ? "authorized" : "not authorized");
 
@@ -176,6 +205,41 @@ public class ActionFitPackageManagerWindow : EditorWindow
                 EditorGUI.EndDisabledGroup();
             }
         }
+    }
+
+    private void ModifyContentBundleModules(ActionFitContentBundleStatus status, string[] selectedModuleIds)
+    {
+        ActionFitContentBundlePlan plan = ActionFitContentBundleApi.PlanModifyModules(
+            status.bundleId,
+            selectedModuleIds);
+        if (!plan.success)
+        {
+            EditorUtility.DisplayDialog("Content Bundle Modules", plan.message, "OK");
+            return;
+        }
+
+        string changes = string.Join("\n", plan.changes
+            .Where(change => change.kind != ActionFitContentBundleChangeKind.Preserve)
+            .Select(change => $"- {change.packageId}: {change.kind} ({change.from} -> {change.to})"));
+        if (!EditorUtility.DisplayDialog(
+                "Content Bundle Modules",
+                $"Apply module selection for {status.displayName}?\n\nSelected: {string.Join(", ", plan.selectedModuleIds)}\n\n{changes}",
+                "Apply",
+                "Cancel"))
+            return;
+
+        ActionFitContentBundleResult result = ActionFitContentBundleApi.ModifyModules(
+            status.bundleId,
+            selectedModuleIds);
+        if (!result.success)
+        {
+            string recovery = result.recoveryRequired ? $"\n\nRecovery journal: {result.journalPath}" : "";
+            EditorUtility.DisplayDialog("Content Bundle Modules", result.message + recovery, "OK");
+            return;
+        }
+
+        _selectedModulesByBundle.Remove(status.bundleId);
+        QueueReload();
     }
 
     private void ReleaseContentBundle(ActionFitContentBundleStatus status)
@@ -253,6 +317,8 @@ public class ActionFitPackageManagerWindow : EditorWindow
         int selected = GetSelectedVersionIndex(package, installed.Version);
         var selectedVersion = versions[selected];
         bool requiredByBundle = ActionFitContentBundleApi.IsRequiredPackage(package.Id, out string bundleDisplayName);
+        bool managedByBundle = ActionFitContentBundleApi.IsManagedPackage(package.Id, out string managedBundleDisplayName);
+        bool projectOverride = ActionFitPackageProjectOverrideApi.IsProjectOverride(package.Id);
 
         using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
         {
@@ -291,7 +357,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
                     ApplyPackage(package, selectedVersion);
                 EditorGUI.EndDisabledGroup();
 
-                EditorGUI.BeginDisabledGroup(!installed.IsInstalled || requiredByBundle);
+                EditorGUI.BeginDisabledGroup(!installed.IsInstalled || managedByBundle);
                 if (GUILayout.Button("Remove", GUILayout.Width(90)))
                     RemovePackage(package);
                 EditorGUI.EndDisabledGroup();
@@ -304,7 +370,10 @@ public class ActionFitPackageManagerWindow : EditorWindow
                 else if (installed.IsInstalled)
                 {
                     if (GUILayout.Button("Embed for Edit", GUILayout.Width(120)))
-                        ConvertDownloadedToEmbedded(package, installed, selectedVersion);
+                        ConvertDownloadedToEmbedded(package, installed, selectedVersion, false);
+
+                    if (GUILayout.Button("Project Override", GUILayout.Width(120)))
+                        ConvertDownloadedToEmbedded(package, installed, selectedVersion, true);
 
                     if (GUILayout.Button("Fork as New", GUILayout.Width(110)))
                         OpenForkDownloadedPackageWindow(package, installed, selectedVersion);
@@ -325,12 +394,18 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
             if (installed.IsEmbedded)
                 EditorGUILayout.HelpBox(
-                    "This editable package is stored under Packages/. Applying another version creates a backup, replaces it with a downloaded Git UPM dependency, and removes the embedded folder from the project. Local modifications are not merged automatically.",
+                    projectOverride
+                        ? "This is a project-owned override. It is excluded from single and bulk upstream publishing. Use Downloaded restores the selected catalog version; Fork as New is required for independent publication."
+                        : "This editable package is stored under Packages/. Applying another version creates a backup, replaces it with a downloaded Git UPM dependency, and removes the embedded folder from the project. Local modifications are not merged automatically.",
                     MessageType.Warning);
 
             if (requiredByBundle)
                 EditorGUILayout.HelpBox(
                     $"Required by active content bundle: {bundleDisplayName}. Release the bundle before removing this package.",
+                    MessageType.Info);
+            else if (managedByBundle)
+                EditorGUILayout.HelpBox(
+                    $"Selected by active content bundle: {managedBundleDisplayName}. Change the bundle module selection before removing this package.",
                     MessageType.Info);
 
             DrawDependencyDetails(selectedVersion);
@@ -1458,7 +1533,11 @@ public class ActionFitPackageManagerWindow : EditorWindow
         RemoveManifestPackage(package);
     }
 
-    private void ConvertDownloadedToEmbedded(PackageGroup package, InstalledPackage installed, PackageVersion selectedVersion)
+    private void ConvertDownloadedToEmbedded(
+        PackageGroup package,
+        InstalledPackage installed,
+        PackageVersion selectedVersion,
+        bool projectOverride)
     {
         if (!installed.IsInstalled || installed.IsEmbedded)
         {
@@ -1471,6 +1550,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
             PackageId = package.Id,
             Resolve = true,
             AllowExistingLocalFolder = true,
+            ProjectOverride = projectOverride,
         };
         ActionFitPackageEmbedResult validation = ActionFitPackageEmbedApi.Validate(request);
         if (!validation.Success)
@@ -1482,8 +1562,10 @@ public class ActionFitPackageManagerWindow : EditorWindow
         string packageRoot = $"Packages/{package.Id}";
         if (!EditorUtility.DisplayDialog(
                 "ActionFit Package Manager",
-                $"Embed downloaded package for edit?\n\n{package.Id}: {validation.SourceVersion}\n\nSource: {validation.SourcePath}\nDestination: {packageRoot}\n\nThis uses a recoverable transaction and replaces the Git UPM dependency only after the local package is valid.",
-                "Embed for Edit",
+                projectOverride
+                    ? $"Embed downloaded package as a project-owned override?\n\n{package.Id}: {validation.SourceVersion}\n\nSource: {validation.SourcePath}\nDestination: {packageRoot}\n\nThe base revision and content hash are recorded in ProjectSettings. This package will be excluded from upstream publishing."
+                    : $"Embed downloaded package for edit?\n\n{package.Id}: {validation.SourceVersion}\n\nSource: {validation.SourcePath}\nDestination: {packageRoot}\n\nThis uses a recoverable transaction and replaces the Git UPM dependency only after the local package is valid.",
+                projectOverride ? "Project Override" : "Embed for Edit",
                 "Cancel"))
             return;
 
@@ -1744,6 +1826,19 @@ public class ActionFitPackageManagerWindow : EditorWindow
                 manifest,
                 new[] { package }))
             return;
+
+        if (ActionFitPackageProjectOverrideApi.IsProjectOverride(package.Id))
+        {
+            ActionFitPackageProjectOverrideResult restore =
+                ActionFitPackageProjectOverrideApi.CompleteRestoreToBase(package.Id);
+            if (!restore.Success)
+            {
+                EditorUtility.DisplayDialog(
+                    "ActionFit Package Manager",
+                    $"The downloaded package was restored, but override state still requires attention:\n\n{restore.Message}",
+                    "OK");
+            }
+        }
 
         UnityEngine.Debug.Log("[ActionFitPackageManager] Converted embedded package to downloaded dependency:\n" + string.Join("\n", changes));
         ActionFitPackageAiGuideRouter.EnsureProjectRouter();

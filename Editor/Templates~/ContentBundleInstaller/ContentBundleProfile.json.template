@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 2,
+  "bundleId": "__BUNDLE_ID__",
+  "bundleVersion": "__BUNDLE_VERSION__",
+  "displayName": "__DISPLAY_NAME__",
+  "bootstrapPackageId": "__INSTALLER_PACKAGE_ID__",
+  "packages": [
+    {
+      "packageId": "com.actionfit.custompackagemanager",
+      "version": "__MANAGER_VERSION__",
+      "gitUrl": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#__MANAGER_VERSION__",
+      "required": true,
+      "removeOnRelease": false
+    },
+    {
+      "packageId": "__CORE_PACKAGE_ID__",
+      "version": "__CORE_VERSION__",
+      "gitUrl": "__CORE_GIT_URL__#__CORE_VERSION__",
+      "required": true,
+      "removeOnRelease": true
+    },
+    {
+      "packageId": "__OPTIONAL_UI_PACKAGE_ID__",
+      "version": "__OPTIONAL_UI_VERSION__",
+      "gitUrl": "__OPTIONAL_UI_GIT_URL__#__OPTIONAL_UI_VERSION__",
+      "required": false,
+      "removeOnRelease": true
+    }
+  ],
+  "modules": [
+    {
+      "moduleId": "core",
+      "displayName": "Origin / Core",
+      "required": true,
+      "defaultSelected": true,
+      "packageIds": [
+        "com.actionfit.custompackagemanager",
+        "__CORE_PACKAGE_ID__"
+      ]
+    },
+    {
+      "moduleId": "ui",
+      "displayName": "UI Foundation Binding",
+      "required": false,
+      "defaultSelected": true,
+      "packageIds": [
+        "__OPTIONAL_UI_PACKAGE_ID__"
+      ]
+    }
+  ],
+  "allowedReleaseGitHubLogins": [
+    "__AUTHORIZED_GITHUB_LOGIN__"
+  ]
+}

@@ -146,6 +146,11 @@ public static class ActionFitPackageAiGuideRouter
         string fullPath = Path.Combine(entryDirectory, "packages", "actionfit-packages.md");
         Directory.CreateDirectory(Path.GetDirectoryName(fullPath));
 
+        WriteIfChanged(fullPath, BuildPackageIndexContent(guides));
+    }
+
+    private static string BuildPackageIndexContent(List<PackageGuide> guides)
+    {
         var sb = new StringBuilder();
         sb.AppendLine("# Installed ActionFit Package AI Guides");
         sb.AppendLine();
@@ -158,8 +163,108 @@ public static class ActionFitPackageAiGuideRouter
         sb.AppendLine($"Installed ActionFit package guides found: {guides.Count}.");
         sb.AppendLine();
         sb.AppendLine("Read the router above to decide which package-local `AI_GUIDE.md` applies to the current task.");
+        sb.AppendLine();
+        sb.AppendLine("## Installed Package Source State");
+        sb.AppendLine();
+        foreach (PackageGuide guide in guides.OrderBy(item => item.PackageId, StringComparer.Ordinal))
+            sb.AppendLine($"- `{guide.PackageId}@{guide.Version}` — {(guide.IsEmbedded ? "Embedded" : "Downloaded")}.");
+        AppendContentBundleState(sb);
+        AppendProjectOverrideState(sb);
+        return sb.ToString();
+    }
 
-        WriteIfChanged(fullPath, sb.ToString());
+    private static void AppendContentBundleState(StringBuilder sb)
+    {
+        sb.AppendLine();
+        sb.AppendLine("## Active Content Bundles");
+        sb.AppendLine();
+        try
+        {
+            ActionFitContentBundleStatus[] statuses = ActionFitContentBundleApi.GetStatuses();
+            AppendContentBundleStatuses(sb, statuses);
+        }
+        catch (Exception)
+        {
+            sb.AppendLine("- State unavailable; inspect the committed content-bundle state through the package API.");
+        }
+    }
+
+    private static void AppendProjectOverrideState(StringBuilder sb)
+    {
+        sb.AppendLine();
+        sb.AppendLine("## Project Package Overrides");
+        sb.AppendLine();
+        sb.AppendLine("Project overrides are project-owned, excluded from upstream publishing, and must be restored to the base package or forked under a new package ID before publication.");
+        sb.AppendLine();
+        try
+        {
+            ActionFitPackageProjectOverrideStatus[] statuses = ActionFitPackageProjectOverrideApi.GetStatuses();
+            AppendProjectOverrideStatuses(sb, statuses);
+        }
+        catch (Exception)
+        {
+            sb.AppendLine("- State unavailable; inspect the committed project-override state through the package API.");
+        }
+    }
+
+    internal static string BuildPrivacySafePackageState(
+        ActionFitContentBundleStatus[] bundles,
+        ActionFitPackageProjectOverrideStatus[] overrides)
+    {
+        var sb = new StringBuilder();
+        AppendContentBundleStatuses(sb, bundles ?? Array.Empty<ActionFitContentBundleStatus>());
+        AppendProjectOverrideStatuses(sb, overrides ?? Array.Empty<ActionFitPackageProjectOverrideStatus>());
+        return sb.ToString();
+    }
+
+    private static void AppendContentBundleStatuses(
+        StringBuilder sb,
+        ActionFitContentBundleStatus[] statuses)
+    {
+        if (statuses.Length == 0)
+        {
+            sb.AppendLine("- None.");
+            return;
+        }
+
+        foreach (ActionFitContentBundleStatus status in statuses.OrderBy(item => item.bundleId, StringComparer.Ordinal))
+        {
+            string[] defaultModules = (status.modules ?? Array.Empty<ActionFitContentBundleModuleSpec>())
+                .Where(module => module.defaultSelected)
+                .Select(module => module.moduleId)
+                .ToArray();
+            sb.AppendLine($"- `{status.bundleId}@{status.bundleVersion}` — {status.state}; selected modules: {JoinOrNone(status.selectedModuleIds)}; required modules: {JoinOrNone(status.requiredModuleIds)}; default modules: {JoinOrNone(defaultModules)}; required packages: {JoinOrNone(status.requiredPackageIds)}.");
+        }
+    }
+
+    private static void AppendProjectOverrideStatuses(
+        StringBuilder sb,
+        ActionFitPackageProjectOverrideStatus[] statuses)
+    {
+        if (statuses.Length == 0)
+        {
+            sb.AppendLine("- None.");
+            return;
+        }
+
+        foreach (ActionFitPackageProjectOverrideStatus status in statuses.OrderBy(item => item.PackageId, StringComparer.Ordinal))
+        {
+            sb.AppendLine($"- `{status.PackageId}` — base `{status.BaseVersion}` revision `{status.BaseRevision}`; content `{ShortHash(status.BaseContentHash)}` -> `{ShortHash(status.CurrentContentHash)}`; {(status.Modified ? "modified" : "unchanged")}; upstream `{status.UpstreamVersion}`{(status.UpstreamUpdateAvailable ? " (update available)" : "")}.");
+        }
+    }
+
+    private static string JoinOrNone(IEnumerable<string> values)
+    {
+        string[] normalized = (values ?? Array.Empty<string>())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .OrderBy(value => value, StringComparer.Ordinal)
+            .ToArray();
+        return normalized.Length == 0 ? "none" : string.Join(", ", normalized.Select(value => $"`{value}`"));
+    }
+
+    private static string ShortHash(string hash)
+    {
+        return string.IsNullOrWhiteSpace(hash) ? "unknown" : hash[..Math.Min(12, hash.Length)];
     }
 
     private static List<AiEntryPoint> FindAiEntryPoints()

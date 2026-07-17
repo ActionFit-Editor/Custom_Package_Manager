@@ -19,6 +19,7 @@ public sealed class ActionFitPackageEmbedRequest
     public bool DryRun;
     public bool Resolve = true;
     public bool AllowExistingLocalFolder = true;
+    public bool ProjectOverride;
 }
 
 /// <summary>
@@ -42,6 +43,7 @@ public sealed class ActionFitPackageEmbedResult
     public string PreviousDependency;
     public string NewDependency;
     public string JournalPath;
+    public bool ProjectOverride;
     public string[] ChangedFiles = Array.Empty<string>();
     public string[] Warnings = Array.Empty<string>();
 }
@@ -167,6 +169,16 @@ public static class ActionFitPackageEmbedApi
 
         if (context.AlreadyEmbedded)
         {
+            if (request.ProjectOverride && !ActionFitPackageProjectOverrideApi.IsProjectOverride(request.PackageId))
+            {
+                ActionFitPackageEmbedResult overrideFailure = Failure(
+                    request.PackageId,
+                    "OVERRIDE_BASE_UNKNOWN",
+                    "The package is already embedded without a recorded base. Restore a downloaded dependency, then embed it as a Project Override.");
+                Complete(overrideFailure, completed);
+                return overrideFailure;
+            }
+
             var result = new ActionFitPackageEmbedResult
             {
                 Success = true,
@@ -180,6 +192,7 @@ public static class ActionFitPackageEmbedApi
                 ManifestPath = ActionFitPackagePaths.ToProjectRelativePath(ActionFitPackagePaths.ManifestPath),
                 PreviousDependency = context.PreviousDependency,
                 NewDependency = context.NewDependency,
+                ProjectOverride = request.ProjectOverride || ActionFitPackageProjectOverrideApi.IsProjectOverride(request.PackageId),
             };
             Complete(result, completed);
             return result;
@@ -328,20 +341,44 @@ public static class ActionFitPackageEmbedApi
 
         try
         {
-            ActionFitPackageAiGuideRouter.EnsureProjectRouter();
-        }
-        catch (Exception ex)
-        {
-            warnings.Add($"AI guide router refresh failed: {ex.Message}");
-        }
-
-        try
-        {
             ActionFitPackageBaseline.Save(request.PackageId, context.DestinationPath);
         }
         catch (Exception ex)
         {
             warnings.Add($"Embedded baseline save failed: {ex.Message}");
+        }
+
+        if (request.ProjectOverride)
+        {
+            ActionFitPackageProjectOverrideResult overrideResult = ActionFitPackageProjectOverrideApi.RegisterEmbedded(
+                request.PackageId,
+                context.SourceVersion,
+                context.BaseRepositoryUrl,
+                context.PreviousDependency,
+                context.DestinationPath);
+            if (!overrideResult.Success)
+            {
+                ActionFitPackageEmbedResult failure = Failure(
+                    request.PackageId,
+                    overrideResult.Code,
+                    $"The package was embedded, but Project Override state could not be recorded: {overrideResult.Message}");
+                failure.Changed = true;
+                failure.RecoveryRequired = true;
+                failure.ProjectOverride = true;
+                failure.EmbeddedPath = ActionFitPackagePaths.ToProjectRelativePath(context.DestinationPath);
+                failure.PreviousDependency = context.PreviousDependency;
+                failure.NewDependency = context.NewDependency;
+                return failure;
+            }
+        }
+
+        try
+        {
+            ActionFitPackageAiGuideRouter.EnsureProjectRouter();
+        }
+        catch (Exception ex)
+        {
+            warnings.Add($"AI guide router refresh failed: {ex.Message}");
         }
 
         if (request.Resolve)
@@ -357,8 +394,10 @@ public static class ActionFitPackageEmbedApi
         {
             Success = true,
             Changed = true,
-            Code = "EMBEDDED",
-            Message = $"{request.PackageId} was embedded for edit.",
+            Code = request.ProjectOverride ? "PROJECT_OVERRIDE_EMBEDDED" : "EMBEDDED",
+            Message = request.ProjectOverride
+                ? $"{request.PackageId} was embedded as a project-owned override."
+                : $"{request.PackageId} was embedded for edit.",
             PackageId = request.PackageId,
             SourceVersion = context.SourceVersion,
             SourcePath = ActionFitPackagePaths.ToProjectRelativePath(context.SourcePath),
@@ -367,6 +406,7 @@ public static class ActionFitPackageEmbedApi
             PreviousDependency = context.PreviousDependency,
             NewDependency = context.NewDependency,
             JournalPath = string.IsNullOrWhiteSpace(journalPath) ? "" : ActionFitPackagePaths.ToProjectRelativePath(journalPath),
+            ProjectOverride = request.ProjectOverride,
             ChangedFiles = new[]
             {
                 ActionFitPackagePaths.ToProjectRelativePath(context.DestinationPath),
@@ -412,6 +452,16 @@ public static class ActionFitPackageEmbedApi
             if (string.IsNullOrWhiteSpace(previousDependency))
                 throw new InvalidOperationException($"{request.PackageId} is not a direct dependency in Packages/manifest.json.");
 
+            string baseRepositoryUrl = "";
+            if (request.ProjectOverride)
+            {
+                ActionFitPackageInfo_SO info = ActionFitPackagePublishApi.FindPackageInfo(request.PackageId);
+                if (info == null || info.RepositoryVisibility != ActionFitPackageRepositoryVisibility.Public)
+                    throw new InvalidOperationException("Project Override is limited to packages whose PackageInfo declares a Public repository.");
+                baseRepositoryUrl = ActionFitPackageProjectOverrideApi.NormalizePublicRepositoryUrl(
+                    RepositoryPart(previousDependency));
+            }
+
             string destinationPath = ActionFitPackagePaths.PackagePath(request.PackageId);
             string localDependency = ActionFitPackageManifestUtility.LocalDependency(request.PackageId);
             bool destinationExists = ActionFitPackageFileUtility.PhysicalDirectoryExists(destinationPath);
@@ -439,6 +489,7 @@ public static class ActionFitPackageEmbedApi
                     NewDependency = localDependency,
                     OriginalManifest = manifest,
                     UpdatedManifest = manifest,
+                    BaseRepositoryUrl = baseRepositoryUrl,
                 };
                 return true;
             }
@@ -472,6 +523,7 @@ public static class ActionFitPackageEmbedApi
                 NewDependency = localDependency,
                 OriginalManifest = manifest,
                 UpdatedManifest = ActionFitPackageManifestUtility.SetDependency(manifest, request.PackageId, localDependency),
+                BaseRepositoryUrl = baseRepositoryUrl,
             };
             return true;
         }
@@ -526,6 +578,12 @@ public static class ActionFitPackageEmbedApi
         return ActionFitPackageFileUtility.IsValidLocalPackageFolder(packageId, path, out _);
     }
 
+    private static string RepositoryPart(string dependency)
+    {
+        int hash = (dependency ?? "").LastIndexOf('#');
+        return hash < 0 ? dependency ?? "" : dependency[..hash];
+    }
+
     private static ActionFitPackageEmbedResult BuildValidationResult(ActionFitPackageEmbedRequest request, EmbedContext context)
     {
         return new ActionFitPackageEmbedResult
@@ -535,7 +593,9 @@ public static class ActionFitPackageEmbedApi
             Code = context.AlreadyEmbedded ? "ALREADY_EMBEDDED" : "READY",
             Message = context.AlreadyEmbedded
                 ? $"{request.PackageId} already uses a valid local package folder."
-                : $"{request.PackageId} is ready to embed for edit.",
+                : request.ProjectOverride
+                    ? $"{request.PackageId} is ready to embed as a project-owned override."
+                    : $"{request.PackageId} is ready to embed for edit.",
             PackageId = request.PackageId,
             SourceVersion = context.SourceVersion,
             SourcePath = ActionFitPackagePaths.ToProjectRelativePath(context.SourcePath),
@@ -543,6 +603,7 @@ public static class ActionFitPackageEmbedApi
             ManifestPath = ActionFitPackagePaths.ToProjectRelativePath(ActionFitPackagePaths.ManifestPath),
             PreviousDependency = context.PreviousDependency,
             NewDependency = context.NewDependency,
+            ProjectOverride = request.ProjectOverride,
         };
     }
 
@@ -569,6 +630,7 @@ public static class ActionFitPackageEmbedApi
         public string UpdatedManifest;
         public string PreviousDependency;
         public string NewDependency;
+        public string BaseRepositoryUrl;
     }
 }
 

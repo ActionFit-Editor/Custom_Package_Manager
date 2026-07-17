@@ -15,7 +15,7 @@ using Debug = UnityEngine.Debug;
 /// </summary>
 public static class ActionFitContentBundleApi
 {
-    private const int SupportedSchemaVersion = 1;
+    private const int SupportedSchemaVersion = 2;
 
     public static ActionFitContentBundlePlan InspectJson(string profileJson)
     {
@@ -24,16 +24,26 @@ public static class ActionFitContentBundleApi
 
     public static ActionFitContentBundlePlan PlanJson(string profileJson)
     {
+        return PlanSelectedModulesJson(profileJson, null);
+    }
+
+    public static ActionFitContentBundlePlan PlanSelectedModulesJson(
+        string profileJson,
+        string[] selectedModuleIds)
+    {
         try
         {
             ActionFitContentBundleProfile profile = ParseProfile(profileJson);
+            ActionFitContentBundleSelection selection = ActionFitContentBundlePlanner.ResolveSelection(profile, selectedModuleIds);
             string manifest = ReadManifest();
             ActionFitContentBundleStateFile state = ActionFitContentBundleStateStore.Load();
-            return ActionFitContentBundlePlanner.PlanInstall(
-                profile,
+            ActionFitContentBundlePlan plan = ActionFitContentBundlePlanner.PlanInstall(
+                selection.profile,
                 manifest,
                 state,
                 ActionFitContentBundleEnvironment.GetEmbeddedPackage);
+            ApplySelection(plan, selection);
+            return plan;
         }
         catch (Exception exception)
         {
@@ -43,12 +53,26 @@ public static class ActionFitContentBundleApi
 
     public static ActionFitContentBundleResult InstallJson(string profileJson)
     {
-        return InstallOrRepair(profileJson, false);
+        return InstallOrRepair(profileJson, null, false);
+    }
+
+    public static ActionFitContentBundleResult InstallSelectedModulesJson(
+        string profileJson,
+        string[] selectedModuleIds)
+    {
+        return InstallOrRepair(profileJson, selectedModuleIds, false);
     }
 
     public static ActionFitContentBundleResult RepairJson(string profileJson)
     {
-        return InstallOrRepair(profileJson, true);
+        return InstallOrRepair(profileJson, null, true);
+    }
+
+    public static ActionFitContentBundleResult RepairSelectedModulesJson(
+        string profileJson,
+        string[] selectedModuleIds)
+    {
+        return InstallOrRepair(profileJson, selectedModuleIds, true);
     }
 
     public static ActionFitContentBundlePlan PlanRelease(string bundleId)
@@ -75,15 +99,177 @@ public static class ActionFitContentBundleApi
                 return denied;
             }
 
-            return ActionFitContentBundlePlanner.PlanRelease(
+            ActionFitContentBundlePlan plan = ActionFitContentBundlePlanner.PlanRelease(
                 record,
                 state,
                 ReadManifest(),
                 ActionFitContentBundleEnvironment.GetEmbeddedPackage);
+            ApplySelection(
+                plan,
+                ActionFitContentBundlePlanner.ResolveSelection(profile, record.selectedModuleIds));
+            return plan;
         }
         catch (Exception exception)
         {
             return FailedPlan("RELEASE_PLAN_FAILED", exception.Message);
+        }
+    }
+
+    public static ActionFitContentBundlePlan PlanModifyModules(string bundleId, string[] selectedModuleIds)
+    {
+        try
+        {
+            ActionFitContentBundleStateFile state = ActionFitContentBundleStateStore.Load();
+            ActionFitContentBundleRecord record = state.bundles.FirstOrDefault(item =>
+                string.Equals(item.bundleId, bundleId, StringComparison.Ordinal));
+            if (record == null)
+                return FailedPlan("BUNDLE_NOT_ACTIVE", $"Content bundle is not active: {bundleId}");
+
+            ActionFitContentBundleProfile profile = ParseProfile(record.profileJson);
+            ActionFitContentBundleSelection selection = ActionFitContentBundlePlanner.ResolveSelection(
+                profile,
+                selectedModuleIds);
+            ActionFitContentBundleStateFile stateWithoutCurrent = WithoutBundle(state, bundleId);
+            string manifest = ReadManifest();
+            ActionFitContentBundlePlan install = ActionFitContentBundlePlanner.PlanInstall(
+                selection.profile,
+                manifest,
+                stateWithoutCurrent,
+                ActionFitContentBundleEnvironment.GetEmbeddedPackage);
+
+            var desiredIds = new HashSet<string>(
+                selection.profile.packages.Select(package => package.packageId),
+                StringComparer.Ordinal);
+            ActionFitContentBundlePackageOwnership[] removed = (record.packages ?? Array.Empty<ActionFitContentBundlePackageOwnership>())
+                .Where(package => !desiredIds.Contains(package.packageId))
+                .ToArray();
+            ActionFitContentBundlePlan release = removed.Length == 0
+                ? new ActionFitContentBundlePlan { success = true, changes = Array.Empty<ActionFitContentBundleChange>() }
+                : ActionFitContentBundlePlanner.PlanRelease(
+                    CopyRecord(record, removed),
+                    stateWithoutCurrent,
+                    manifest,
+                    ActionFitContentBundleEnvironment.GetEmbeddedPackage);
+
+            ActionFitContentBundlePlan plan = new()
+            {
+                success = install.success && release.success,
+                code = install.success && release.success ? "MODIFY_READY" : "MODIFY_CONFLICT",
+                message = install.success && release.success
+                    ? $"Content bundle module change is ready: {bundleId}"
+                    : "Content bundle module change has conflicts.",
+                bundleId = record.bundleId,
+                bundleVersion = record.bundleVersion,
+                changes = release.changes.Concat(install.changes).ToArray(),
+                conflicts = release.conflicts.Concat(install.conflicts).Distinct(StringComparer.Ordinal).ToArray(),
+                requiredPackageIds = install.requiredPackageIds,
+            };
+            ApplySelection(plan, selection);
+            return plan;
+        }
+        catch (Exception exception)
+        {
+            return FailedPlan("MODIFY_PLAN_FAILED", exception.Message);
+        }
+    }
+
+    public static ActionFitContentBundleResult ModifyModules(string bundleId, string[] selectedModuleIds)
+    {
+        if (Application.isBatchMode)
+            return BatchModeReadOnlyResult(bundleId);
+
+        ActionFitContentBundlePlan plan = PlanModifyModules(bundleId, selectedModuleIds);
+        if (!plan.success) return FromPlan(plan);
+
+        string journalPath = "";
+        try
+        {
+            ActionFitContentBundleStateFile state = ActionFitContentBundleStateStore.Load();
+            ActionFitContentBundleRecord current = state.bundles.First(item =>
+                string.Equals(item.bundleId, bundleId, StringComparison.Ordinal));
+            ActionFitContentBundleProfile profile = ParseProfile(current.profileJson);
+            ActionFitContentBundleSelection selection = ActionFitContentBundlePlanner.ResolveSelection(
+                profile,
+                selectedModuleIds);
+            if (new HashSet<string>(current.selectedModuleIds ?? Array.Empty<string>(), StringComparer.Ordinal)
+                .SetEquals(selection.selectedModuleIds))
+            {
+                return new ActionFitContentBundleResult
+                {
+                    success = true,
+                    changed = false,
+                    code = "MODULES_UNCHANGED",
+                    message = $"Content bundle module selection is unchanged: {bundleId}",
+                    bundleId = bundleId,
+                    plan = plan,
+                };
+            }
+
+            string originalManifest = ReadManifest();
+            string updatedManifest = ActionFitContentBundlePlanner.ApplyPlan(originalManifest, plan);
+            ActionFitContentBundleStateFile stateWithoutCurrent = WithoutBundle(state, bundleId);
+            var preparedJournal = new ActionFitContentBundleTransactionJournal
+            {
+                schemaVersion = SupportedSchemaVersion,
+                operation = ActionFitContentBundleOperation.Modify.ToString(),
+                bundleId = bundleId,
+                profileJson = current.profileJson,
+                selectedModuleIds = selection.selectedModuleIds,
+                originalManifest = originalManifest,
+                updatedManifest = updatedManifest,
+                originalStateJson = ActionFitContentBundleStateStore.Serialize(state),
+                affectedPackageIds = plan.changes.Select(change => change.packageId)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray(),
+                phase = ActionFitContentBundleTransactionPhase.Prepared.ToString(),
+            };
+            ActionFitContentBundleRecord updatedRecord = BuildRecord(
+                selection.profile,
+                selection,
+                preparedJournal,
+                state);
+            updatedRecord.installedUtc = current.installedUtc;
+            stateWithoutCurrent.bundles = stateWithoutCurrent.bundles
+                .Append(updatedRecord)
+                .OrderBy(item => item.bundleId, StringComparer.Ordinal)
+                .ToArray();
+            preparedJournal.updatedStateJson = ActionFitContentBundleStateStore.Serialize(stateWithoutCurrent);
+
+            journalPath = ActionFitContentBundleJournalStore.Save(preparedJournal);
+            ActionFitPackageManifestUtility.WriteAtomic(ActionFitPackagePaths.ManifestPath, updatedManifest);
+            preparedJournal.phase = ActionFitContentBundleTransactionPhase.ManifestCommitted.ToString();
+            ActionFitContentBundleJournalStore.Save(preparedJournal, journalPath);
+            ActionFitContentBundleStateStore.Save(stateWithoutCurrent);
+            preparedJournal.phase = ActionFitContentBundleTransactionPhase.StateCommitted.ToString();
+            ActionFitContentBundleJournalStore.Save(preparedJournal, journalPath);
+
+            ActionFitContentBundleStateFile verified = ActionFitContentBundleStateStore.Load();
+            ActionFitContentBundleRecord verifiedRecord = verified.bundles.FirstOrDefault(item =>
+                string.Equals(item.bundleId, bundleId, StringComparison.Ordinal));
+            if (verifiedRecord == null ||
+                !new HashSet<string>(verifiedRecord.selectedModuleIds ?? Array.Empty<string>(), StringComparer.Ordinal)
+                    .SetEquals(selection.selectedModuleIds))
+            {
+                throw new InvalidOperationException("Modified content bundle state could not be verified after write.");
+            }
+
+            ActionFitContentBundleJournalStore.Delete(journalPath);
+            if (!string.Equals(originalManifest, updatedManifest, StringComparison.Ordinal)) Client.Resolve();
+            ActionFitPackageAiGuideRouter.EnsureProjectRouter();
+            return new ActionFitContentBundleResult
+            {
+                success = true,
+                changed = true,
+                code = "MODULES_MODIFIED",
+                message = $"Content bundle modules were updated: {bundleId}",
+                bundleId = bundleId,
+                journalPath = journalPath,
+                plan = plan,
+            };
+        }
+        catch (Exception exception)
+        {
+            return RollBackStateTransaction(bundleId, journalPath, exception, plan);
         }
     }
 
@@ -189,6 +375,12 @@ public static class ActionFitContentBundleApi
                 continue;
             }
 
+            if (string.Equals(journal.operation, ActionFitContentBundleOperation.Modify.ToString(), StringComparison.Ordinal))
+            {
+                results.Add(RecoverStateTransaction(path, journal));
+                continue;
+            }
+
             results.Add(new ActionFitContentBundleResult
             {
                 success = false,
@@ -212,6 +404,9 @@ public static class ActionFitContentBundleApi
         foreach (ActionFitContentBundleRecord record in state.bundles.OrderBy(item => item.bundleId, StringComparer.Ordinal))
         {
             ActionFitContentBundleProfile profile = ParseProfile(record.profileJson);
+            ActionFitContentBundleSelection selection = ActionFitContentBundlePlanner.ResolveSelection(
+                profile,
+                record.selectedModuleIds);
             ActionFitContentBundlePlan drift = File.Exists(ActionFitPackagePaths.ManifestPath)
                 ? ActionFitContentBundlePlanner.PlanReconcile(record, manifest, ActionFitContentBundleEnvironment.GetEmbeddedPackage)
                 : FailedPlan("MANIFEST_MISSING", "Packages/manifest.json is missing.");
@@ -236,6 +431,9 @@ public static class ActionFitContentBundleApi
                     .Where(package => package.required)
                     .Select(package => package.packageId)
                     .ToArray(),
+                selectedModuleIds = selection.selectedModuleIds,
+                requiredModuleIds = selection.requiredModuleIds,
+                modules = profile.modules,
                 conflicts = drift.conflicts,
             });
         }
@@ -246,13 +444,24 @@ public static class ActionFitContentBundleApi
                 continue;
 
             ActionFitContentBundleProfile profile;
+            ActionFitContentBundleSelection selection;
             try
             {
                 profile = ParseProfile(journal.profileJson);
+                selection = ActionFitContentBundlePlanner.ResolveSelection(
+                    profile,
+                    journal.selectedModuleIds);
             }
             catch
             {
                 profile = new ActionFitContentBundleProfile { bundleId = journal.bundleId };
+                selection = new ActionFitContentBundleSelection
+                {
+                    sourceProfile = profile,
+                    profile = profile,
+                    selectedModuleIds = journal.selectedModuleIds ?? Array.Empty<string>(),
+                    requiredModuleIds = Array.Empty<string>(),
+                };
             }
 
             statuses.Add(new ActionFitContentBundleStatus
@@ -268,10 +477,13 @@ public static class ActionFitContentBundleApi
                 releaseAuthorized = ActionFitContentBundlePlanner.IsReleaseAuthorized(
                     profile,
                     ActionFitContentBundleGitHubIdentity.GetCurrentLogin()),
-                requiredPackageIds = (profile.packages ?? Array.Empty<ActionFitContentBundlePackageSpec>())
+                requiredPackageIds = (selection.profile.packages ?? Array.Empty<ActionFitContentBundlePackageSpec>())
                     .Where(package => package.required)
                     .Select(package => package.packageId)
                     .ToArray(),
+                selectedModuleIds = selection.selectedModuleIds,
+                requiredModuleIds = selection.requiredModuleIds,
+                modules = profile.modules,
                 conflicts = Array.Empty<string>(),
             });
         }
@@ -286,6 +498,23 @@ public static class ActionFitContentBundleApi
         {
             if (!(bundle.packages ?? Array.Empty<ActionFitContentBundlePackageOwnership>()).Any(package =>
                     package.required && string.Equals(package.packageId, packageId, StringComparison.Ordinal)))
+                continue;
+
+            bundleDisplayName = string.IsNullOrWhiteSpace(bundle.displayName) ? bundle.bundleId : bundle.displayName;
+            return true;
+        }
+
+        bundleDisplayName = "";
+        return false;
+    }
+
+    public static bool IsManagedPackage(string packageId, out string bundleDisplayName)
+    {
+        ActionFitContentBundleStateFile state = ActionFitContentBundleStateStore.Load();
+        foreach (ActionFitContentBundleRecord bundle in state.bundles)
+        {
+            if (!(bundle.packages ?? Array.Empty<ActionFitContentBundlePackageOwnership>()).Any(package =>
+                    string.Equals(package.packageId, packageId, StringComparison.Ordinal)))
                 continue;
 
             bundleDisplayName = string.IsNullOrWhiteSpace(bundle.displayName) ? bundle.bundleId : bundle.displayName;
@@ -353,7 +582,10 @@ public static class ActionFitContentBundleApi
         Client.Resolve();
     }
 
-    private static ActionFitContentBundleResult InstallOrRepair(string profileJson, bool repair)
+    private static ActionFitContentBundleResult InstallOrRepair(
+        string profileJson,
+        string[] selectedModuleIds,
+        bool repair)
     {
         if (Application.isBatchMode)
             return BatchModeReadOnlyResult("");
@@ -361,7 +593,11 @@ public static class ActionFitContentBundleApi
         string journalPath = "";
         try
         {
-            ActionFitContentBundleProfile profile = ParseProfile(profileJson);
+            ActionFitContentBundleProfile sourceProfile = ParseProfile(profileJson);
+            ActionFitContentBundleSelection selection = ActionFitContentBundlePlanner.ResolveSelection(
+                sourceProfile,
+                selectedModuleIds);
+            ActionFitContentBundleProfile profile = selection.profile;
             string existingJournal = ActionFitContentBundleJournalStore.PathFor(profile.bundleId);
             if (File.Exists(existingJournal))
             {
@@ -372,8 +608,21 @@ public static class ActionFitContentBundleApi
             ActionFitContentBundleStateFile state = ActionFitContentBundleStateStore.Load();
             ActionFitContentBundleRecord active = state.bundles.FirstOrDefault(item =>
                 string.Equals(item.bundleId, profile.bundleId, StringComparison.Ordinal));
+            if (selectedModuleIds == null && active != null)
+            {
+                selection = ActionFitContentBundlePlanner.ResolveSelection(
+                    sourceProfile,
+                    active.selectedModuleIds);
+                profile = selection.profile;
+            }
             if (active != null && string.Equals(active.bundleVersion, profile.bundleVersion, StringComparison.Ordinal))
             {
+                if (!new HashSet<string>(active.selectedModuleIds ?? Array.Empty<string>(), StringComparer.Ordinal)
+                        .SetEquals(selection.selectedModuleIds))
+                {
+                    return ModifyModules(profile.bundleId, selection.selectedModuleIds);
+                }
+
                 if (repair)
                     ReconcileActiveBundles();
                 return new ActionFitContentBundleResult
@@ -403,6 +652,7 @@ public static class ActionFitContentBundleApi
                 originalManifest,
                 state,
                 ActionFitContentBundleEnvironment.GetEmbeddedPackage);
+            ApplySelection(plan, selection);
             if (!plan.success) return FromPlan(plan);
 
             string updatedManifest = ActionFitContentBundlePlanner.ApplyPlan(originalManifest, plan);
@@ -412,6 +662,7 @@ public static class ActionFitContentBundleApi
                 operation = ActionFitContentBundleOperation.Install.ToString(),
                 bundleId = profile.bundleId,
                 profileJson = profileJson,
+                selectedModuleIds = selection.selectedModuleIds,
                 originalManifest = originalManifest,
                 updatedManifest = updatedManifest,
                 originalStateJson = ActionFitContentBundleStateStore.Serialize(state),
@@ -457,7 +708,11 @@ public static class ActionFitContentBundleApi
     {
         try
         {
-            ActionFitContentBundleProfile profile = ParseProfile(journal.profileJson);
+            ActionFitContentBundleProfile sourceProfile = ParseProfile(journal.profileJson);
+            ActionFitContentBundleSelection selection = ActionFitContentBundlePlanner.ResolveSelection(
+                sourceProfile,
+                journal.selectedModuleIds);
+            ActionFitContentBundleProfile profile = selection.profile;
             string currentManifest = ReadManifest();
             string[] packageIds = profile.packages.Select(package => package.packageId).ToArray();
             bool manifestUpdated = ActionFitPackageManifestUtility.DependenciesMatch(
@@ -504,7 +759,7 @@ public static class ActionFitContentBundleApi
             }
 
             ActionFitContentBundleStateFile state = ActionFitContentBundleStateStore.Load();
-            ActionFitContentBundleRecord record = BuildRecord(profile, journal, state);
+            ActionFitContentBundleRecord record = BuildRecord(profile, selection, journal, state);
             state.bundles = state.bundles
                 .Where(item => !string.Equals(item.bundleId, profile.bundleId, StringComparison.Ordinal))
                 .Append(record)
@@ -559,6 +814,7 @@ public static class ActionFitContentBundleApi
 
     private static ActionFitContentBundleRecord BuildRecord(
         ActionFitContentBundleProfile profile,
+        ActionFitContentBundleSelection selection,
         ActionFitContentBundleTransactionJournal journal,
         ActionFitContentBundleStateFile state)
     {
@@ -579,6 +835,7 @@ public static class ActionFitContentBundleApi
                 originalValue = originalValue,
                 appliedValue = appliedValue,
                 required = package.required,
+                reconcile = profile.schemaVersion == 2 || package.required,
                 removeOnRelease = package.removeOnRelease,
             });
         }
@@ -591,6 +848,8 @@ public static class ActionFitContentBundleApi
             bootstrapPackageId = profile.bootstrapPackageId,
             profileJson = journal.profileJson,
             installedUtc = DateTime.UtcNow.ToString("O"),
+            selectedModuleIds = selection.selectedModuleIds,
+            requiredModuleIds = selection.requiredModuleIds,
             packages = ownership.ToArray(),
         };
     }
@@ -737,6 +996,168 @@ public static class ActionFitContentBundleApi
             throw new InvalidOperationException("Released bundle ownership record is still active.");
     }
 
+    private static ActionFitContentBundleResult RecoverStateTransaction(
+        string journalPath,
+        ActionFitContentBundleTransactionJournal journal)
+    {
+        try
+        {
+            string manifest = ReadManifest();
+            string stateJson = ActionFitContentBundleStateStore.Serialize(ActionFitContentBundleStateStore.Load());
+            bool updated = ActionFitPackageManifestUtility.DependenciesMatch(
+                               manifest,
+                               journal.updatedManifest,
+                               journal.affectedPackageIds) &&
+                           string.Equals(stateJson, journal.updatedStateJson, StringComparison.Ordinal);
+            if (updated)
+            {
+                ActionFitContentBundleJournalStore.Delete(journalPath);
+                return new ActionFitContentBundleResult
+                {
+                    success = true,
+                    changed = true,
+                    code = "MODIFY_RECOVERED",
+                    message = $"Completed interrupted content bundle module change: {journal.bundleId}",
+                    bundleId = journal.bundleId,
+                    journalPath = journalPath,
+                };
+            }
+
+            bool original = ActionFitPackageManifestUtility.DependenciesMatch(
+                                manifest,
+                                journal.originalManifest,
+                                journal.affectedPackageIds) &&
+                            string.Equals(stateJson, journal.originalStateJson, StringComparison.Ordinal);
+            if (original)
+            {
+                ActionFitContentBundleJournalStore.Delete(journalPath);
+                return new ActionFitContentBundleResult
+                {
+                    success = true,
+                    changed = false,
+                    code = "MODIFY_ROLLED_BACK",
+                    message = $"Interrupted content bundle module change remained at the original state: {journal.bundleId}",
+                    bundleId = journal.bundleId,
+                    journalPath = journalPath,
+                };
+            }
+
+            return new ActionFitContentBundleResult
+            {
+                success = false,
+                recoveryRequired = true,
+                code = "MODIFY_RECOVERY_REQUIRED",
+                message = "Manifest and bundle ownership state do not match either side of the module transaction.",
+                bundleId = journal.bundleId,
+                journalPath = journalPath,
+            };
+        }
+        catch (Exception exception)
+        {
+            return new ActionFitContentBundleResult
+            {
+                success = false,
+                recoveryRequired = true,
+                code = "MODIFY_RECOVERY_FAILED",
+                message = exception.Message,
+                bundleId = journal.bundleId,
+                journalPath = journalPath,
+            };
+        }
+    }
+
+    private static ActionFitContentBundleResult RollBackStateTransaction(
+        string bundleId,
+        string journalPath,
+        Exception exception,
+        ActionFitContentBundlePlan plan)
+    {
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(journalPath) && File.Exists(journalPath))
+            {
+                ActionFitContentBundleTransactionJournal journal = ActionFitContentBundleJournalStore.Load(journalPath);
+                ActionFitPackageManifestUtility.WriteAtomic(ActionFitPackagePaths.ManifestPath, journal.originalManifest);
+                ActionFitContentBundleStateStore.WriteJson(journal.originalStateJson);
+                ActionFitContentBundleJournalStore.Delete(journalPath);
+                return new ActionFitContentBundleResult
+                {
+                    success = false,
+                    changed = false,
+                    code = "MODIFY_ROLLED_BACK",
+                    message = $"{exception.Message}\nThe original manifest and module selection were restored.",
+                    bundleId = bundleId,
+                    journalPath = journalPath,
+                    plan = plan,
+                };
+            }
+        }
+        catch (Exception recoveryException)
+        {
+            return new ActionFitContentBundleResult
+            {
+                success = false,
+                recoveryRequired = true,
+                code = "MODIFY_RECOVERY_REQUIRED",
+                message = $"{exception.Message}\nAutomatic rollback failed: {recoveryException.Message}",
+                bundleId = bundleId,
+                journalPath = journalPath,
+                plan = plan,
+            };
+        }
+
+        return new ActionFitContentBundleResult
+        {
+            success = false,
+            code = "MODIFY_FAILED",
+            message = exception.Message,
+            bundleId = bundleId,
+            journalPath = journalPath,
+            plan = plan,
+        };
+    }
+
+    private static ActionFitContentBundleStateFile WithoutBundle(
+        ActionFitContentBundleStateFile state,
+        string bundleId)
+    {
+        return new ActionFitContentBundleStateFile
+        {
+            schemaVersion = state?.schemaVersion ?? 1,
+            bundles = (state?.bundles ?? Array.Empty<ActionFitContentBundleRecord>())
+                .Where(item => !string.Equals(item.bundleId, bundleId, StringComparison.Ordinal))
+                .ToArray(),
+        };
+    }
+
+    private static ActionFitContentBundleRecord CopyRecord(
+        ActionFitContentBundleRecord record,
+        ActionFitContentBundlePackageOwnership[] packages)
+    {
+        return new ActionFitContentBundleRecord
+        {
+            bundleId = record.bundleId,
+            bundleVersion = record.bundleVersion,
+            displayName = record.displayName,
+            bootstrapPackageId = record.bootstrapPackageId,
+            profileJson = record.profileJson,
+            installedUtc = record.installedUtc,
+            selectedModuleIds = record.selectedModuleIds,
+            requiredModuleIds = record.requiredModuleIds,
+            packages = packages ?? Array.Empty<ActionFitContentBundlePackageOwnership>(),
+        };
+    }
+
+    private static void ApplySelection(
+        ActionFitContentBundlePlan plan,
+        ActionFitContentBundleSelection selection)
+    {
+        if (plan == null || selection == null) return;
+        plan.selectedModuleIds = selection.selectedModuleIds;
+        plan.requiredModuleIds = selection.requiredModuleIds;
+        plan.modules = selection.sourceProfile.modules ?? Array.Empty<ActionFitContentBundleModuleSpec>();
+    }
+
     private static string ReadManifest()
     {
         if (!File.Exists(ActionFitPackagePaths.ManifestPath))
@@ -784,6 +1205,14 @@ public static class ActionFitContentBundleApi
     }
 }
 
+internal sealed class ActionFitContentBundleSelection
+{
+    public ActionFitContentBundleProfile sourceProfile;
+    public ActionFitContentBundleProfile profile;
+    public string[] selectedModuleIds = Array.Empty<string>();
+    public string[] requiredModuleIds = Array.Empty<string>();
+}
+
 internal static class ActionFitContentBundlePlanner
 {
     private static readonly Regex IdPattern = new("^[a-z0-9][a-z0-9._-]*$", RegexOptions.CultureInvariant);
@@ -791,7 +1220,7 @@ internal static class ActionFitContentBundlePlanner
     public static void ValidateProfile(ActionFitContentBundleProfile profile)
     {
         if (profile == null) throw new InvalidOperationException("Content bundle profile is invalid.");
-        if (profile.schemaVersion != 1)
+        if (profile.schemaVersion != 1 && profile.schemaVersion != 2)
             throw new InvalidOperationException($"Unsupported content bundle profile schema: {profile.schemaVersion}");
         ValidateId(profile.bundleId, "bundle ID");
         if (string.IsNullOrWhiteSpace(profile.bundleVersion))
@@ -825,8 +1254,125 @@ internal static class ActionFitContentBundlePlanner
                 throw new InvalidOperationException($"Package Git URL must pin exact version tag {package.version}: {package.packageId}");
         }
 
+        ActionFitContentBundleModuleSpec[] modules = profile.modules ?? Array.Empty<ActionFitContentBundleModuleSpec>();
+        if (profile.schemaVersion == 1 && modules.Length > 0)
+            throw new InvalidOperationException("Content bundle modules require schemaVersion 2.");
+        if (profile.schemaVersion == 2 && modules.Length == 0)
+            throw new InvalidOperationException("Content bundle schemaVersion 2 requires at least one module.");
+        if (modules.Any(module => module == null))
+            throw new InvalidOperationException("Content bundle contains an empty module entry.");
+
+        string[] duplicateModuleIds = modules
+            .GroupBy(module => module.moduleId, StringComparer.Ordinal)
+            .Where(group => group.Count() > 1)
+            .Select(group => group.Key)
+            .ToArray();
+        if (duplicateModuleIds.Length > 0)
+            throw new InvalidOperationException($"Duplicate content bundle modules: {string.Join(", ", duplicateModuleIds)}");
+
+        var packageIds = new HashSet<string>(packages.Select(package => package.packageId), StringComparer.Ordinal);
+        var referencedPackageIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (ActionFitContentBundleModuleSpec module in modules)
+        {
+            ValidateId(module.moduleId, "module ID");
+            module.packageIds ??= Array.Empty<string>();
+            if (module.packageIds.Length == 0)
+                throw new InvalidOperationException($"Content bundle module must contain at least one package: {module.moduleId}");
+            if (module.packageIds.Distinct(StringComparer.Ordinal).Count() != module.packageIds.Length)
+                throw new InvalidOperationException($"Content bundle module contains duplicate packages: {module.moduleId}");
+            foreach (string packageId in module.packageIds)
+            {
+                if (!packageIds.Contains(packageId))
+                    throw new InvalidOperationException($"Content bundle module references an unknown package: {module.moduleId} -> {packageId}");
+                referencedPackageIds.Add(packageId);
+            }
+            if (module.required && !module.defaultSelected)
+                throw new InvalidOperationException($"Required content bundle module must be selected by default: {module.moduleId}");
+        }
+
+        if (profile.schemaVersion == 2)
+        {
+            string[] unreferenced = packageIds.Where(packageId => !referencedPackageIds.Contains(packageId)).ToArray();
+            if (unreferenced.Length > 0)
+                throw new InvalidOperationException($"Content bundle packages are not assigned to a module: {string.Join(", ", unreferenced)}");
+        }
+
         profile.allowedReleaseGitHubLogins ??= Array.Empty<string>();
         profile.packages = packages;
+        profile.modules = modules;
+    }
+
+    public static ActionFitContentBundleSelection ResolveSelection(
+        ActionFitContentBundleProfile profile,
+        string[] selectedModuleIds)
+    {
+        ValidateProfile(profile);
+        if (profile.schemaVersion == 1)
+        {
+            return new ActionFitContentBundleSelection
+            {
+                sourceProfile = profile,
+                profile = profile,
+                selectedModuleIds = Array.Empty<string>(),
+                requiredModuleIds = Array.Empty<string>(),
+            };
+        }
+
+        ActionFitContentBundleModuleSpec[] modules = profile.modules ?? Array.Empty<ActionFitContentBundleModuleSpec>();
+        var known = new HashSet<string>(modules.Select(module => module.moduleId), StringComparer.Ordinal);
+        IEnumerable<string> requested = selectedModuleIds == null
+            ? modules.Where(module => module.defaultSelected || module.required).Select(module => module.moduleId)
+            : selectedModuleIds.Where(moduleId => !string.IsNullOrWhiteSpace(moduleId));
+        var selected = new HashSet<string>(requested, StringComparer.Ordinal);
+        string[] unknown = selected.Where(moduleId => !known.Contains(moduleId)).OrderBy(item => item, StringComparer.Ordinal).ToArray();
+        if (unknown.Length > 0)
+            throw new InvalidOperationException($"Unknown content bundle modules: {string.Join(", ", unknown)}");
+
+        string[] requiredModuleIds = modules.Where(module => module.required)
+            .Select(module => module.moduleId)
+            .ToArray();
+        selected.UnionWith(requiredModuleIds);
+        string[] effectiveModuleIds = modules.Where(module => selected.Contains(module.moduleId))
+            .Select(module => module.moduleId)
+            .ToArray();
+        var includedPackageIds = new HashSet<string>(
+            modules.Where(module => selected.Contains(module.moduleId)).SelectMany(module => module.packageIds),
+            StringComparer.Ordinal);
+        var requiredPackageIds = new HashSet<string>(
+            modules.Where(module => module.required).SelectMany(module => module.packageIds),
+            StringComparer.Ordinal);
+
+        ActionFitContentBundlePackageSpec[] effectivePackages = profile.packages
+            .Where(package => includedPackageIds.Contains(package.packageId))
+            .Select(package => new ActionFitContentBundlePackageSpec
+            {
+                packageId = package.packageId,
+                version = package.version,
+                gitUrl = package.gitUrl,
+                required = requiredPackageIds.Contains(package.packageId),
+                removeOnRelease = package.removeOnRelease,
+            })
+            .ToArray();
+        if (effectivePackages.Length == 0)
+            throw new InvalidOperationException("Content bundle module selection must include at least one package.");
+
+        return new ActionFitContentBundleSelection
+        {
+            sourceProfile = profile,
+            profile = new ActionFitContentBundleProfile
+            {
+                schemaVersion = profile.schemaVersion,
+                bundleId = profile.bundleId,
+                bundleVersion = profile.bundleVersion,
+                displayName = profile.displayName,
+                bootstrapPackageId = profile.bootstrapPackageId,
+                packages = effectivePackages,
+                modules = profile.modules,
+                allowedReleaseGitHubLogins = profile.allowedReleaseGitHubLogins,
+            },
+            selectedModuleIds = effectiveModuleIds,
+            requiredModuleIds = requiredModuleIds,
+        };
     }
 
     public static ActionFitContentBundlePlan PlanInstall(
@@ -1010,7 +1556,7 @@ internal static class ActionFitContentBundlePlanner
         var changes = new List<ActionFitContentBundleChange>();
         var conflicts = new List<string>();
         foreach (ActionFitContentBundlePackageOwnership package in
-                 (record.packages ?? Array.Empty<ActionFitContentBundlePackageOwnership>()).Where(item => item.required))
+                 (record.packages ?? Array.Empty<ActionFitContentBundlePackageOwnership>()).Where(item => item.required || item.reconcile))
         {
             ActionFitContentBundleEmbeddedPackage embedded = embeddedResolver(package.packageId);
             if (embedded.exists && CompareVersions(embedded.version, package.version) >= 0)
@@ -1275,6 +1821,8 @@ internal sealed class ActionFitContentBundleRecord
     public string bootstrapPackageId = "";
     public string profileJson = "";
     public string installedUtc = "";
+    public string[] selectedModuleIds = Array.Empty<string>();
+    public string[] requiredModuleIds = Array.Empty<string>();
     public ActionFitContentBundlePackageOwnership[] packages = Array.Empty<ActionFitContentBundlePackageOwnership>();
 }
 
@@ -1287,6 +1835,7 @@ internal sealed class ActionFitContentBundlePackageOwnership
     public string originalValue = "";
     public string appliedValue = "";
     public bool required;
+    public bool reconcile;
     public bool removeOnRelease;
 }
 
@@ -1305,7 +1854,11 @@ internal static class ActionFitContentBundleStateStore
             throw new InvalidOperationException("ActionFitContentBundles.json has an unsupported schema.");
         state.bundles ??= Array.Empty<ActionFitContentBundleRecord>();
         foreach (ActionFitContentBundleRecord record in state.bundles)
+        {
             record.packages ??= Array.Empty<ActionFitContentBundlePackageOwnership>();
+            record.selectedModuleIds ??= Array.Empty<string>();
+            record.requiredModuleIds ??= Array.Empty<string>();
+        }
         return state;
     }
 
@@ -1335,6 +1888,7 @@ internal sealed class ActionFitContentBundleTransactionJournal
     public string operation = "";
     public string bundleId = "";
     public string profileJson = "";
+    public string[] selectedModuleIds = Array.Empty<string>();
     public string originalManifest = "";
     public string updatedManifest = "";
     public string originalStateJson = "";
@@ -1346,6 +1900,7 @@ internal sealed class ActionFitContentBundleTransactionJournal
 internal enum ActionFitContentBundleOperation
 {
     Install,
+    Modify,
     Release,
 }
 
@@ -1382,9 +1937,10 @@ internal static class ActionFitContentBundleJournalStore
     public static ActionFitContentBundleTransactionJournal Load(string path)
     {
         ActionFitContentBundleTransactionJournal journal = JsonUtility.FromJson<ActionFitContentBundleTransactionJournal>(File.ReadAllText(path));
-        if (journal == null || journal.schemaVersion != 1 || string.IsNullOrWhiteSpace(journal.bundleId))
+        if (journal == null || (journal.schemaVersion != 1 && journal.schemaVersion != 2) || string.IsNullOrWhiteSpace(journal.bundleId))
             throw new InvalidOperationException($"Invalid content bundle transaction journal: {path}");
         journal.affectedPackageIds ??= Array.Empty<string>();
+        journal.selectedModuleIds ??= Array.Empty<string>();
         return journal;
     }
 

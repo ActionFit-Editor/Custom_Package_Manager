@@ -209,6 +209,13 @@ public static class ActionFitPackagePublishApi
             ActionFitPackagePaths.ValidatePackageId(request.PackageId);
             if (!request.PackageId.StartsWith("com.actionfit.", StringComparison.Ordinal))
                 throw new InvalidOperationException("Publish API is limited to com.actionfit.* packages.");
+            if (ActionFitPackageProjectOverrideApi.IsProjectOverride(request.PackageId))
+            {
+                return Fail(
+                    plan,
+                    "PROJECT_OVERRIDE_NOT_PUBLISHABLE",
+                    "Project-owned overrides are excluded from upstream publishing. Restore the base package or fork it under a new package ID and repository.");
+            }
 
             if (validateContract)
             {

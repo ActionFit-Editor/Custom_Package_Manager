@@ -1,0 +1,11 @@
+{
+  "name": "__INSTALLER_PACKAGE_ID__",
+  "version": "__INSTALLER_VERSION__",
+  "displayName": "__DISPLAY_NAME__ Installer",
+  "description": "Installs the default modules for __DISPLAY_NAME__ and removes itself after verification.",
+  "unity": "6000.2",
+  "author": {
+    "name": "ActionFit"
+  },
+  "dependencies": {}
+}

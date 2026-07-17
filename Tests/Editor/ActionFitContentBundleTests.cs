@@ -1,6 +1,8 @@
 #if UNITY_EDITOR
 using System;
+using System.IO;
 using System.Linq;
+using System.Reflection;
 using NUnit.Framework;
 
 public sealed class ActionFitContentBundleTests
@@ -232,6 +234,240 @@ public sealed class ActionFitContentBundleTests
         Assert.That(exception.Message, Does.Contain("exact version tag"));
     }
 
+    [Test]
+    public void ResolveSelection_SchemaOneKeepsLegacyAllPackageBehavior()
+    {
+        ActionFitContentBundleProfile profile = CreateProfile();
+
+        ActionFitContentBundleSelection selection = ActionFitContentBundlePlanner.ResolveSelection(
+            profile,
+            Array.Empty<string>());
+
+        Assert.That(selection.profile.packages.Select(package => package.packageId),
+            Is.EquivalentTo(profile.packages.Select(package => package.packageId)));
+        Assert.That(selection.selectedModuleIds, Is.Empty);
+        Assert.That(selection.profile.packages.All(package => package.required), Is.True);
+    }
+
+    [Test]
+    public void ResolveSelection_SchemaTwoUsesDefaultsAndKeepsRequiredModule()
+    {
+        ActionFitContentBundleProfile profile = CreateModularProfile();
+
+        ActionFitContentBundleSelection defaults = ActionFitContentBundlePlanner.ResolveSelection(profile, null);
+        ActionFitContentBundleSelection explicitEmpty = ActionFitContentBundlePlanner.ResolveSelection(
+            profile,
+            Array.Empty<string>());
+
+        Assert.That(defaults.selectedModuleIds, Is.EqualTo(new[] { "core", "ui" }));
+        Assert.That(defaults.profile.packages.Select(package => package.packageId),
+            Is.EquivalentTo(new[]
+            {
+                "com.actionfit.content-core",
+                "com.actionfit.ui.foundation",
+                "com.actionfit.match-rival.ui",
+            }));
+        Assert.That(explicitEmpty.selectedModuleIds, Is.EqualTo(new[] { "core" }));
+        Assert.That(explicitEmpty.profile.packages.Select(package => package.packageId),
+            Is.EqualTo(new[] { "com.actionfit.content-core" }));
+        Assert.That(explicitEmpty.profile.packages.Single().required, Is.True);
+    }
+
+    [Test]
+    public void ResolveSelection_SharedLeafPackageIsInstalledOnce()
+    {
+        ActionFitContentBundleProfile profile = CreateModularProfile();
+
+        ActionFitContentBundleSelection selection = ActionFitContentBundlePlanner.ResolveSelection(
+            profile,
+            new[] { "ui", "animation" });
+
+        Assert.That(selection.selectedModuleIds, Is.EqualTo(new[] { "core", "ui", "animation" }));
+        Assert.That(selection.profile.packages.Count(package => package.packageId == "com.actionfit.ui.foundation"), Is.EqualTo(1));
+        Assert.That(selection.profile.packages.Any(package => package.packageId == "com.actionfit.match-rival.animation.dotween"), Is.True);
+    }
+
+    [Test]
+    public void ValidateProfile_SchemaTwoRejectsUnassignedPackagesAndUnknownSelection()
+    {
+        ActionFitContentBundleProfile profile = CreateModularProfile();
+        profile.modules[1].packageIds = new[] { "com.actionfit.ui.foundation" };
+
+        InvalidOperationException unassigned = Assert.Throws<InvalidOperationException>(
+            () => ActionFitContentBundlePlanner.ValidateProfile(profile));
+        Assert.That(unassigned.Message, Does.Contain("not assigned"));
+
+        profile = CreateModularProfile();
+        InvalidOperationException unknown = Assert.Throws<InvalidOperationException>(
+            () => ActionFitContentBundlePlanner.ResolveSelection(profile, new[] { "missing" }));
+        Assert.That(unknown.Message, Does.Contain("Unknown content bundle modules"));
+    }
+
+    [Test]
+    public void LegacyInstallerReflectionEntryPointsRemainUnambiguous()
+    {
+        MethodInfo install = typeof(ActionFitContentBundleApi).GetMethod(
+            "InstallJson",
+            BindingFlags.Public | BindingFlags.Static);
+        MethodInfo repair = typeof(ActionFitContentBundleApi).GetMethod(
+            "RepairJson",
+            BindingFlags.Public | BindingFlags.Static);
+
+        Assert.That(install, Is.Not.Null);
+        Assert.That(repair, Is.Not.Null);
+        Assert.That(install.GetParameters().Select(parameter => parameter.ParameterType),
+            Is.EqualTo(new[] { typeof(string) }));
+        Assert.That(repair.GetParameters().Select(parameter => parameter.ParameterType),
+            Is.EqualTo(new[] { typeof(string) }));
+    }
+
+    [Test]
+    public void ProjectOverrideStateKeepsPublicBaseRepositoryAndNoAbsolutePathField()
+    {
+        string[] fields = typeof(ActionFitPackageProjectOverrideRecord)
+            .GetFields(BindingFlags.Public | BindingFlags.Instance)
+            .Select(field => field.Name)
+            .ToArray();
+
+        Assert.That(fields, Does.Contain("embeddedPath"));
+        Assert.That(fields, Does.Contain("baseRepositoryUrl"));
+        Assert.That(fields.Any(field => field.Contains("absolute", StringComparison.OrdinalIgnoreCase)), Is.False);
+    }
+
+    [Test]
+    public void ProjectOverrideRepositoryUrlAllowsOnlyCredentialFreeGitPathQuery()
+    {
+        Assert.That(
+            ActionFitPackageProjectOverrideApi.NormalizePublicRepositoryUrl(
+                "https://github.com/ActionFit-Editor/Content.git?path=/Packages/Core"),
+            Is.EqualTo("https://github.com/ActionFit-Editor/Content.git?path=/Packages/Core"));
+        Assert.Throws<InvalidOperationException>(() =>
+            ActionFitPackageProjectOverrideApi.NormalizePublicRepositoryUrl(
+                "https://github.com/ActionFit-Editor/Content.git?token=secret"));
+        Assert.Throws<InvalidOperationException>(() =>
+            ActionFitPackageProjectOverrideApi.NormalizePublicRepositoryUrl(
+                "https://user:secret@github.com/ActionFit-Editor/Content.git"));
+    }
+
+    [Test]
+    public void PublishPreflightRejectsRegisteredProjectOverrideBeforeUpstreamChecks()
+    {
+        string statePath = ActionFitPackageProjectOverrideStateStore.Path;
+        bool existed = File.Exists(statePath);
+        string original = existed ? File.ReadAllText(statePath) : "";
+        try
+        {
+            ActionFitPackageProjectOverrideStateStore.Save(new ActionFitPackageProjectOverrideStateFile
+            {
+                overrides = new[]
+                {
+                    new ActionFitPackageProjectOverrideRecord
+                    {
+                        packageId = "com.actionfit.custompackagemanager",
+                        baseRepositoryUrl = "https://github.com/ActionFit-Editor/Custom_Package_Manager.git",
+                        baseVersion = "1.1.99",
+                        baseRevision = "1.1.99",
+                        baseContentHash = "ABC",
+                        embeddedPath = "Packages/com.actionfit.custompackagemanager",
+                    },
+                },
+            });
+
+            ActionFitPackagePublishPlan plan = ActionFitPackagePublishApi.PrepareLocal(
+                new ActionFitPackagePublishPrepareRequest
+                {
+                    PackageId = "com.actionfit.custompackagemanager",
+                    RefreshCatalog = false,
+                    CheckRemoteState = false,
+                },
+                false,
+                out _);
+
+            Assert.That(plan.Success, Is.False);
+            Assert.That(plan.Code, Is.EqualTo("PROJECT_OVERRIDE_NOT_PUBLISHABLE"));
+        }
+        finally
+        {
+            if (existed)
+                ActionFitPackageManifestUtility.WriteAtomic(statePath, original, false);
+            else if (File.Exists(statePath))
+                File.Delete(statePath);
+        }
+    }
+
+    [Test]
+    public void InstallerTemplateDeclaresSchemaTwoAndCanonicalManagerBootstrap()
+    {
+        const string root = "Packages/com.actionfit.custompackagemanager/Editor/Templates~/ContentBundleInstaller";
+        string profile = File.ReadAllText(Path.Combine(root, "ContentBundleProfile.json.template"));
+        string bootstrap = File.ReadAllText(Path.Combine(root, "InstallerBootstrap.cs.template"));
+
+        StringAssert.Contains("\"schemaVersion\": 2", profile);
+        StringAssert.Contains("\"modules\"", profile);
+        StringAssert.Contains("ActionFitContentBundleApi", bootstrap);
+        StringAssert.Contains("Client.Add(ManagerGitUrl)", bootstrap);
+        StringAssert.Contains("IsDevelopmentEmbedded", bootstrap);
+    }
+
+    [Test]
+    public void GeneratedAiStateIsDeterministicAndOmitsRemoteAndMachinePath()
+    {
+        var bundles = new[]
+        {
+            new ActionFitContentBundleStatus
+            {
+                bundleId = "feature",
+                bundleVersion = "1.0.0",
+                state = "active",
+                selectedModuleIds = new[] { "ui", "core" },
+                requiredModuleIds = new[] { "core" },
+                requiredPackageIds = new[] { "com.actionfit.feature" },
+                modules = new[]
+                {
+                    new ActionFitContentBundleModuleSpec
+                    {
+                        moduleId = "core",
+                        required = true,
+                        defaultSelected = true,
+                        packageIds = new[] { "com.actionfit.feature" },
+                    },
+                    new ActionFitContentBundleModuleSpec
+                    {
+                        moduleId = "ui",
+                        defaultSelected = true,
+                        packageIds = new[] { "com.actionfit.feature.ui" },
+                    },
+                },
+            },
+        };
+        var overrides = new[]
+        {
+            new ActionFitPackageProjectOverrideStatus
+            {
+                PackageId = "com.actionfit.feature.ui",
+                BaseRepositoryUrl = "https://github.com/private/example.git",
+                BaseVersion = "1.0.0",
+                BaseRevision = "1.0.0",
+                BaseContentHash = "1234567890ABCDEF",
+                CurrentContentHash = "FEDCBA0987654321",
+                EmbeddedPath = "/Users/example/private/project/Packages/com.actionfit.feature.ui",
+                Modified = true,
+                UpstreamVersion = "1.1.0",
+                UpstreamUpdateAvailable = true,
+            },
+        };
+
+        string first = ActionFitPackageAiGuideRouter.BuildPrivacySafePackageState(bundles, overrides);
+        string second = ActionFitPackageAiGuideRouter.BuildPrivacySafePackageState(bundles, overrides);
+
+        Assert.That(second, Is.EqualTo(first));
+        StringAssert.Contains("selected modules: `core`, `ui`", first);
+        StringAssert.Contains("default modules: `core`, `ui`", first);
+        StringAssert.Contains("1234567890AB", first);
+        StringAssert.DoesNotContain(overrides[0].BaseRepositoryUrl, first);
+        StringAssert.DoesNotContain(overrides[0].EmbeddedPath, first);
+    }
+
     private static ActionFitContentBundleProfile CreateProfile()
     {
         return new ActionFitContentBundleProfile
@@ -259,6 +495,69 @@ public sealed class ActionFitContentBundleTests
                     removeOnRelease = true,
                 },
             },
+        };
+    }
+
+    private static ActionFitContentBundleProfile CreateModularProfile()
+    {
+        return new ActionFitContentBundleProfile
+        {
+            schemaVersion = 2,
+            bundleId = "match-rival",
+            bundleVersion = "0.2.0",
+            displayName = "ActionFit Match Rival",
+            bootstrapPackageId = "com.actionfit.match-rival.installer",
+            packages = new[]
+            {
+                Package("com.actionfit.content-core", "0.2.0", "ContentCore"),
+                Package("com.actionfit.ui.foundation", "1.0.0", "UIFoundation"),
+                Package("com.actionfit.match-rival.ui", "0.2.0", "MatchRivalUI"),
+                Package("com.actionfit.match-rival.animation.dotween", "0.2.0", "MatchRivalAnimationDotween"),
+            },
+            modules = new[]
+            {
+                new ActionFitContentBundleModuleSpec
+                {
+                    moduleId = "core",
+                    displayName = "Origin / Core",
+                    required = true,
+                    defaultSelected = true,
+                    packageIds = new[] { "com.actionfit.content-core" },
+                },
+                new ActionFitContentBundleModuleSpec
+                {
+                    moduleId = "ui",
+                    displayName = "UI Foundation Binding",
+                    defaultSelected = true,
+                    packageIds = new[]
+                    {
+                        "com.actionfit.ui.foundation",
+                        "com.actionfit.match-rival.ui",
+                    },
+                },
+                new ActionFitContentBundleModuleSpec
+                {
+                    moduleId = "animation",
+                    displayName = "DOTween Animation",
+                    defaultSelected = false,
+                    packageIds = new[]
+                    {
+                        "com.actionfit.ui.foundation",
+                        "com.actionfit.match-rival.animation.dotween",
+                    },
+                },
+            },
+        };
+    }
+
+    private static ActionFitContentBundlePackageSpec Package(string packageId, string version, string repository)
+    {
+        return new ActionFitContentBundlePackageSpec
+        {
+            packageId = packageId,
+            version = version,
+            gitUrl = $"https://github.com/ActionFit-Editor/{repository}.git#{version}",
+            removeOnRelease = true,
         };
     }
 
