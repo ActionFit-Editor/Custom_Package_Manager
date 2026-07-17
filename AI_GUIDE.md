@@ -7,7 +7,7 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.custompackagemanager`
 - Display name: Custom Package Manager
 - Repository: `https://github.com/ActionFit-Editor/Custom_Package_Manager.git`
-- Current package version at generation time: `1.1.96`
+- Current package version at generation time: `1.1.97`
 - Unity version: `6000.2`
 
 ## Purpose
@@ -106,7 +106,8 @@ Read this file when:
 - Do not create another package merely for a configured instance of an existing content framework. Content-domain ownership and extraction decisions belong to the consuming project's content-boundary documentation.
 - Publish-window discovery must enumerate only immediate `Packages/com.actionfit.*` directories. Never recursively treat nested `package.json` files, including `Tests/Shell/Fixtures~` validator packages, as publish candidates or pass them to `ActionFitPackageInfoUtility.CreateOrUpdate`.
 - Each package's `ActionFitPackageInfo_SO` stores `Repository Visibility`. Publish flows use that package-local value to choose the public/private GitHub profile for both new and already registered packages, so `Publish All Changed` can safely publish mixed public/private packages in one run.
-- New package creation and `Fork as New` must ask the user to choose `Public` or `Private`; never infer `Public` from an enum default. `ActionFitPackageCreateRequest.RepositoryVisibilitySpecified` must be true, and create validation must reject a missing or invalid choice. Internal metadata refreshes for an existing package may preserve an already-known value without showing a creation prompt.
+- New package creation and `Fork as New` default to `Public`. `ActionFitPackageCreateRequest` requests with an omitted visibility are normalized to `Public`; `Private` is valid only when `RepositoryVisibilitySpecified` is true, and invalid enum values remain blocked. UI surfaces must label Public as the default and Private as an explicit exception. Internal metadata refreshes preserve an existing package's known value instead of silently changing it.
+- Tokens, credentials, private keys, signing material, vendor configuration, and other secrets are prohibited from every package source and metadata surface regardless of repository visibility. Keep them in ignored local settings, environment variables, or an approved secret store. Private is for approved ownership, distribution, or confidentiality constraints, not for embedding secrets; unresolved public-distribution rights must block publication for review rather than silently selecting Private.
 - SDK bridge package creation is stricter: `ActionFitSdkBridgePackageTemplate.Create` requires explicit `Public` visibility, a valid schema-v1 profile, and an exact `BridgePackageId` match. It adds the installed Custom Package Manager version as an explicit package dependency, keeps the bridge source-only, and must not redistribute vendor SDK binaries, archives, credentials, or vendor configuration files.
 - `Publish All Changed` must create publish request snapshots on the Unity main thread. It may run pure GitHub remote checks and repository publish work through `ActionFitPackagePublisher.DefaultMaxParallelPublishes`, but background work must not read Unity objects.
 - Bulk preflight must classify a missing-Catalog package with an existing immutable tag as a Catalog recovery candidate only after the single-package recovery verifier confirms repository visibility, package identity, tag commit, and content equivalence. Keep publish and recovery package ID sets distinct in the content-bound plan.

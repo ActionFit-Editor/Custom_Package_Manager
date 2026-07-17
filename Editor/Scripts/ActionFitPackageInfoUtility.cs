@@ -264,12 +264,17 @@ public static class ActionFitPackageInfoUtility
     internal static void ValidateCreateRequest(ActionFitPackageCreateRequest request)
     {
         if (request == null) throw new ArgumentNullException(nameof(request));
-        if (!request.RepositoryVisibilitySpecified)
-            throw new InvalidOperationException("Repository Visibility must be explicitly selected as Public or Private before creating a package.");
         if (request.RepositoryVisibility != ActionFitPackageRepositoryVisibility.Public &&
             request.RepositoryVisibility != ActionFitPackageRepositoryVisibility.Private)
         {
             throw new InvalidOperationException("Repository Visibility must be Public or Private.");
+        }
+        if (!request.RepositoryVisibilitySpecified)
+        {
+            if (request.RepositoryVisibility == ActionFitPackageRepositoryVisibility.Private)
+                throw new InvalidOperationException("Private Repository Visibility must be explicitly selected before creating a package.");
+
+            request.RepositoryVisibility = ActionFitPackageRepositoryVisibility.Public;
         }
         request.PackageId = NormalizePackageId(request.PackageId);
         request.DisplayName = NormalizeRequired(request.DisplayName, "Display Name");

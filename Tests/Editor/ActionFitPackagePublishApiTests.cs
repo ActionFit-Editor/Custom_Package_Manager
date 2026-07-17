@@ -10,15 +10,26 @@ using NUnit.Framework;
 public sealed class ActionFitPackagePublishApiTests
 {
     [Test]
-    public void ValidateCreateRequest_RejectsMissingExplicitRepositoryVisibility()
+    public void ValidateCreateRequest_DefaultsMissingRepositoryVisibilityToPublic()
     {
         ActionFitPackageCreateRequest request = CreateValidRequest();
+        request.RepositoryVisibilitySpecified = false;
+
+        Assert.DoesNotThrow(() => ActionFitPackageInfoUtility.ValidateCreateRequest(request));
+        Assert.That(request.RepositoryVisibility, Is.EqualTo(ActionFitPackageRepositoryVisibility.Public));
+    }
+
+    [Test]
+    public void ValidateCreateRequest_RejectsUnspecifiedPrivateRepositoryVisibility()
+    {
+        ActionFitPackageCreateRequest request = CreateValidRequest();
+        request.RepositoryVisibility = ActionFitPackageRepositoryVisibility.Private;
         request.RepositoryVisibilitySpecified = false;
 
         InvalidOperationException exception = Assert.Throws<InvalidOperationException>(
             () => ActionFitPackageInfoUtility.ValidateCreateRequest(request));
 
-        Assert.That(exception.Message, Does.Contain("explicitly selected"));
+        Assert.That(exception.Message, Does.Contain("Private Repository Visibility"));
     }
 
     [TestCase(ActionFitPackageRepositoryVisibility.Public)]

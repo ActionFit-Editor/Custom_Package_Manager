@@ -10,7 +10,7 @@ public class ActionFitPackageCreateWindow : EditorWindow
     private string _displayName = "";
     private string _repoName = "";
     private int _repositoryVisibilitySelection;
-    private static readonly string[] RepositoryVisibilityOptions = { "Select...", "Public", "Private" };
+    private static readonly string[] RepositoryVisibilityOptions = { "Public (Default)", "Private (Explicit Exception)" };
     private string _version = "1.0.0";
     private string _unityVersion = "6000.2";
     private string _owner = "ActionFit";
@@ -34,8 +34,11 @@ public class ActionFitPackageCreateWindow : EditorWindow
         _displayName = EditorGUILayout.TextField("Display Name", _displayName);
         _repoName = EditorGUILayout.TextField("Repo Name", _repoName);
         _repositoryVisibilitySelection = EditorGUILayout.Popup("Repository Visibility", _repositoryVisibilitySelection, RepositoryVisibilityOptions);
-        if (_repositoryVisibilitySelection == 0)
-            EditorGUILayout.HelpBox("Choose Public or Private. Package creation cannot continue without an explicit repository visibility choice.", MessageType.Warning);
+        EditorGUILayout.HelpBox(
+            _repositoryVisibilitySelection == 1
+                ? "Private is an explicit exception for approved distribution restrictions. Never place tokens, credentials, or other secrets in package content."
+                : "Public is the default for new package repositories. Keep tokens, credentials, and other secrets outside package content.",
+            _repositoryVisibilitySelection == 1 ? MessageType.Warning : MessageType.Info);
         _version = EditorGUILayout.TextField("Version", _version);
         _unityVersion = EditorGUILayout.TextField("Unity", _unityVersion);
 
@@ -82,7 +85,7 @@ public class ActionFitPackageCreateWindow : EditorWindow
                 DisplayName = _displayName,
                 RepoName = _repoName,
                 RepositoryVisibility = GetSelectedRepositoryVisibility(),
-                RepositoryVisibilitySpecified = _repositoryVisibilitySelection > 0,
+                RepositoryVisibilitySpecified = true,
                 Version = _version,
                 UnityVersion = _unityVersion,
                 Owner = _owner,
@@ -115,7 +118,7 @@ public class ActionFitPackageCreateWindow : EditorWindow
     }
 
     private ActionFitPackageRepositoryVisibility GetSelectedRepositoryVisibility()
-        => _repositoryVisibilitySelection == 2
+        => _repositoryVisibilitySelection == 1
             ? ActionFitPackageRepositoryVisibility.Private
             : ActionFitPackageRepositoryVisibility.Public;
 }

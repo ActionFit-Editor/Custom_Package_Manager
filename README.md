@@ -7,10 +7,16 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.96"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.97"
   }
 }
 ```
+
+## Repository Visibility Policy
+
+New package and `Fork as New` repositories default to **Public**. Choose **Private** only as an explicit exception when approved ownership, distribution, or confidentiality constraints require restricted source access. Existing PackageInfo visibility is preserved until an authorized migration changes it.
+
+Tokens, credentials, private keys, signing material, vendor configuration, and other secrets are prohibited from package content and metadata regardless of repository visibility. Keep them in ignored local settings, environment variables, or an approved secret store; a Private repository is not a package-secret container. If public distribution rights are unresolved, block publication for review instead of silently switching the package to Private.
 
 ## Menu
 
@@ -161,7 +167,7 @@ Downloaded embedding is delegated to Unity Package Manager so Unity's virtual `P
 
 Unity can expose downloaded package cache contents through a logical `Packages/<packageId>` path even when no physical embedded folder exists. Conversion therefore uses guarded physical directory enumeration instead of `Directory.Exists` alone when deciding whether a reusable local folder exists. This prevents a downloaded cache projection from being mistaken for an embedded package and avoids writing a `file:` dependency without copying the package.
 
-`Fork as New` copies the downloaded package into a new `Packages/<newPackageId>/` folder, rewrites package metadata for the new `com.actionfit.*` package ID, creates PackageInfo metadata for a new repository, removes the original manifest dependency, and writes the new local `file:` dependency. Both `1. Create Package` and `Fork as New` require an explicit `Public` or `Private` repository visibility choice; there is no silent public default, and API requests without `RepositoryVisibilitySpecified = true` fail validation. This prevents the source package and the fork from compiling duplicate assemblies at the same time. If the copy or validation fails, the manifest is left unchanged so Unity does not resolve a broken `file:` dependency. Embedded packages include `Use Downloaded`, which returns the package to the downloaded flow through the same protected replacement process used by embedded updates.
+`Fork as New` copies the downloaded package into a new `Packages/<newPackageId>/` folder, rewrites package metadata for the new `com.actionfit.*` package ID, creates PackageInfo metadata for a new repository, removes the original manifest dependency, and writes the new local `file:` dependency. Its repository visibility defaults to `Public`; `Private` must be selected explicitly as an approved exception. API requests that omit visibility are normalized to `Public`, while an unspecified `Private` request is rejected. This prevents the source package and the fork from compiling duplicate assemblies at the same time. If the copy or validation fails, the manifest is left unchanged so Unity does not resolve a broken `file:` dependency. Embedded packages include `Use Downloaded`, which returns the package to the downloaded flow through the same protected replacement process used by embedded updates.
 
 Before an embedded package is replaced, the manager reports whether it changed since `Embed for Edit`, warns that local modifications are not merged, and creates a timestamped safety copy under `UserSettings/ActionFitPackageManager/EmbeddedBackups/<packageId>/`. The manifest is changed only after every required backup succeeds. If an embedded folder cannot be moved to the operating system trash, the manager restores the original manifest and any package folders already moved during that operation. Backups remain until they are removed manually.
 
@@ -308,7 +314,7 @@ If an AI assistant reads this package documentation before the automatic router 
 
 ## Manager Console
 
-- `1. Create Package`: requires an explicit `Public` or `Private` repository visibility choice, then creates the `Packages/com.actionfit.*` package skeleton, README, AI guide, README-only package menu file, asmdef, and PackageInfo SO. Creation validation rejects requests that omit the explicit choice, and the completed skeleton must pass the package-owned round-trip contract validator before creation returns successfully.
+- `1. Create Package`: defaults repository visibility to `Public`, permits `Private` only through an explicit exception selection, then creates the `Packages/com.actionfit.*` package skeleton, README, AI guide, README-only package menu file, asmdef, and PackageInfo SO. API requests that omit visibility are normalized to `Public`; an unspecified `Private` request or invalid enum value is rejected. The completed skeleton must pass the package-owned round-trip contract validator before creation returns successfully.
 - `2. Publish Changed`: normal publish path and the second Manager Console action. It finds top-level `Packages/com.actionfit.*` packages whose local `package.json` version is higher than the catalog latest version, includes newly created packages that are not yet registered, and uses the same approval-gated API for single and bulk publication. Nested `package.json` files under test fixtures or package content are not publish candidates. `Publish All Changed` separates normal publish rows from verified Catalog recovery rows, asks for a separate exact recovery approval, runs only normal repository publishes with up to 4 workers, then appends both groups by one Catalog batch request. Each package's `Repository Visibility` in `ActionFitPackageInfo_SO` selects the public/private GitHub profile.
 - `Add Agent Skill`: the third Manager Console action. It opens the same no-overwrite schema v2 scaffolding window used by embedded package detail rows. The first addition creates the mandatory help sources for Codex and Claude; later additions update only the manifest and newly requested source paths.
 - `Publish Package`: manual publish path for an already registered package when you need to type a specific version. After writing that version, it enters the same approval-gated preflight, migration, repository publish, and catalog sequence as `Publish Changed`.
@@ -344,6 +350,6 @@ Catalog and GitHub HTTP requests use a 30-second connection/read timeout. The ca
 
 If the window-held retry rows are no longer available after a window recreation, domain reload, or Editor restart, use `Recover Catalog Entry` on the changed package row. Recovery requires the version to be absent from the refreshed catalog, the immutable remote tag and repository visibility to match, and the checked-out tag content to match the local package after only safe `_fingerprint`, JSON whitespace, and Unity PackageInfo YAML serialization normalization. A mismatch is blocked and recommends the next patch version. A successful recovery performs only catalog upsert and refresh; it never creates a repository or pushes, moves, deletes, or overwrites a branch or tag.
 
-`Settings` stores one GitHub token in `GitHub Publish Default` and separate repository creation organizations for public and private repositories. Fill `_githubToken` once, then set `Repo Creation - Public` and `Repo Creation - Private` org values when the repository owners differ. Private catalog entries can point at private GitHub repositories, so consuming projects still need GitHub access to install them.
+`Settings` stores one GitHub token in `GitHub Publish Default` and separate repository creation organizations for public and private repositories. Fill `_githubToken` once, then set `Repo Creation - Public` and `Repo Creation - Private` org values when the repository owners differ. `Repo Creation - Public` is the default target for new packages; the private profile is used only after an explicit exception selection. Private catalog entries can point at private GitHub repositories, so consuming projects still need GitHub access to install them. Never copy the configured token into package files or repository metadata.
 
 Before preparing package contents, the publisher refreshes the local publish clone from `origin/main` so an older cached clone does not affect the prepared state.

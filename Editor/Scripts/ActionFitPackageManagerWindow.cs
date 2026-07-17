@@ -2438,7 +2438,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
         private string _sourceVersion;
         private ActionFitPackageCreateRequest _request;
         private int _repositoryVisibilitySelection;
-        private static readonly string[] RepositoryVisibilityOptions = { "Select...", "Public", "Private" };
+        private static readonly string[] RepositoryVisibilityOptions = { "Public (Default)", "Private (Explicit Exception)" };
         private Vector2 _scroll;
 
         public static void Open(
@@ -2496,12 +2496,15 @@ public class ActionFitPackageManagerWindow : EditorWindow
             _request.DisplayName = EditorGUILayout.TextField("Display Name", _request.DisplayName);
             _request.RepoName = EditorGUILayout.TextField("Repo Name", _request.RepoName);
             _repositoryVisibilitySelection = EditorGUILayout.Popup("Repository Visibility", _repositoryVisibilitySelection, RepositoryVisibilityOptions);
-            _request.RepositoryVisibilitySpecified = _repositoryVisibilitySelection > 0;
-            _request.RepositoryVisibility = _repositoryVisibilitySelection == 2
+            _request.RepositoryVisibilitySpecified = true;
+            _request.RepositoryVisibility = _repositoryVisibilitySelection == 1
                 ? ActionFitPackageRepositoryVisibility.Private
                 : ActionFitPackageRepositoryVisibility.Public;
-            if (!_request.RepositoryVisibilitySpecified)
-                EditorGUILayout.HelpBox("Choose Public or Private. Fork as New cannot continue without an explicit repository visibility choice.", MessageType.Warning);
+            EditorGUILayout.HelpBox(
+                _repositoryVisibilitySelection == 1
+                    ? "Private is an explicit exception for approved distribution restrictions. Never place tokens, credentials, or other secrets in package content."
+                    : "Public is the default for new fork repositories. Keep tokens, credentials, and other secrets outside package content.",
+                _repositoryVisibilitySelection == 1 ? MessageType.Warning : MessageType.Info);
             _request.Version = EditorGUILayout.TextField("Version", _request.Version);
             _request.UnityVersion = EditorGUILayout.TextField("Unity", _request.UnityVersion);
 

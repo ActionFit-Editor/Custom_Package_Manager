@@ -21,14 +21,5 @@ MonoBehaviour:
   _description: "ActionFit UPM \uD328\uD0A4\uC9C0 \uCE74\uD0C8\uB85C\uADF8\uB97C
     \uBCF4\uACE0 Git URL \uAE30\uBC18 \uC124\uCE58\uC640 \uBC84\uC804 \uC801\uC6A9\uC744
     \uB3C4\uC640\uC8FC\uB294 Unity \uC5D0\uB514\uD130 \uD234."
-  _releaseNote: "- `PACKAGE_AI_GUIDE_ROUTER.md`\uC5D0 `com.actionfit.ai-refactor`
-    \uAC00\uC774\uB4DC \uACBD\uB85C\uB97C \uB4F1\uB85D\uD574 \uC124\uCE58\uB41C AI\uAC00
-    \uB9AC\uD329\uD1A0\uB9C1 \uACC4\uD68D \uC2A4\uD0AC\uC744 \uC62C\uBC14\uB974\uAC8C
-    \uCC3E\uC744 \uC218 \uC788\uC2B5\uB2C8\uB2E4.\n- AI Refactor\uAC00 AI Code Convention\uC744
-    \uAE30\uC900\uC73C\uB85C \uC77D\uAE30 \uC804\uC6A9 \uAD6C\uC870 \uC810\uAC80\uACFC
-    \uB2E8\uACC4\uBCC4 \uB9AC\uD329\uD1A0\uB9C1 \uC81C\uC548\uC744 \uC81C\uACF5\uD55C\uB2E4\uB294
-    \uB77C\uC6B0\uD305 \uBAA9\uC801\uC744 \uBA85\uC2DC\uD588\uC2B5\uB2C8\uB2E4.\n-
-    \uD328\uD0A4\uC9C0 \uAD00\uB9AC\uC790\uC758 \uC124\uCE58, \uC5C5\uB370\uC774\uD2B8,
-    \uD37C\uBE14\uB9AC\uC2DC \uB7F0\uD0C0\uC784 \uB3D9\uC791\uC740 \uBCC0\uACBD\uD558\uC9C0
-    \uC54A\uC544 \uAE30\uC874 \uD504\uB85C\uC81D\uD2B8 \uB3D9\uC791\uACFC \uD638\uD658\uB429\uB2C8\uB2E4."
+  _releaseNote: "- 신규 패키지와 `Fork as New`의 저장소 visibility가 `Public`으로 기본 선택되어 공개 배포 원칙을 일관되게 적용합니다.\n- `Private`는 사용자가 명시적으로 선택한 예외 요청만 허용되어 실수로 비공개 저장소가 생성되는 흐름을 줄였습니다.\n- 토큰, 자격증명, 개인 키와 vendor 설정은 Public/Private 구분 없이 패키지 콘텐츠에 포함할 수 없다는 보안 경계를 README와 AI 가이드에 명시했습니다.\n- 기존 PackageInfo에 저장된 visibility는 자동 변경하지 않아 이미 배포된 패키지의 저장소 연결과 직렬화 호환성을 유지합니다."
   _dependenciesOverride: 
