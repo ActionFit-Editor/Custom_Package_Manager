@@ -4,8 +4,10 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using UnityEngine;
 using Debug = UnityEngine.Debug;
 
@@ -127,7 +129,32 @@ internal static class ActionFitPackageRepositoryMigration
                 return false;
             }
 
-            string[] conflictingRefs = FindConflictingRefs(sourceRefs, targetRefs);
+            string ancestryCheckError = "";
+            string[] conflictingRefs = FindConflictingRefs(
+                sourceRefs,
+                targetRefs,
+                (sourceSha, targetSha) =>
+                {
+                    if (TryIsTargetDescendant(
+                            target,
+                            sourceSha,
+                            targetSha,
+                            request.GitHubToken,
+                            out bool isDescendant,
+                            out string compareError))
+                    {
+                        return isDescendant;
+                    }
+
+                    ancestryCheckError = compareError;
+                    return false;
+                });
+            if (!string.IsNullOrWhiteSpace(ancestryCheckError))
+            {
+                code = "TARGET_REPOSITORY_ANCESTRY_CHECK_FAILED";
+                message = ancestryCheckError;
+                return false;
+            }
             if (conflictingRefs.Length > 0)
             {
                 code = "TARGET_REPOSITORY_REF_CONFLICT";
@@ -290,14 +317,74 @@ internal static class ActionFitPackageRepositoryMigration
     internal static string[] FindConflictingRefs(
         IReadOnlyDictionary<string, string> sourceRefs,
         IReadOnlyDictionary<string, string> targetRefs)
+        => FindConflictingRefs(sourceRefs, targetRefs, null);
+
+    internal static string[] FindConflictingRefs(
+        IReadOnlyDictionary<string, string> sourceRefs,
+        IReadOnlyDictionary<string, string> targetRefs,
+        Func<string, string, bool> branchTargetContainsSource)
     {
         return (sourceRefs ?? new Dictionary<string, string>())
             .Where(pair => targetRefs != null &&
                            targetRefs.TryGetValue(pair.Key, out string targetSha) &&
-                           !string.Equals(pair.Value, targetSha, StringComparison.Ordinal))
+                           !string.Equals(pair.Value, targetSha, StringComparison.Ordinal) &&
+                           (!pair.Key.StartsWith("refs/heads/", StringComparison.Ordinal) ||
+                            branchTargetContainsSource == null ||
+                            !branchTargetContainsSource(pair.Value, targetSha)))
             .Select(pair => pair.Key)
             .OrderBy(value => value, StringComparer.Ordinal)
             .ToArray();
+    }
+
+    internal static bool IsTargetCompareStatusCompatible(string status)
+        => string.Equals(status, "ahead", StringComparison.OrdinalIgnoreCase) ||
+           string.Equals(status, "identical", StringComparison.OrdinalIgnoreCase);
+
+    private static bool TryIsTargetDescendant(
+        RepositoryIdentity target,
+        string sourceSha,
+        string targetSha,
+        string token,
+        out bool isDescendant,
+        out string error)
+    {
+        isDescendant = false;
+        error = "";
+        string url =
+            $"https://api.github.com/repos/{target.Organization}/{target.Name}/compare/" +
+            $"{Uri.EscapeDataString(sourceSha ?? "")}...{Uri.EscapeDataString(targetSha ?? "")}";
+        try
+        {
+            HttpWebRequest request = ActionFitPackagePublisher.CreateGitHubRequest(url, token, "GET");
+            using var response = (HttpWebResponse)request.GetResponse();
+            using var reader = new StreamReader(response.GetResponseStream(), Encoding.UTF8);
+            string responseJson = reader.ReadToEnd();
+            Match statusMatch = Regex.Match(
+                responseJson,
+                "\"status\"\\s*:\\s*\"([^\"]+)\"",
+                RegexOptions.IgnoreCase);
+            if (!statusMatch.Success)
+            {
+                error = $"GitHub compare response did not include status for {target.DisplayName}.";
+                return false;
+            }
+
+            isDescendant = IsTargetCompareStatusCompatible(statusMatch.Groups[1].Value);
+            return true;
+        }
+        catch (WebException ex) when (
+            ex.Response is HttpWebResponse response &&
+            (response.StatusCode == HttpStatusCode.NotFound ||
+             response.StatusCode == HttpStatusCode.UnprocessableEntity))
+        {
+            ex.Response?.Dispose();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = $"GitHub compare failed for {target.DisplayName}: {ex.Message}";
+            return false;
+        }
     }
 
     internal static string[] FindMissingRefs(

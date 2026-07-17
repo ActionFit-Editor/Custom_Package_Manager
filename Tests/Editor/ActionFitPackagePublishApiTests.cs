@@ -435,6 +435,33 @@ public sealed class ActionFitPackagePublishApiTests
     }
 
     [Test]
+    public void RefComparison_AllowsTargetBranchDescendantButKeepsTagsImmutable()
+    {
+        var source = new Dictionary<string, string>
+        {
+            ["refs/heads/main"] = "source-main",
+            ["refs/tags/1.0.0"] = "source-tag",
+        };
+        var target = new Dictionary<string, string>
+        {
+            ["refs/heads/main"] = "published-main",
+            ["refs/tags/1.0.0"] = "different-tag",
+        };
+
+        string[] conflicts = ActionFitPackageRepositoryMigration.FindConflictingRefs(
+            source,
+            target,
+            (sourceSha, targetSha) =>
+                sourceSha == "source-main" && targetSha == "published-main");
+
+        Assert.That(conflicts, Is.EqualTo(new[] { "refs/tags/1.0.0" }));
+        Assert.That(ActionFitPackageRepositoryMigration.IsTargetCompareStatusCompatible("ahead"), Is.True);
+        Assert.That(ActionFitPackageRepositoryMigration.IsTargetCompareStatusCompatible("identical"), Is.True);
+        Assert.That(ActionFitPackageRepositoryMigration.IsTargetCompareStatusCompatible("behind"), Is.False);
+        Assert.That(ActionFitPackageRepositoryMigration.IsTargetCompareStatusCompatible("diverged"), Is.False);
+    }
+
+    [Test]
     public void ValidateDocumentation_RequiresTargetUrlInReadmeAndAiGuide()
     {
         string operationRoot = Path.Combine(
