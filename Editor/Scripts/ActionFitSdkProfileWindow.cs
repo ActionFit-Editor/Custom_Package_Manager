@@ -129,18 +129,34 @@ public sealed class ActionFitSdkProfileWindow : EditorWindow
                     _plan = null;
                     _execution = null;
                 }
-                if (GUILayout.Button("Prepare Plan (read-only)"))
-                {
-                    _plan = ActionFitSdkInstallApi.Plan(_profile, new ActionFitSdkPlanRequest
-                    {
-                        Operation = _operation,
-                        SelectedModuleIds = SelectedModules(),
-                        AdoptCompatible = true,
-                        TakeOwnershipOfCompatibleEntries = false,
-                    });
-                    _execution = null;
-                }
+                if (GUILayout.Button("Resolve + Prepare Plan (read-only)")) PreparePlan();
             }
+        }
+    }
+
+    private async void PreparePlan()
+    {
+        if (_profile == null || _executing) return;
+        _executing = true;
+        try
+        {
+            _plan = await ActionFitSdkInstallApi.PreparePlanAsync(_profile, new ActionFitSdkPlanRequest
+            {
+                Operation = _operation,
+                SelectedModuleIds = SelectedModules(),
+                AdoptCompatible = true,
+                TakeOwnershipOfCompatibleEntries = false,
+            });
+            _execution = null;
+        }
+        catch (Exception ex)
+        {
+            _plan = new ActionFitSdkInstallPlan { Success = false, Code = "PREPARE_FAILED", Message = ex.Message };
+        }
+        finally
+        {
+            _executing = false;
+            Repaint();
         }
     }
 
@@ -159,6 +175,11 @@ public sealed class ActionFitSdkProfileWindow : EditorWindow
         EditorGUILayout.Space(8);
         EditorGUILayout.LabelField("Reviewed Plan", EditorStyles.boldLabel);
         EditorGUILayout.HelpBox($"{_plan.Code}: {_plan.Message}\nPlan ID: {_plan.PlanId}", _plan.Success ? MessageType.Info : MessageType.Error);
+        foreach (ActionFitSdkResolvedSourceSnapshot source in _plan.ResolutionSnapshot?.Sources ?? Array.Empty<ActionFitSdkResolvedSourceSnapshot>())
+        {
+            string version = !string.IsNullOrWhiteSpace(source.PackageVersion) ? source.PackageVersion : source.Version;
+            EditorGUILayout.LabelField($"Resolved / {source.Origin}: {source.PackageId} @ {version}", EditorStyles.wordWrappedLabel);
+        }
         foreach (ActionFitSdkPlannedChange change in _plan.Changes)
         {
             EditorGUILayout.LabelField($"{change.Area} / {change.Action}: {change.Key}\n{change.Before} -> {change.After}", EditorStyles.wordWrappedLabel);

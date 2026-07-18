@@ -88,7 +88,7 @@ public static class ActionFitSdkBridgePackageTemplate
                $"- Vendor: {profile.Vendor}\n" +
                $"- License: {profile.LicenseUrl}\n" +
                $"- Support: {profile.SupportUrl}\n\n" +
-               "The SDK install profile references immutable official sources. Review and accept the vendor terms before explicit installation.\n";
+               "The SDK install profile resolves immutable snapshots from declared official sources. Review and accept the vendor terms before explicit installation.\n";
     }
 
     private static string BuildTestAsmdef(string packageId)

@@ -1,6 +1,7 @@
 #if UNITY_EDITOR
 using System;
 using System.IO;
+using System.Linq;
 using UnityEngine;
 
 public enum ActionFitSdkSourceKind
@@ -9,6 +10,20 @@ public enum ActionFitSdkSourceKind
     Artifact = 1,
     Git = 2,
     Registry = 3,
+}
+
+public enum ActionFitSdkResolutionPolicy
+{
+    Exact = 0,
+    AnyInstalledElseLatestStable = 1,
+}
+
+public enum ActionFitSdkLatestResolverKind
+{
+    Unknown = 0,
+    RegistryMetadata = 1,
+    GitRelease = 2,
+    ArtifactMetadata = 3,
 }
 
 public enum ActionFitSdkDetectionKind
@@ -31,7 +46,8 @@ public enum ActionFitSdkInstallationClassification
 [Serializable]
 public sealed class ActionFitSdkInstallProfile
 {
-    public const int CurrentSchemaVersion = 1;
+    public const int LegacySchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
 
     public int SchemaVersion = CurrentSchemaVersion;
     public string ProfileId = "";
@@ -113,6 +129,13 @@ public sealed class ActionFitSdkInstallProfile
         foreach (ActionFitSdkScopedRegistryDefinition registry in ScopedRegistries)
             registry?.NormalizeCollections();
     }
+
+    internal bool RequiresAsyncResolution()
+    {
+        return SchemaVersion >= CurrentSchemaVersion &&
+               Sources.Any(source => source != null &&
+                   source.ResolvePolicy() == ActionFitSdkResolutionPolicy.AnyInstalledElseLatestStable);
+    }
 }
 
 [Serializable]
@@ -128,6 +151,10 @@ public sealed class ActionFitSdkSourceDefinition
     public string PackageVersion = "";
     public string Sha256 = "";
     public string CacheRelativePath = "";
+    public string ResolutionPolicy = "exact";
+    public string LatestResolver = "";
+    public string MetadataUrl = "";
+    public string VersionFamily = "";
 
     public ActionFitSdkSourceKind ResolveKind()
     {
@@ -138,6 +165,24 @@ public sealed class ActionFitSdkSourceDefinition
         if (string.Equals(Kind, "registry", StringComparison.OrdinalIgnoreCase))
             return ActionFitSdkSourceKind.Registry;
         return ActionFitSdkSourceKind.Unknown;
+    }
+
+    public ActionFitSdkResolutionPolicy ResolvePolicy()
+    {
+        return string.Equals(ResolutionPolicy, "anyInstalledElseLatestStable", StringComparison.OrdinalIgnoreCase)
+            ? ActionFitSdkResolutionPolicy.AnyInstalledElseLatestStable
+            : ActionFitSdkResolutionPolicy.Exact;
+    }
+
+    public ActionFitSdkLatestResolverKind ResolveLatestResolver()
+    {
+        if (string.Equals(LatestResolver, "registryMetadata", StringComparison.OrdinalIgnoreCase))
+            return ActionFitSdkLatestResolverKind.RegistryMetadata;
+        if (string.Equals(LatestResolver, "gitRelease", StringComparison.OrdinalIgnoreCase))
+            return ActionFitSdkLatestResolverKind.GitRelease;
+        if (string.Equals(LatestResolver, "artifactMetadata", StringComparison.OrdinalIgnoreCase))
+            return ActionFitSdkLatestResolverKind.ArtifactMetadata;
+        return ActionFitSdkLatestResolverKind.Unknown;
     }
 }
 

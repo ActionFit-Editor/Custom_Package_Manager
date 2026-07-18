@@ -20,7 +20,248 @@ public sealed class ActionFitSdkInstallProfileTests
     [TearDown]
     public void TearDown()
     {
+        ActionFitSdkLatestResolver.MetadataLoaderOverride = null;
         if (Directory.Exists(_temporaryRoot)) Directory.Delete(_temporaryRoot, true);
+    }
+
+    [Test]
+    public void Validate_SchemaTwoLatestPolicyAcceptsDeferredImmutableVersion()
+    {
+        ActionFitSdkInstallProfile profile = CreateLatestProfile();
+
+        ActionFitSdkProfileValidationResult result = ActionFitSdkInstallProfileValidator.Validate(profile);
+
+        Assert.That(result.Success, Is.True, result.FormatMessage());
+        Assert.That(profile.Sources[0].ImmutableVersion, Is.Empty);
+    }
+
+    [Test]
+    public void FromJson_SchemaOneWithoutLatestFieldsRemainsCompatible()
+    {
+        ActionFitSdkInstallProfile profile = CreateProfile();
+        profile.SchemaVersion = ActionFitSdkInstallProfile.LegacySchemaVersion;
+        string json = profile.ToJson()
+            .Replace("      \"ResolutionPolicy\": \"exact\",\n", "")
+            .Replace("      \"LatestResolver\": \"\",\n", "")
+            .Replace("      \"MetadataUrl\": \"\",\n", "")
+            .Replace("      \"VersionFamily\": \"\"\n", "")
+            .Replace("      \"CacheRelativePath\": \"\",\n", "      \"CacheRelativePath\": \"\"\n");
+
+        ActionFitSdkInstallProfile restored = ActionFitSdkInstallProfile.FromJson(json);
+
+        Assert.That(restored.SchemaVersion, Is.EqualTo(ActionFitSdkInstallProfile.LegacySchemaVersion));
+        Assert.That(restored.Sources[0].ResolvePolicy(), Is.EqualTo(ActionFitSdkResolutionPolicy.Exact));
+        Assert.That(ActionFitSdkInstallProfileValidator.Validate(restored).Success, Is.True);
+    }
+
+    [Test]
+    public void Plan_LatestPolicyRequiresAsyncPreparation()
+    {
+        ActionFitSdkInstallPlan plan = ActionFitSdkInstallApi.Plan(
+            CreateLatestProfile(),
+            new ActionFitSdkPlanRequest(),
+            CreateProject());
+
+        Assert.That(plan.Success, Is.False);
+        Assert.That(plan.Code, Is.EqualTo("ASYNC_RESOLUTION_REQUIRED"));
+    }
+
+    [Test]
+    public async Task PreparePlan_ResolvedInstalledVersionIsPreservedWithoutMetadataRequest()
+    {
+        ActionFitSdkProjectContext context = CreateProject("{\n  \"dependencies\": {\n    \"com.vendor.sdk\": \"9.9.9\"\n  }\n}\n");
+        WriteLock(context, "com.vendor.sdk", "9.9.9", "registry");
+        ActionFitSdkLatestResolver.MetadataLoaderOverride = (_, _) => throw new AssertionException("Installed SDK resolution must not request latest metadata.");
+
+        ActionFitSdkInstallPlan plan = await ActionFitSdkInstallApi.PreparePlanAsync(
+            CreateLatestProfile(),
+            new ActionFitSdkPlanRequest(),
+            context);
+
+        Assert.That(plan.Success, Is.True, plan.Message);
+        Assert.That(plan.ResolutionSnapshot.Sources.Single().Origin, Is.EqualTo(ActionFitSdkResolutionOrigin.Installed));
+        Assert.That(plan.Code, Is.EqualTo("NO_CHANGES"));
+        Assert.That(plan.Changes, Is.Empty);
+
+        ActionFitSdkExecutionResult applied = await ActionFitSdkInstallApi.ApplyAsync(plan, plan.PlanId);
+
+        Assert.That(applied.Success, Is.True, applied.Message);
+        Assert.That(applied.Code, Is.EqualTo("NO_CHANGES"));
+        Assert.That(File.Exists(context.OwnershipPath), Is.False);
+        Assert.That(ActionFitPackageManifestUtility.GetDependency(File.ReadAllText(context.ManifestPath), "com.vendor.sdk"), Is.EqualTo("9.9.9"));
+    }
+
+    [Test]
+    public async Task PreparePlan_MissingSdkSelectsLatestCompatibleStableVersion()
+    {
+        ActionFitSdkProjectContext context = CreateProject();
+        ActionFitSdkLatestResolver.MetadataLoaderOverride = (_, _) => Task.FromResult(LatestMetadata(
+            new ActionFitSdkLatestMetadataRelease { Version = "2.0.0-beta.1" },
+            new ActionFitSdkLatestMetadataRelease { Version = "1.9.0" },
+            new ActionFitSdkLatestMetadataRelease { Version = "2.0.0" }));
+
+        ActionFitSdkInstallPlan plan = await ActionFitSdkInstallApi.PreparePlanAsync(
+            CreateLatestProfile(),
+            new ActionFitSdkPlanRequest(),
+            context);
+
+        Assert.That(plan.Success, Is.True, plan.Message);
+        ActionFitSdkResolvedSourceSnapshot source = plan.ResolutionSnapshot.Sources.Single();
+        Assert.That(source.Origin, Is.EqualTo(ActionFitSdkResolutionOrigin.LatestStable));
+        Assert.That(source.Version, Is.EqualTo("2.0.0"));
+        Assert.That(plan.Changes.Single(item => item.Key == "com.vendor.sdk").After, Is.EqualTo("2.0.0"));
+
+        ActionFitSdkExecutionResult applied = await ActionFitSdkInstallApi.ApplyAsync(plan, plan.PlanId);
+
+        Assert.That(applied.Success, Is.True, applied.Message);
+        Assert.That(ActionFitPackageManifestUtility.GetDependency(File.ReadAllText(context.ManifestPath), "com.vendor.sdk"), Is.EqualTo("2.0.0"));
+    }
+
+    [Test]
+    public async Task PreparePlan_RegistryResolverReadsOfficialVersionsMap()
+    {
+        ActionFitSdkProjectContext context = CreateProject();
+        ActionFitSdkLatestResolver.MetadataLoaderOverride = (_, _) => Task.FromResult(
+            "{\"_id\":\"com.vendor.sdk\",\"versions\":{" +
+            "\"1.5.0\":{\"unity\":\"6000.1\"}," +
+            "\"2.0.0-beta.1\":{}," +
+            "\"2.0.0\":{\"unity\":\"9999.1\"}}}");
+
+        ActionFitSdkInstallPlan plan = await ActionFitSdkInstallApi.PreparePlanAsync(
+            CreateLatestProfile(),
+            new ActionFitSdkPlanRequest(),
+            context);
+
+        Assert.That(plan.Success, Is.True, plan.Message);
+        Assert.That(plan.ResolutionSnapshot.Sources.Single().Version, Is.EqualTo("1.5.0"));
+    }
+
+    [Test]
+    public async Task PreparePlan_GitReleaseResolverExcludesDraftAndPrereleaseTags()
+    {
+        ActionFitSdkProjectContext context = CreateProject();
+        ActionFitSdkInstallProfile profile = CreateGitProfile("");
+        profile.SchemaVersion = ActionFitSdkInstallProfile.CurrentSchemaVersion;
+        profile.Sources[0].ImmutableRevision = "";
+        profile.Sources[0].ResolutionPolicy = "anyInstalledElseLatestStable";
+        profile.Sources[0].LatestResolver = "gitRelease";
+        profile.Sources[0].MetadataUrl = "https://example.com/vendor/releases";
+        ActionFitSdkLatestResolver.MetadataLoaderOverride = (_, _) => Task.FromResult(
+            "[{\"tag_name\":\"v1.5.0\",\"target_commitish\":\"main\",\"draft\":false,\"prerelease\":false}," +
+            "{\"tag_name\":\"v2.0.0\",\"target_commitish\":\"main\",\"draft\":false,\"prerelease\":true}," +
+            "{\"tag_name\":\"v3.0.0\",\"target_commitish\":\"main\",\"draft\":true,\"prerelease\":false}]");
+
+        ActionFitSdkInstallPlan plan = await ActionFitSdkInstallApi.PreparePlanAsync(
+            profile,
+            new ActionFitSdkPlanRequest(),
+            context);
+
+        Assert.That(plan.Success, Is.True, plan.Message);
+        ActionFitSdkResolvedSourceSnapshot resolved = plan.ResolutionSnapshot.Sources.Single();
+        Assert.That(resolved.Version, Is.EqualTo("1.5.0"));
+        Assert.That(resolved.ImmutableRevision, Is.EqualTo("v1.5.0"));
+    }
+
+    [Test]
+    public async Task Apply_LatestMetadataChangedAfterReviewIsRejectedBeforeMutation()
+    {
+        ActionFitSdkProjectContext context = CreateProject();
+        string originalManifest = File.ReadAllText(context.ManifestPath);
+        string metadata = LatestMetadata(new ActionFitSdkLatestMetadataRelease { Version = "1.9.0" });
+        ActionFitSdkLatestResolver.MetadataLoaderOverride = (_, _) => Task.FromResult(metadata);
+        ActionFitSdkInstallPlan plan = await ActionFitSdkInstallApi.PreparePlanAsync(
+            CreateLatestProfile(),
+            new ActionFitSdkPlanRequest(),
+            context);
+        ActionFitSdkLatestResolver.MetadataLoaderOverride = (_, _) => Task.FromResult(
+            LatestMetadata(new ActionFitSdkLatestMetadataRelease { Version = "2.0.0" }));
+
+        ActionFitSdkExecutionResult result = await ActionFitSdkInstallApi.ApplyAsync(plan, plan.PlanId);
+
+        Assert.That(result.Success, Is.False);
+        Assert.That(result.Code, Is.EqualTo("PREPARE_FAILED"));
+        Assert.That(File.ReadAllText(context.ManifestPath), Is.EqualTo(originalManifest));
+        Assert.That(File.Exists(context.OwnershipPath), Is.False);
+    }
+
+    [Test]
+    public async Task PreparePlan_ManifestOnlySdkIsBlockedAsUnresolved()
+    {
+        ActionFitSdkProjectContext context = CreateProject("{\n  \"dependencies\": {\n    \"com.vendor.sdk\": \"9.9.9\"\n  }\n}\n");
+
+        ActionFitSdkInstallPlan plan = await ActionFitSdkInstallApi.PreparePlanAsync(
+            CreateLatestProfile(),
+            new ActionFitSdkPlanRequest(),
+            context);
+
+        Assert.That(plan.Success, Is.False);
+        Assert.That(plan.Code, Is.EqualTo("INSTALLED_STATE_BLOCKED"));
+        Assert.That(plan.Findings.Select(item => item.RuleId), Does.Contain("dependency-unresolved"));
+    }
+
+    [Test]
+    public async Task PreparePlan_PartiallyInstalledVersionFamilyPinsMissingPackageToInstalledVersion()
+    {
+        ActionFitSdkProjectContext context = CreateProject("{\n  \"dependencies\": {\n    \"com.vendor.sdk\": \"1.5.0\"\n  }\n}\n");
+        WriteLock(context, "com.vendor.sdk", "1.5.0", "registry");
+        ActionFitSdkLatestResolver.MetadataLoaderOverride = (_, _) => Task.FromResult(LatestMetadataFor(
+            "com.vendor.extra",
+            new ActionFitSdkLatestMetadataRelease { Version = "1.5.0" },
+            new ActionFitSdkLatestMetadataRelease { Version = "2.0.0" }));
+
+        ActionFitSdkInstallPlan plan = await ActionFitSdkInstallApi.PreparePlanAsync(
+            CreateLatestFamilyProfile(),
+            new ActionFitSdkPlanRequest(),
+            context);
+
+        Assert.That(plan.Success, Is.True, plan.Message);
+        Assert.That(plan.ResolutionSnapshot.Sources.Single(item => item.PackageId == "com.vendor.sdk").Origin,
+            Is.EqualTo(ActionFitSdkResolutionOrigin.Installed));
+        ActionFitSdkResolvedSourceSnapshot missing = plan.ResolutionSnapshot.Sources.Single(item => item.PackageId == "com.vendor.extra");
+        Assert.That(missing.Origin, Is.EqualTo(ActionFitSdkResolutionOrigin.LatestStable));
+        Assert.That(missing.Version, Is.EqualTo("1.5.0"));
+        Assert.That(plan.Changes.Single(item => item.Key == "com.vendor.extra").After, Is.EqualTo("1.5.0"));
+    }
+
+    [Test]
+    public async Task PreparePlan_PartiallyInstalledVersionFamilyBlocksUnavailableInstalledVersion()
+    {
+        ActionFitSdkProjectContext context = CreateProject("{\n  \"dependencies\": {\n    \"com.vendor.sdk\": \"1.5.0\"\n  }\n}\n");
+        WriteLock(context, "com.vendor.sdk", "1.5.0", "registry");
+        ActionFitSdkLatestResolver.MetadataLoaderOverride = (_, _) => Task.FromResult(LatestMetadataFor(
+            "com.vendor.extra",
+            new ActionFitSdkLatestMetadataRelease { Version = "2.0.0" }));
+
+        ActionFitSdkInstallPlan plan = await ActionFitSdkInstallApi.PreparePlanAsync(
+            CreateLatestFamilyProfile(),
+            new ActionFitSdkPlanRequest(),
+            context);
+
+        Assert.That(plan.Success, Is.False);
+        Assert.That(plan.Code, Is.EqualTo("LATEST_STABLE_UNAVAILABLE"));
+        Assert.That(plan.Findings.Select(item => item.RuleId), Does.Contain("installed-family-version-unavailable"));
+    }
+
+    [Test]
+    public async Task PreparePlan_MissingVersionFamilySelectsNewestCommonStableVersion()
+    {
+        ActionFitSdkProjectContext context = CreateProject();
+        ActionFitSdkLatestResolver.MetadataLoaderOverride = (url, _) => Task.FromResult(
+            url.Contains("com.vendor.extra", StringComparison.Ordinal)
+                ? LatestMetadataFor("com.vendor.extra",
+                    new ActionFitSdkLatestMetadataRelease { Version = "1.4.0" },
+                    new ActionFitSdkLatestMetadataRelease { Version = "1.5.0" })
+                : LatestMetadata(
+                    new ActionFitSdkLatestMetadataRelease { Version = "1.5.0" },
+                    new ActionFitSdkLatestMetadataRelease { Version = "2.0.0" }));
+
+        ActionFitSdkInstallPlan plan = await ActionFitSdkInstallApi.PreparePlanAsync(
+            CreateLatestFamilyProfile(),
+            new ActionFitSdkPlanRequest(),
+            context);
+
+        Assert.That(plan.Success, Is.True, plan.Message);
+        Assert.That(plan.ResolutionSnapshot.Sources.Select(item => item.Version), Is.All.EqualTo("1.5.0"));
     }
 
     [Test]
@@ -376,6 +617,70 @@ public sealed class ActionFitSdkInstallProfileTests
         File.WriteAllText(Path.Combine(projectRoot, "Packages", "manifest.json"), manifest ??
             "{\n  \"dependencies\": {\n    \"com.unity.test-framework\": \"1.1.33\"\n  }\n}\n");
         return ActionFitSdkProjectContext.ForProjectRoot(projectRoot);
+    }
+
+    private static void WriteLock(ActionFitSdkProjectContext context, string packageId, string version, string source)
+    {
+        File.WriteAllText(context.PackagesLockPath,
+            "{\n  \"dependencies\": {\n" +
+            $"    \"{packageId}\": {{\n      \"version\": \"{version}\",\n      \"depth\": 0,\n      \"source\": \"{source}\",\n      \"dependencies\": {{}}\n    }}\n" +
+            "  }\n}\n");
+    }
+
+    private static string LatestMetadata(params ActionFitSdkLatestMetadataRelease[] releases)
+    {
+        return LatestMetadataFor("com.vendor.sdk", releases);
+    }
+
+    private static string LatestMetadataFor(string packageId, params ActionFitSdkLatestMetadataRelease[] releases)
+    {
+        return JsonUtility.ToJson(new ActionFitSdkLatestMetadataDocument
+        {
+            PackageId = packageId,
+            Releases = releases,
+        }, true);
+    }
+
+    private static ActionFitSdkInstallProfile CreateLatestProfile()
+    {
+        ActionFitSdkInstallProfile profile = CreateProfile();
+        profile.SchemaVersion = ActionFitSdkInstallProfile.CurrentSchemaVersion;
+        profile.Sources[0].ImmutableVersion = "";
+        profile.Sources[0].ResolutionPolicy = "anyInstalledElseLatestStable";
+        profile.Sources[0].LatestResolver = "registryMetadata";
+        profile.Sources[0].MetadataUrl = "https://registry.example.com/com.vendor.sdk";
+        return profile;
+    }
+
+    private static ActionFitSdkInstallProfile CreateLatestFamilyProfile()
+    {
+        ActionFitSdkInstallProfile profile = CreateLatestProfile();
+        profile.Sources[0].VersionFamily = "vendor-family";
+        profile.Sources = profile.Sources.Concat(new[]
+        {
+            new ActionFitSdkSourceDefinition
+            {
+                Id = "extra-registry",
+                Kind = "registry",
+                Url = "https://registry.example.com",
+                PackageId = "com.vendor.extra",
+                ResolutionPolicy = "anyInstalledElseLatestStable",
+                LatestResolver = "registryMetadata",
+                MetadataUrl = "https://registry.example.com/com.vendor.extra",
+                VersionFamily = "vendor-family",
+            },
+        }).ToArray();
+        profile.Dependencies = profile.Dependencies.Concat(new[]
+        {
+            new ActionFitSdkDependencyDefinition
+            {
+                PackageId = "com.vendor.extra",
+                SourceId = "extra-registry",
+                ModuleId = "core",
+                Order = 1,
+            },
+        }).ToArray();
+        return profile;
     }
 
     private static ActionFitSdkInstallProfile CreateProfile()

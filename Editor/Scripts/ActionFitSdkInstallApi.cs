@@ -64,6 +64,58 @@ public static class ActionFitSdkInstallApi
         return ActionFitSdkInstallPlanner.Plan(profile, request, context);
     }
 
+    /// <summary>Resolves installed packages or immutable latest stable fallbacks without changing project state.</summary>
+    public static Task<ActionFitSdkResolutionResult> ResolveAsync(
+        ActionFitSdkInstallProfile profile,
+        string[] selectedModuleIds = null,
+        ActionFitSdkProjectContext context = null,
+        CancellationToken cancellationToken = default)
+    {
+        return ActionFitSdkLatestResolver.ResolveAsync(
+            profile,
+            selectedModuleIds,
+            context ?? ActionFitSdkProjectContext.ForCurrentProject(),
+            cancellationToken);
+    }
+
+    /// <summary>Resolves a schema-v2 policy and produces one immutable, content-bound plan for review.</summary>
+    public static async Task<ActionFitSdkInstallPlan> PreparePlanAsync(
+        ActionFitSdkInstallProfile profile,
+        ActionFitSdkPlanRequest request,
+        ActionFitSdkProjectContext context = null,
+        CancellationToken cancellationToken = default)
+    {
+        context ??= ActionFitSdkProjectContext.ForCurrentProject();
+        request ??= new ActionFitSdkPlanRequest();
+        if (profile == null || !profile.RequiresAsyncResolution())
+            return ActionFitSdkInstallPlanner.Plan(profile, request, context);
+
+        ActionFitSdkResolutionResult resolution = await ActionFitSdkLatestResolver.ResolveAsync(
+            profile,
+            request.SelectedModuleIds,
+            context,
+            cancellationToken);
+        if (!resolution.Success)
+        {
+            return new ActionFitSdkInstallPlan
+            {
+                Success = false,
+                Code = resolution.Code,
+                Message = resolution.Message,
+                ProfileId = profile.ProfileId,
+                ProfileVersion = profile.ProfileVersion,
+                Operation = request.Operation,
+                Findings = resolution.Findings,
+            };
+        }
+
+        return ActionFitSdkInstallPlanner.PlanResolved(
+            resolution.ResolvedProfile,
+            request,
+            context,
+            resolution.Snapshot);
+    }
+
     /// <summary>Executes a reviewed Apply plan and rejects every other operation.</summary>
     public static Task<ActionFitSdkExecutionResult> ApplyAsync(
         ActionFitSdkInstallPlan plan,
@@ -151,6 +203,18 @@ internal static class ActionFitSdkInstallTransaction
         {
             ValidatePlan(plan, approvedPlanId);
             cancellationToken.ThrowIfCancellationRequested();
+            await ActionFitSdkLatestResolver.RevalidateAsync(plan.Profile, plan.ResolutionSnapshot, cancellationToken);
+            RevalidateProjectSnapshots(plan);
+            if (plan.Changes.Length == 0)
+            {
+                return new ActionFitSdkExecutionResult
+                {
+                    Success = true,
+                    Code = "NO_CHANGES",
+                    Message = $"{plan.ProfileId} already matched the reviewed project state.",
+                    PlanId = plan.PlanId,
+                };
+            }
 
             string transactionId = Guid.NewGuid().ToString("N");
             string transactionDirectory = Path.Combine(plan.Context.TransactionRoot, transactionId);
@@ -344,6 +408,15 @@ internal static class ActionFitSdkInstallTransaction
         ActionFitSdkOwnershipStore.Read(plan.Context, out string ownership);
         if (!string.Equals(ActionFitSdkInstallPlanner.Hash(ownership), plan.OriginalOwnershipHash, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("SDK ownership state changed after plan preparation. Prepare a new plan.");
+
+        if (plan.ResolutionSnapshot != null)
+        {
+            ActionFitSdkProjectStateSnapshot current = ActionFitSdkProjectStateSnapshot.Read(plan.Context, manifest);
+            if (!string.Equals(current.PackagesLockHash, plan.ResolutionSnapshot.PackagesLockHash, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Packages/packages-lock.json changed after SDK resolution. Prepare a new plan.");
+            if (!string.Equals(current.RegisteredPackagesHash, plan.ResolutionSnapshot.RegisteredPackagesHash, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Unity registered package state changed after SDK resolution. Prepare a new plan.");
+        }
     }
 
     private static async Task<ActionFitSdkArtifactJournalEntry[]> PrepareArtifactsAsync(

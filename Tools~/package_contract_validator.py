@@ -1078,12 +1078,13 @@ def validate_sdk_bridge(
     profile, text = load_json(repo_root, profile_path, diagnostics, "SDK_PROFILE_JSON_INVALID")
     rel_profile = relative_path(repo_root, profile_path)
     if profile is not None and text is not None:
-        if profile.get("SchemaVersion") != 1:
+        schema_version = profile.get("SchemaVersion")
+        if schema_version not in {1, 2}:
             diagnostics.append(
                 diagnostic(
                     "SDK_PROFILE_SCHEMA_UNSUPPORTED",
                     rel_profile,
-                    "SDK install profile must declare SchemaVersion 1.",
+                    "SDK install profile must declare SchemaVersion 1 or 2.",
                     "Regenerate the profile with the current SDK bridge package template.",
                     line=line_for(text, '"SchemaVersion"'),
                 )
@@ -1174,9 +1175,77 @@ def validate_sdk_bridge(
                         )
                     )
                 kind = source.get("Kind")
+                resolution_policy = source.get("ResolutionPolicy", "exact")
+                latest = resolution_policy == "anyInstalledElseLatestStable"
+                if resolution_policy not in {"", "exact", "anyInstalledElseLatestStable"}:
+                    diagnostics.append(
+                        diagnostic(
+                            "SDK_PROFILE_RESOLUTION_POLICY_INVALID",
+                            rel_profile,
+                            f"SDK source at index {index} has unsupported ResolutionPolicy {resolution_policy!r}.",
+                            "Use exact or anyInstalledElseLatestStable.",
+                            line=line_for(text, '"ResolutionPolicy"'),
+                        )
+                    )
+                if latest:
+                    resolver = source.get("LatestResolver")
+                    expected_resolver = {
+                        "registry": "registryMetadata",
+                        "git": "gitRelease",
+                        "artifact": "artifactMetadata",
+                    }.get(kind)
+                    metadata_url = source.get("MetadataUrl")
+                    metadata_parsed = urlparse(metadata_url) if isinstance(metadata_url, str) else None
+                    metadata_host = (metadata_parsed.hostname or "").lower() if metadata_parsed else ""
+                    metadata_host_allowed = any(
+                        metadata_host == domain or metadata_host.endswith(f".{domain}")
+                        for domain in allowed_domains
+                    )
+                    if schema_version != 2 or resolver != expected_resolver:
+                        diagnostics.append(
+                            diagnostic(
+                                "SDK_PROFILE_LATEST_RESOLVER_INVALID",
+                                rel_profile,
+                                f"SDK source at index {index} must use its matching schema-v2 latest resolver.",
+                                "Use registryMetadata, gitRelease, or artifactMetadata for the matching source kind.",
+                                line=line_for(text, '"LatestResolver"'),
+                            )
+                        )
+                    if (
+                        metadata_parsed is None
+                        or metadata_parsed.scheme.lower() != "https"
+                        or not metadata_host
+                        or metadata_parsed.username is not None
+                        or metadata_parsed.password is not None
+                        or bool(metadata_parsed.query)
+                        or bool(metadata_parsed.fragment)
+                        or not metadata_host_allowed
+                    ):
+                        diagnostics.append(
+                            diagnostic(
+                                "SDK_PROFILE_METADATA_URL_UNSAFE",
+                                rel_profile,
+                                f"SDK source at index {index} must use credential-free official metadata on AllowedDomains.",
+                                "Set MetadataUrl to the official HTTPS metadata endpoint.",
+                                line=line_for(text, '"MetadataUrl"'),
+                            )
+                        )
+                    version_family = source.get("VersionFamily", "")
+                    if version_family and re.fullmatch(r"[a-z0-9][a-z0-9._-]*", version_family) is None:
+                        diagnostics.append(
+                            diagnostic(
+                                "SDK_PROFILE_VERSION_FAMILY_INVALID",
+                                rel_profile,
+                                f"SDK source at index {index} has an invalid VersionFamily.",
+                                "Use a portable lowercase family identifier.",
+                                line=line_for(text, '"VersionFamily"'),
+                            )
+                        )
                 if kind == "artifact":
                     checksum = source.get("Sha256")
-                    if not isinstance(checksum, str) or re.fullmatch(r"[0-9A-Fa-f]{64}", checksum) is None:
+                    if (not latest or checksum) and (
+                        not isinstance(checksum, str) or re.fullmatch(r"[0-9A-Fa-f]{64}", checksum) is None
+                    ):
                         diagnostics.append(
                             diagnostic(
                                 "SDK_PROFILE_ARTIFACT_CHECKSUM_INVALID",
@@ -1192,7 +1261,7 @@ def validate_sdk_bridge(
                         re.fullmatch(r"[0-9A-Fa-f]{40}", revision) is not None
                         or re.fullmatch(r"v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?", revision) is not None
                     )
-                    if not immutable:
+                    if (not latest or revision) and not immutable:
                         diagnostics.append(
                             diagnostic(
                                 "SDK_PROFILE_GIT_REVISION_MUTABLE",
@@ -1230,8 +1299,8 @@ def validate_sdk_bridge(
                     version = source.get("ImmutableVersion")
                     package_name = source.get("PackageId")
                     if (
-                        not isinstance(version, str)
-                        or parse_semver(version) is None
+                        (not latest or version)
+                        and (not isinstance(version, str) or parse_semver(version) is None)
                         or not isinstance(package_name, str)
                         or not package_name.strip()
                     ):

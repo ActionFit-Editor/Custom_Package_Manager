@@ -50,6 +50,7 @@ public sealed class ActionFitSdkProjectContext
 {
     public string ProjectRoot = "";
     public string ManifestPath = "";
+    public string PackagesLockPath = "";
     public string OwnershipPath = "";
     public string TransactionRoot = "";
 
@@ -70,6 +71,7 @@ public sealed class ActionFitSdkProjectContext
         {
             ProjectRoot = root,
             ManifestPath = Path.Combine(root, "Packages", "manifest.json"),
+            PackagesLockPath = Path.Combine(root, "Packages", "packages-lock.json"),
             OwnershipPath = Path.Combine(root, "ProjectSettings", "ActionFitSdkProfiles.json"),
             TransactionRoot = Path.Combine(root, "UserSettings", "ActionFitPackageManager", "SdkTransactions"),
         };
@@ -79,6 +81,7 @@ public sealed class ActionFitSdkProjectContext
     {
         string root = Normalize(ProjectRoot);
         EnsureChild(ManifestPath, Path.Combine(root, "Packages"), "manifest");
+        EnsureChild(PackagesLockPath, Path.Combine(root, "Packages"), "packages lock");
         EnsureChild(OwnershipPath, Path.Combine(root, "ProjectSettings"), "ownership");
         EnsureChild(TransactionRoot, Path.Combine(root, "UserSettings"), "transaction");
     }
@@ -152,6 +155,7 @@ public sealed class ActionFitSdkInstallPlan
     public ActionFitSdkProfileDiagnostic[] ValidationDiagnostics = Array.Empty<ActionFitSdkProfileDiagnostic>();
     public ActionFitSdkInstallationFinding[] Findings = Array.Empty<ActionFitSdkInstallationFinding>();
     public ActionFitSdkPlannedChange[] Changes = Array.Empty<ActionFitSdkPlannedChange>();
+    public ActionFitSdkResolutionSnapshot ResolutionSnapshot;
 
     internal ActionFitSdkInstallProfile Profile;
     internal ActionFitSdkProjectContext Context;
@@ -374,6 +378,38 @@ public static class ActionFitSdkInstallPlanner
     {
         context ??= ActionFitSdkProjectContext.ForCurrentProject();
         request ??= new ActionFitSdkPlanRequest();
+        if (profile != null && profile.RequiresAsyncResolution())
+        {
+            return new ActionFitSdkInstallPlan
+            {
+                Success = false,
+                Code = "ASYNC_RESOLUTION_REQUIRED",
+                Message = "AnyInstalledElseLatestStable profiles require PreparePlanAsync so installed state and official metadata can be resolved first.",
+                ProfileId = profile.ProfileId,
+                ProfileVersion = profile.ProfileVersion,
+                Operation = request.Operation,
+            };
+        }
+        return PlanInternal(profile, request, context, null);
+    }
+
+    internal static ActionFitSdkInstallPlan PlanResolved(
+        ActionFitSdkInstallProfile profile,
+        ActionFitSdkPlanRequest request,
+        ActionFitSdkProjectContext context,
+        ActionFitSdkResolutionSnapshot resolutionSnapshot)
+    {
+        return PlanInternal(profile, request, context, resolutionSnapshot);
+    }
+
+    private static ActionFitSdkInstallPlan PlanInternal(
+        ActionFitSdkInstallProfile profile,
+        ActionFitSdkPlanRequest request,
+        ActionFitSdkProjectContext context,
+        ActionFitSdkResolutionSnapshot resolutionSnapshot)
+    {
+        context ??= ActionFitSdkProjectContext.ForCurrentProject();
+        request ??= new ActionFitSdkPlanRequest();
         if (!Enum.IsDefined(typeof(ActionFitSdkInstallOperation), request.Operation))
         {
             return new ActionFitSdkInstallPlan
@@ -398,7 +434,7 @@ public static class ActionFitSdkInstallPlanner
             ActionFitSdkOwnershipDocument ownership = ActionFitSdkOwnershipStore.Read(context, out string ownershipJson);
             string[] modules = ResolveModules(profile, request.SelectedModuleIds);
             ActionFitSdkInstallationFinding[] findings = InspectFindings(profile, modules, context, manifest);
-            ActionFitSdkInstallPlan plan = BuildPlan(profile, request, context, manifest, ownershipJson, ownership, modules, findings);
+            ActionFitSdkInstallPlan plan = BuildPlan(profile, request, context, manifest, ownershipJson, ownership, modules, findings, resolutionSnapshot);
             plan.OriginalOwnershipExisted = ownershipExisted;
             return plan;
         }
@@ -425,7 +461,8 @@ public static class ActionFitSdkInstallPlanner
         string ownershipJson,
         ActionFitSdkOwnershipDocument ownership,
         string[] modules,
-        ActionFitSdkInstallationFinding[] initialFindings)
+        ActionFitSdkInstallationFinding[] initialFindings,
+        ActionFitSdkResolutionSnapshot resolutionSnapshot)
     {
         var changes = new List<ActionFitSdkPlannedChange>();
         var findings = new List<ActionFitSdkInstallationFinding>(initialFindings);
@@ -433,15 +470,29 @@ public static class ActionFitSdkInstallPlanner
         string updatedManifest = manifest;
         ActionFitSdkProfileOwnership previous = ownership.Profiles.FirstOrDefault(item =>
             item != null && string.Equals(item.ProfileId, profile.ProfileId, StringComparison.Ordinal));
+        var selectedModules = new HashSet<string>(modules, StringComparer.Ordinal);
+        var installedSourceIds = new HashSet<string>(
+            resolutionSnapshot?.Sources?
+                .Where(item => item != null && item.Origin == ActionFitSdkResolutionOrigin.Installed)
+                .Select(item => item.SourceId) ?? Array.Empty<string>(),
+            StringComparer.Ordinal);
+        ActionFitSdkDependencyDefinition[] selectedDependencies = profile.Dependencies
+            .Where(item => item != null && IsSelected(item.ModuleId, selectedModules))
+            .ToArray();
+        bool preserveResolvedInstallation = request.Operation == ActionFitSdkInstallOperation.Apply &&
+            selectedDependencies.Length > 0 &&
+            selectedDependencies.All(item => installedSourceIds.Contains(item.SourceId));
 
         ActionFitSdkProfileOwnership next = request.Operation == ActionFitSdkInstallOperation.Remove
             ? null
-            : new ActionFitSdkProfileOwnership
-            {
-                ProfileId = profile.ProfileId,
-                ProfileVersion = profile.ProfileVersion,
-                SelectedModuleIds = modules,
-            };
+            : preserveResolvedInstallation
+                ? previous
+                : new ActionFitSdkProfileOwnership
+                {
+                    ProfileId = profile.ProfileId,
+                    ProfileVersion = profile.ProfileVersion,
+                    SelectedModuleIds = modules,
+                };
 
         if ((request.Operation == ActionFitSdkInstallOperation.Repair || request.Operation == ActionFitSdkInstallOperation.Update) && previous == null)
         {
@@ -469,9 +520,21 @@ public static class ActionFitSdkInstallPlanner
                 ApplyRemoval(profile, previous, ownership, context, ref updatedManifest, changes, findings, artifactPlans);
             }
         }
+        else if (preserveResolvedInstallation)
+        {
+            foreach (ActionFitSdkResolvedSourceSnapshot source in resolutionSnapshot.Sources)
+            {
+                findings.Add(Finding(
+                    "dependency-installed-preserved",
+                    ActionFitSdkInstallationClassification.Adoptable,
+                    "dependency",
+                    source.PackageId,
+                    $"Resolved SDK package {source.PackageId} @ {source.Version} is preserved without dependency or ownership changes."));
+            }
+        }
         else
         {
-            ApplyDesiredState(profile, request, previous, ownership, modules, context, ref updatedManifest, next, changes, findings, artifactPlans);
+            ApplyDesiredState(profile, request, previous, ownership, modules, context, resolutionSnapshot, ref updatedManifest, next, changes, findings, artifactPlans);
         }
 
         ActionFitSdkOwnershipDocument updatedOwnership = ReplaceOwnership(ownership, profile.ProfileId, next);
@@ -496,6 +559,7 @@ public static class ActionFitSdkInstallPlanner
             SelectedModuleIds = modules,
             Findings = findings.ToArray(),
             Changes = changes.ToArray(),
+            ResolutionSnapshot = resolutionSnapshot,
             Profile = profile,
             ProfileSnapshot = profileSnapshot,
             Context = context,
@@ -519,6 +583,7 @@ public static class ActionFitSdkInstallPlanner
         ActionFitSdkOwnershipDocument ownership,
         string[] modules,
         ActionFitSdkProjectContext context,
+        ActionFitSdkResolutionSnapshot resolutionSnapshot,
         ref string manifest,
         ActionFitSdkProfileOwnership next,
         List<ActionFitSdkPlannedChange> changes,
@@ -536,7 +601,9 @@ public static class ActionFitSdkInstallPlanner
         {
             ActionFitSdkSourceDefinition source = profile.Sources.First(item =>
                 item != null && string.Equals(item.Id, dependency.SourceId, StringComparison.Ordinal));
-            string desiredValue = ResolveDependencyValue(source, context);
+            ActionFitSdkResolvedSourceSnapshot resolvedSource = resolutionSnapshot?.Sources.FirstOrDefault(item =>
+                item != null && string.Equals(item.SourceId, source.Id, StringComparison.Ordinal));
+            string desiredValue = resolvedSource?.DependencyValue ?? ResolveDependencyValue(source, context);
             string currentValue = ActionFitPackageManifestUtility.GetDependency(manifest, dependency.PackageId);
             ActionFitSdkDependencyOwnership prior = previous?.Dependencies.FirstOrDefault(item =>
                 item != null && string.Equals(item.PackageId, dependency.PackageId, StringComparison.Ordinal));
@@ -547,6 +614,26 @@ public static class ActionFitSdkInstallPlanner
                 createdByProfile = true;
                 manifest = ActionFitPackageManifestUtility.SetDependency(manifest, dependency.PackageId, desiredValue);
                 changes.Add(Change(ActionFitSdkPlannedChangeArea.Dependency, ActionFitSdkPlannedChangeAction.Add, dependency.PackageId, "", desiredValue, true));
+            }
+            else if (resolvedSource != null && resolvedSource.Origin == ActionFitSdkResolutionOrigin.Installed)
+            {
+                desiredValue = currentValue;
+                if (prior != null)
+                    createdByProfile = prior.CreatedByProfile;
+                else if (request.AdoptCompatible)
+                    createdByProfile = request.TakeOwnershipOfCompatibleEntries;
+                else
+                {
+                    findings.Add(Finding("dependency-adoption", ActionFitSdkInstallationClassification.Adoptable, "dependency", dependency.PackageId, "Installed dependency exists and adoption was not selected."));
+                    continue;
+                }
+                changes.Add(Change(
+                    ActionFitSdkPlannedChangeArea.Dependency,
+                    prior == null ? ActionFitSdkPlannedChangeAction.Adopt : ActionFitSdkPlannedChangeAction.Preserve,
+                    dependency.PackageId,
+                    currentValue,
+                    currentValue,
+                    createdByProfile));
             }
             else if (string.Equals(currentValue, desiredValue, StringComparison.Ordinal))
             {
@@ -587,7 +674,8 @@ public static class ActionFitSdkInstallPlanner
                 CreatedByProfile = createdByProfile,
             });
 
-            AddArtifactPlan(source, createdByProfile, request.TakeOwnershipOfCompatibleEntries, context, changes, findings, artifactPlans);
+            if (resolvedSource == null || resolvedSource.Origin != ActionFitSdkResolutionOrigin.Installed)
+                AddArtifactPlan(source, createdByProfile, request.TakeOwnershipOfCompatibleEntries, context, changes, findings, artifactPlans);
         }
 
         RemoveObsoleteDependencies(previous, nextDependencyOwnership, ownership, ref manifest, changes, findings);
@@ -919,7 +1007,7 @@ public static class ActionFitSdkInstallPlanner
         };
     }
 
-    private static string[] ResolveModules(ActionFitSdkInstallProfile profile, IEnumerable<string> selectedModuleIds)
+    internal static string[] ResolveModules(ActionFitSdkInstallProfile profile, IEnumerable<string> selectedModuleIds)
     {
         var requested = new HashSet<string>(
             (selectedModuleIds ?? Array.Empty<string>()).Where(item => !string.IsNullOrWhiteSpace(item)),
@@ -1047,6 +1135,8 @@ public static class ActionFitSdkInstallPlanner
             .Append(plan.OriginalOwnershipHash).Append('\n')
             .Append(Hash(plan.UpdatedManifest)).Append('\n')
             .Append(Hash(plan.UpdatedOwnership)).Append('\n');
+        if (plan.ResolutionSnapshot != null)
+            builder.Append(JsonUtility.ToJson(plan.ResolutionSnapshot, false)).Append('\n');
         foreach (ActionFitSdkPlannedChange change in plan.Changes)
             builder.Append(change.Area).Append('|').Append(change.Action).Append('|').Append(change.Key).Append('|').Append(change.Before).Append('|').Append(change.After).Append('|').Append(change.OwnedByProfile).Append('\n');
         return Hash(builder.ToString()).ToLowerInvariant();

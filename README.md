@@ -7,7 +7,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.100"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.102"
   }
 }
 ```
@@ -79,17 +79,21 @@ Projects previously managed by AI Jira keep their old `UserSettings/AIJira/skill
 
 ## External SDK Install Profiles
 
-`SDKInstallProfile.json` is a versioned, vendor-neutral declaration for installing one external SDK from immutable official sources. A profile declares vendor and license metadata, Unity/platform compatibility, allowed HTTPS domains, artifact/Git/registry sources, optional modules and their dependency closure, scoped registries, and existing-install detection rules. Git sources may declare a safe relative `GitSubpath`; the planner composes it as the UPM `?path=<subpath>#<immutable-revision>` dependency value. Profiles never contain credentials or vendor configuration values.
+`SDKInstallProfile.json` is a versioned, vendor-neutral declaration for installing one external SDK from official sources. Schema v1 keeps the existing exact immutable source contract and synchronous `Plan` API. Schema v2 can opt each source into `ResolutionPolicy: anyInstalledElseLatestStable`: the async resolver preserves any already resolved required package version, and consults declared official metadata only when that package is missing. Profiles declare vendor and license metadata, Unity/platform compatibility, allowed HTTPS domains, artifact/Git/registry sources, optional modules and their dependency closure, scoped registries, and existing-install detection rules. Git sources may declare a safe relative `GitSubpath`; the planner composes it as the UPM `?path=<subpath>#<immutable-revision>` dependency value. Profiles never contain credentials or vendor configuration values.
+
+Schema-v2 latest sources declare a matching `LatestResolver` (`registryMetadata`, `gitRelease`, or `artifactMetadata`) plus a query-free `MetadataUrl` on `AllowedDomains`. The resolver accepts the canonical `PackageId` plus `Releases` document, native npm/UPM `versions` metadata for registries, and GitHub-style release arrays for Git sources. Every canonical release declares stable exact `Version` and optional `MinimumUnityVersion`/`MaximumUnityVersion`; Git releases also declare `ImmutableRevision`, while artifact releases declare credential-free `Url`, exact `PackageVersion`, and `Sha256`. Artifact metadata without an explicit SHA-256 is rejected. Drafts and prereleases are excluded. Fully missing sources sharing a non-empty `VersionFamily` resolve the newest compatible common version. A partially installed family pins every missing selected package to the installed version only when that version remains officially available and compatible; conflicting or unavailable family versions are blocked.
+
+`ResolveAsync` and `PreparePlanAsync` are non-mutating. Installed-state detection compares `Packages/manifest.json`, `Packages/packages-lock.json`, and, for the open project, Unity's registered packages. A manifest-only declaration, duplicate, invalid source, missing registration, inconsistent resolution, legacy conflict, or ambiguous partial state blocks planning. When every selected latest-policy dependency is already resolved, planning returns `NO_CHANGES` and execution does not write manifest or ownership state. Missing packages resolve to an immutable version/commit/checksum snapshot; the exact metadata content hash and project package-state hashes are included in the plan ID and revalidated before execution.
 
 Use `Tools > Package > Custom Package Manager > SDK Profiles` or the `SDK Profiles` toolbar button:
 
 1. Load an installed bridge package's `Editor/SDKInstallProfile.json`.
 2. Select optional modules and run `Inspect (read-only)`.
-3. Choose `Apply`, `Repair`, `Update`, or `Remove`, then prepare a read-only plan.
+3. Choose `Apply`, `Repair`, `Update`, or `Remove`, then run `Resolve + Prepare Plan (read-only)`.
 4. Review every dependency, scoped-registry, artifact-cache, and ownership change plus the content-bound plan ID.
 5. Use the separate confirmation dialog to execute that exact plan.
 
-Execution revalidates the profile, plan ID, `Packages/manifest.json`, and `ProjectSettings/ActionFitSdkProfiles.json` snapshots before mutation. Artifact downloads require credential-free HTTPS on declared domains, a verified SHA-256, and matching `package/package.json` identity. Manifest and ownership writes are atomic and transaction journals are kept under `UserSettings/ActionFitPackageManager/SdkTransactions`. A domain reload only reports pending journals; recovery changes project state only through the explicit recovery action.
+Execution revalidates the profile, plan ID, manifest, packages lock, Unity registered packages, ownership, and official metadata snapshots before mutation. Artifact downloads require credential-free HTTPS on declared domains, a verified SHA-256, and matching `package/package.json` identity. Manifest and ownership writes are atomic and transaction journals are kept under `UserSettings/ActionFitPackageManager/SdkTransactions`. A domain reload only reports pending journals; recovery changes project state only through the explicit recovery action.
 
 Ownership schema version 1 records only entries created or deliberately adopted by each profile. Removal preserves compatible dependencies, registry scopes, cached artifacts, or shared entries that were not created by that profile, and conflicts block execution instead of overwriting user-managed state.
 

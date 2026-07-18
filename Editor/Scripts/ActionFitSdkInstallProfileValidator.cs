@@ -28,8 +28,11 @@ public static class ActionFitSdkInstallProfileValidator
         }
 
         profile.NormalizeCollections();
-        if (profile.SchemaVersion != ActionFitSdkInstallProfile.CurrentSchemaVersion)
-            Add(diagnostics, "SCHEMA_VERSION_UNSUPPORTED", "SchemaVersion", $"Expected schema version {ActionFitSdkInstallProfile.CurrentSchemaVersion}, found {profile.SchemaVersion}.");
+        if (profile.SchemaVersion != ActionFitSdkInstallProfile.LegacySchemaVersion &&
+            profile.SchemaVersion != ActionFitSdkInstallProfile.CurrentSchemaVersion)
+        {
+            Add(diagnostics, "SCHEMA_VERSION_UNSUPPORTED", "SchemaVersion", $"Expected schema version {ActionFitSdkInstallProfile.LegacySchemaVersion} or {ActionFitSdkInstallProfile.CurrentSchemaVersion}, found {profile.SchemaVersion}.");
+        }
 
         RequireIdentifier(diagnostics, profile.ProfileId, "ProfileId", "PROFILE_ID_INVALID");
         RequireSemVer(diagnostics, profile.ProfileVersion, "ProfileVersion", "PROFILE_VERSION_INVALID");
@@ -205,13 +208,28 @@ public static class ActionFitSdkInstallProfileValidator
                 Add(diagnostics, "SOURCE_KIND_INVALID", path + ".Kind", "Kind must be artifact, git, or registry.");
             RequireHttpsUrl(diagnostics, source.Url, path + ".Url", "SOURCE_URL_INVALID", true, profile.AllowedDomains);
 
+            bool latest = source.ResolvePolicy() == ActionFitSdkResolutionPolicy.AnyInstalledElseLatestStable;
+            bool knownPolicy = string.IsNullOrWhiteSpace(source.ResolutionPolicy) ||
+                               string.Equals(source.ResolutionPolicy, "exact", StringComparison.OrdinalIgnoreCase) ||
+                               string.Equals(source.ResolutionPolicy, "anyInstalledElseLatestStable", StringComparison.OrdinalIgnoreCase);
+            if (!knownPolicy)
+                Add(diagnostics, "SOURCE_RESOLUTION_POLICY_INVALID", path + ".ResolutionPolicy", "ResolutionPolicy must be exact or anyInstalledElseLatestStable.");
+            if (latest && profile.SchemaVersion != ActionFitSdkInstallProfile.CurrentSchemaVersion)
+                Add(diagnostics, "SOURCE_RESOLUTION_POLICY_SCHEMA", path + ".ResolutionPolicy", "AnyInstalledElseLatestStable requires profile schema version 2.");
+            if (latest)
+                ValidateLatestResolution(profile, source, kind, path, diagnostics);
+            else if (!string.IsNullOrWhiteSpace(source.LatestResolver) || !string.IsNullOrWhiteSpace(source.MetadataUrl) || !string.IsNullOrWhiteSpace(source.VersionFamily))
+                Add(diagnostics, "SOURCE_LATEST_FIELDS_UNEXPECTED", path, "Exact sources must not declare latest-resolution fields.");
+
             switch (kind)
             {
                 case ActionFitSdkSourceKind.Artifact:
-                    RequireSemVer(diagnostics, source.ImmutableVersion, path + ".ImmutableVersion", "SOURCE_VERSION_INVALID");
+                    if (!latest || !string.IsNullOrWhiteSpace(source.ImmutableVersion))
+                        RequireSemVer(diagnostics, source.ImmutableVersion, path + ".ImmutableVersion", "SOURCE_VERSION_INVALID");
                     RequirePackageId(diagnostics, source.PackageId, path + ".PackageId", "SOURCE_PACKAGE_ID_INVALID");
-                    RequireSemVer(diagnostics, source.PackageVersion, path + ".PackageVersion", "SOURCE_PACKAGE_VERSION_INVALID");
-                    if (!Sha256Pattern.IsMatch((source.Sha256 ?? "").Trim()))
+                    if (!latest || !string.IsNullOrWhiteSpace(source.PackageVersion))
+                        RequireSemVer(diagnostics, source.PackageVersion, path + ".PackageVersion", "SOURCE_PACKAGE_VERSION_INVALID");
+                    if ((!latest || !string.IsNullOrWhiteSpace(source.Sha256)) && !Sha256Pattern.IsMatch((source.Sha256 ?? "").Trim()))
                         Add(diagnostics, "SOURCE_SHA256_INVALID", path + ".Sha256", "Artifact sources require a 64-character SHA-256.");
                     ValidateCachePath(diagnostics, source.CacheRelativePath, path + ".CacheRelativePath");
                     string cachePath = (source.CacheRelativePath ?? "").ToLowerInvariant();
@@ -228,7 +246,7 @@ public static class ActionFitSdkInstallProfileValidator
 
                 case ActionFitSdkSourceKind.Git:
                     RequirePackageId(diagnostics, source.PackageId, path + ".PackageId", "SOURCE_PACKAGE_ID_INVALID");
-                    if (!IsImmutableGitRevision(source.ImmutableRevision))
+                    if ((!latest || !string.IsNullOrWhiteSpace(source.ImmutableRevision)) && !IsImmutableGitRevision(source.ImmutableRevision))
                         Add(diagnostics, "SOURCE_GIT_REVISION_MUTABLE", path + ".ImmutableRevision", "Git sources require a full 40-character commit or SemVer tag.");
                     ValidateGitSubpath(diagnostics, source.GitSubpath, path + ".GitSubpath");
                     if (!string.IsNullOrWhiteSpace(source.Sha256) || !string.IsNullOrWhiteSpace(source.CacheRelativePath))
@@ -236,7 +254,8 @@ public static class ActionFitSdkInstallProfileValidator
                     break;
 
                 case ActionFitSdkSourceKind.Registry:
-                    RequireSemVer(diagnostics, source.ImmutableVersion, path + ".ImmutableVersion", "SOURCE_VERSION_INVALID");
+                    if (!latest || !string.IsNullOrWhiteSpace(source.ImmutableVersion))
+                        RequireSemVer(diagnostics, source.ImmutableVersion, path + ".ImmutableVersion", "SOURCE_VERSION_INVALID");
                     RequirePackageId(diagnostics, source.PackageId, path + ".PackageId", "SOURCE_PACKAGE_ID_INVALID");
                     if (!string.IsNullOrWhiteSpace(source.ImmutableRevision) || !string.IsNullOrWhiteSpace(source.Sha256) || !string.IsNullOrWhiteSpace(source.CacheRelativePath))
                         Add(diagnostics, "SOURCE_REGISTRY_EXTRA_FIELDS", path, "Registry sources must not declare revision, checksum, or cache path fields.");
@@ -245,6 +264,28 @@ public static class ActionFitSdkInstallProfileValidator
                     break;
             }
         }
+    }
+
+    private static void ValidateLatestResolution(
+        ActionFitSdkInstallProfile profile,
+        ActionFitSdkSourceDefinition source,
+        ActionFitSdkSourceKind sourceKind,
+        string path,
+        List<ActionFitSdkProfileDiagnostic> diagnostics)
+    {
+        ActionFitSdkLatestResolverKind resolver = source.ResolveLatestResolver();
+        if (resolver == ActionFitSdkLatestResolverKind.Unknown)
+            Add(diagnostics, "SOURCE_LATEST_RESOLVER_INVALID", path + ".LatestResolver", "LatestResolver must be registryMetadata, gitRelease, or artifactMetadata.");
+        if ((sourceKind == ActionFitSdkSourceKind.Registry && resolver != ActionFitSdkLatestResolverKind.RegistryMetadata) ||
+            (sourceKind == ActionFitSdkSourceKind.Git && resolver != ActionFitSdkLatestResolverKind.GitRelease) ||
+            (sourceKind == ActionFitSdkSourceKind.Artifact && resolver != ActionFitSdkLatestResolverKind.ArtifactMetadata))
+        {
+            Add(diagnostics, "SOURCE_LATEST_RESOLVER_MISMATCH", path + ".LatestResolver", "LatestResolver must match the source kind.");
+        }
+
+        RequireHttpsUrl(diagnostics, source.MetadataUrl, path + ".MetadataUrl", "SOURCE_METADATA_URL_INVALID", true, profile.AllowedDomains);
+        if (!string.IsNullOrWhiteSpace(source.VersionFamily) && !IdentifierPattern.IsMatch(source.VersionFamily.Trim()))
+            Add(diagnostics, "SOURCE_VERSION_FAMILY_INVALID", path + ".VersionFamily", "VersionFamily must use a portable lowercase identifier.");
     }
 
     private static void ValidateGitSubpath(

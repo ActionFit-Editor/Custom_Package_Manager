@@ -107,6 +107,35 @@ class PackageContractValidatorTests(unittest.TestCase):
         self.assertEqual(0, code, result["diagnostics"])
         self.assertTrue(result["success"])
 
+    def test_sdk_bridge_schema_two_latest_policy_requires_safe_matching_metadata(self) -> None:
+        temporary, repo_root, package_root = self.make_repo("valid-package")
+        self.addCleanup(temporary.cleanup)
+        self.write_sdk_bridge_contract(package_root)
+        profile_path = package_root / "Editor" / "SDKInstallProfile.json"
+        profile = json.loads(profile_path.read_text(encoding="utf-8"))
+        profile["SchemaVersion"] = 2
+        source = profile["Sources"][0]
+        source["ImmutableVersion"] = ""
+        source["ResolutionPolicy"] = "anyInstalledElseLatestStable"
+        source["LatestResolver"] = "registryMetadata"
+        source["MetadataUrl"] = "https://registry.example.com/com.vendor.sdk"
+        source["VersionFamily"] = "vendor-sdk"
+        profile_path.write_text(json.dumps(profile), encoding="utf-8")
+
+        valid_code, valid_result = self.run_cli(repo_root, "--package", PACKAGE_ID)
+
+        self.assertEqual(0, valid_code, valid_result["diagnostics"])
+
+        source["LatestResolver"] = "gitRelease"
+        source["MetadataUrl"] = "https://evil.example.net/metadata?token=secret"
+        profile_path.write_text(json.dumps(profile), encoding="utf-8")
+        invalid_code, invalid_result = self.run_cli(repo_root, "--package", PACKAGE_ID)
+
+        self.assertEqual(1, invalid_code)
+        codes = {item["code"] for item in invalid_result["diagnostics"]}
+        self.assertIn("SDK_PROFILE_LATEST_RESOLVER_INVALID", codes)
+        self.assertIn("SDK_PROFILE_METADATA_URL_UNSAFE", codes)
+
     def test_sdk_bridge_accepts_safe_git_subpath_and_rejects_traversal(self) -> None:
         temporary, repo_root, package_root = self.make_repo("valid-package")
         self.addCleanup(temporary.cleanup)
