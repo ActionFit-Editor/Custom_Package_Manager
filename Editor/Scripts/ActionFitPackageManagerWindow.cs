@@ -8,6 +8,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using UnityEditor;
 using UnityEditor.PackageManager;
+using UnityEditor.PackageManager.Requests;
 using UnityEngine;
 
 public class ActionFitPackageManagerWindow : EditorWindow
@@ -55,6 +56,10 @@ public class ActionFitPackageManagerWindow : EditorWindow
     private string _historyFromVersion = "";
     private string _historyToVersion = "";
     private bool _historyInUpdateManager;
+    private AddRequest _gitAddRequest;
+    private string _gitUrl = "";
+    private string _gitInstallMessage = "";
+    private MessageType _gitInstallMessageType = MessageType.None;
 
     [MenuItem("Tools/Package/Custom Package Manager/Package Manager", false, 0)]
     public static void Open()
@@ -66,12 +71,15 @@ public class ActionFitPackageManagerWindow : EditorWindow
     {
         _settings = ActionFitPackageCatalogSettingsProvider.FindOrCreate();
         Events.registeredPackages += OnRegisteredPackages;
+        if (_gitAddRequest != null && !_gitAddRequest.IsCompleted)
+            RegisterGitAddPolling();
         Reload();
     }
 
     private void OnDisable()
     {
         Events.registeredPackages -= OnRegisteredPackages;
+        EditorApplication.update -= PollGitAddRequest;
     }
 
     private void OnGUI()
@@ -83,7 +91,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
             EditorGUILayout.HelpBox($"Catalog not found or empty.\n{ActiveCatalogPath}", MessageType.Warning);
         }
 
-        _filter = EditorGUILayout.TextField("Filter", _filter);
+        _filter = EditorGUILayout.TextField("Search", _filter);
         _scroll = EditorGUILayout.BeginScrollView(_scroll);
 
         DrawPackageSections();
@@ -106,8 +114,99 @@ public class ActionFitPackageManagerWindow : EditorWindow
         }
     }
 
+    private void DrawGitUrlInstallSection()
+    {
+        EditorGUILayout.LabelField("Install from Git URL", EditorStyles.boldLabel);
+        EditorGUILayout.HelpBox(
+            "Install a Unity package from a credential-free HTTPS or SSH Git URL. UPM ?path= and #revision syntax is supported.",
+            MessageType.None);
+
+        using (new EditorGUILayout.HorizontalScope())
+        {
+            EditorGUI.BeginDisabledGroup(_gitAddRequest != null && !_gitAddRequest.IsCompleted);
+            _gitUrl = EditorGUILayout.TextField("Git URL", _gitUrl);
+            if (GUILayout.Button("Install", GUILayout.Width(90)))
+                StartGitUrlInstall();
+            EditorGUI.EndDisabledGroup();
+        }
+
+        if (!string.IsNullOrWhiteSpace(_gitInstallMessage))
+            EditorGUILayout.HelpBox(_gitInstallMessage, _gitInstallMessageType);
+    }
+
+    private void StartGitUrlInstall()
+    {
+        if (_gitAddRequest != null && !_gitAddRequest.IsCompleted) return;
+
+        if (!ActionFitPackageManagerInputUtility.TryNormalizeGitUrl(
+                _gitUrl,
+                out string normalizedUrl,
+                out string validationError))
+        {
+            _gitInstallMessage = validationError;
+            _gitInstallMessageType = MessageType.Error;
+            return;
+        }
+
+        if (!EditorUtility.DisplayDialog(
+                "Install from Git URL",
+                "Install the package from the entered Git source?\n\nUnity Package Manager will resolve the source and its dependencies.",
+                "Install",
+                "Cancel"))
+            return;
+
+        try
+        {
+            _gitAddRequest = Client.Add(normalizedUrl);
+            _gitInstallMessage = "Unity Package Manager is installing the Git package.";
+            _gitInstallMessageType = MessageType.Info;
+            RegisterGitAddPolling();
+        }
+        catch (Exception exception)
+        {
+            _gitAddRequest = null;
+            _gitInstallMessage = $"Unity Package Manager could not start the install ({exception.GetType().Name}).";
+            _gitInstallMessageType = MessageType.Error;
+        }
+    }
+
+    private void RegisterGitAddPolling()
+    {
+        EditorApplication.update -= PollGitAddRequest;
+        EditorApplication.update += PollGitAddRequest;
+    }
+
+    private void PollGitAddRequest()
+    {
+        if (_gitAddRequest == null || !_gitAddRequest.IsCompleted) return;
+
+        EditorApplication.update -= PollGitAddRequest;
+        AddRequest completed = _gitAddRequest;
+        _gitAddRequest = null;
+        if (completed.Status == StatusCode.Success)
+        {
+            string packageName = completed.Result == null ? "Git package" : completed.Result.displayName;
+            string packageVersion = completed.Result == null ? "" : completed.Result.version;
+            _gitInstallMessage = string.IsNullOrWhiteSpace(packageVersion)
+                ? $"Installed {packageName}."
+                : $"Installed {packageName} {packageVersion}.";
+            _gitInstallMessageType = MessageType.Info;
+            QueueReload();
+            return;
+        }
+
+        string errorCode = completed.Error == null ? "unknown" : completed.Error.errorCode.ToString();
+        _gitInstallMessage = $"Git package install failed (UPM error {errorCode}). Check repository access and the package path or revision.";
+        _gitInstallMessageType = MessageType.Error;
+        Repaint();
+    }
+
     private void DrawPackageSections()
     {
+        DrawGitUrlInstallSection();
+        EditorGUILayout.Space(4);
+        EditorGUILayout.LabelField("", GUI.skin.horizontalSlider);
+        EditorGUILayout.Space(4);
         DrawContentBundleSection();
         EditorGUILayout.Space(4);
         EditorGUILayout.LabelField("", GUI.skin.horizontalSlider);
@@ -115,7 +214,8 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
         var filtered = FilteredPackages().ToList();
         var manager = filtered.Where(p => p.Id == PackageName).ToList();
-        var catalogPackages = filtered.Where(p => p.Id != PackageName).ToList();
+        var collections = SortPackagesForDisplay(filtered.Where(p => p.Id != PackageName && p.IsCollection));
+        var catalogPackages = filtered.Where(p => p.Id != PackageName && !p.IsCollection).ToList();
         var embedded = SortPackagesForDisplay(catalogPackages.Where(p => GetInstalledVersion(p.Id).IsEmbedded));
         var downloaded = SortPackagesForDisplay(catalogPackages.Where(p =>
         {
@@ -125,6 +225,10 @@ public class ActionFitPackageManagerWindow : EditorWindow
         var available = SortPackagesForDisplay(catalogPackages.Where(p => !GetInstalledVersion(p.Id).IsInstalled));
 
         DrawPackageSection("Package Manager", manager);
+        EditorGUILayout.Space(4);
+        EditorGUILayout.LabelField("", GUI.skin.horizontalSlider);
+        EditorGUILayout.Space(4);
+        DrawPackageSection("Package Collections", collections);
         EditorGUILayout.Space(4);
         EditorGUILayout.LabelField("", GUI.skin.horizontalSlider);
         EditorGUILayout.Space(4);
@@ -148,11 +252,19 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
     private void DrawContentBundleSection()
     {
-        ActionFitContentBundleStatus[] statuses = ActionFitContentBundleApi.GetStatuses();
+        ActionFitContentBundleStatus[] allStatuses = ActionFitContentBundleApi.GetStatuses();
+        ActionFitContentBundleStatus[] statuses = allStatuses
+            .Where(status => ActionFitPackageManagerInputUtility.MatchesContentBundle(_filter, status))
+            .ToArray();
         EditorGUILayout.LabelField($"Content Bundles ({statuses.Length})", EditorStyles.boldLabel);
-        if (statuses.Length == 0)
+        if (allStatuses.Length == 0)
         {
             EditorGUILayout.HelpBox("No active or pending content bundles.", MessageType.None);
+            return;
+        }
+        if (statuses.Length == 0)
+        {
+            EditorGUILayout.HelpBox("No content bundles match the current search.", MessageType.None);
             return;
         }
 
@@ -293,11 +405,19 @@ public class ActionFitPackageManagerWindow : EditorWindow
     {
         if (string.IsNullOrWhiteSpace(_filter)) return _packages;
 
-        string filter = _filter.Trim();
-        return _packages.Where(p =>
-            p.Id.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0 ||
-            p.DisplayName.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0 ||
-            p.Owner.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0);
+        return _packages.Where(package => ActionFitPackageManagerInputUtility.MatchesSearch(
+            _filter,
+            new[] { package.Id, package.DisplayName, package.Owner, package.PackageType }
+                .Concat(package.Versions.SelectMany(version => new[]
+                {
+                    version.Version,
+                    version.Status,
+                    version.UnityMin,
+                    version.RepoUrl,
+                    version.Description,
+                    version.Changelog,
+                    version.Dependencies,
+                }))));
     }
 
     private List<PackageGroup> SortPackagesForDisplay(IEnumerable<PackageGroup> packages)
@@ -1058,6 +1178,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
                 DisplayName = Get(cols, index, "display_name"),
                 Owner = Get(cols, index, "owner"),
                 RepoUrl = Get(cols, index, "repo_url"),
+                PackageType = GetAny(cols, index, "package_type", "packageType"),
                 Version = version,
                 Status = Get(cols, index, "status"),
                 IsLatest = IsTrue(Get(cols, index, "is_latest")),
@@ -2661,6 +2782,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
             Owner = versions.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v.Owner))?.Owner ?? "ActionFit";
             LatestVersionLabel = versions.FirstOrDefault(v => v.IsLatest)?.Version ?? versions.FirstOrDefault()?.Version ?? "";
             var summarySource = versions.FirstOrDefault(v => v.IsLatest) ?? versions.FirstOrDefault();
+            PackageType = summarySource?.PackageType ?? "";
             Likes = summarySource?.Likes ?? 0;
             Dislikes = summarySource?.Dislikes ?? 0;
             CommentCount = summarySource?.CommentCount ?? 0;
@@ -2669,11 +2791,13 @@ public class ActionFitPackageManagerWindow : EditorWindow
         public string Id { get; }
         public string DisplayName { get; }
         public string Owner { get; }
+        public string PackageType { get; }
         public string LatestVersionLabel { get; }
         public int Likes { get; }
         public int Dislikes { get; }
         public int CommentCount { get; }
         public PackageVersion LatestVersion => Versions.FirstOrDefault(v => v.IsLatest) ?? Versions.FirstOrDefault();
+        public bool IsCollection => ActionFitPackageManagerInputUtility.IsCollectionPackage(Id, PackageType);
         public List<PackageVersion> Versions { get; }
     }
 
@@ -2714,6 +2838,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
         public string DisplayName;
         public string Owner;
         public string RepoUrl;
+        public string PackageType;
         public string Version;
         public string Status;
         public bool IsLatest;

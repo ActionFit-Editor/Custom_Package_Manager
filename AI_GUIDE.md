@@ -7,12 +7,12 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.custompackagemanager`
 - Display name: Custom Package Manager
 - Repository: `https://github.com/ActionFit-Editor/Custom_Package_Manager.git`
-- Current package version at generation time: `1.1.106`
+- Current package version at generation time: `1.1.108`
 - Unity version: `6000.2`
 
 ## Purpose
 
-Custom Package Manager manages ActionFit UPM catalog install/update/remove/publish workflows. Use `README.md`, `package.json`, package source files, and `Editor/PackageInfo/ActionFitPackageInfo_SO.asset` together to understand the user-facing workflow and catalog metadata.
+Custom Package Manager manages ActionFit UPM catalog search, collection classification, direct Git URL install, update/remove, and publish workflows. Use `README.md`, `package.json`, package source files, and `Editor/PackageInfo/ActionFitPackageInfo_SO.asset` together to understand the user-facing workflow and catalog metadata.
 
 ## Agent Skills
 
@@ -40,6 +40,7 @@ Read this file when:
 ## Main Files
 
 - `Editor/Scripts/ActionFitPackageManagerWindow.cs`: package list, install/apply/remove/check-update/force-update/history UI.
+- `Editor/Scripts/ActionFitPackageManagerInputUtility.cs`: collection classification, unified package/bundle search matching, and credential-safe UPM Git URL validation.
 - `Editor/Scripts/ActionFitPackageTransaction.cs`: atomic manifest writes, guarded package-folder transactions, rollback journals, restart recovery, and embedded baselines.
 - `Editor/Scripts/ActionFitContentBundleApi.cs`: public bundle planning/install/release APIs, durable ownership state, recovery journals, authorization, and required-package reconciliation.
 - `Editor/Scripts/ActionFitContentBundleModels.cs`: public serializable bundle profiles, plans, changes, results, and status DTOs.
@@ -108,7 +109,11 @@ Read this file when:
 - Local catalog path: `Assets/_Data/_CustomPackageManager/package_catalog.csv`.
 - Fallback catalog path: `Packages/com.actionfit.custompackagemanager/Editor/Catalog/package_catalog.csv`.
 - Package Manager reads the local catalog when present, otherwise the embedded package catalog.
-- It manages internal UPM package install/update/remove, repository creation, changelog/history display, AI guide routing, and manual publish flows.
+- It manages internal UPM package search/install/update/remove, package collection discovery, direct credential-free Git URL installation, repository creation, changelog/history display, AI guide routing, and manual publish flows.
+- The optional catalog `package_type` column may use the exact case-insensitive value `collection`. For backward compatibility, package IDs ending in `.installer` are also collections. Keep collections in `Package Collections` and exclude them from Embedded, Downloaded, and Available package sections.
+- `ActionFitPackageCatalogUpdater.BuildCatalogCsv` must preserve optional `package_type` / `packageType` metadata while joining package and version sheets, and emit an empty value for legacy rows.
+- The Package Manager `Search` field must match package ID, display name, owner, package type, repository URL, version/status/Unity minimum, description, changelog, and dependencies. It must also filter active Content Bundles by bundle, state, required package, module, and conflict metadata.
+- `Install from Git URL` delegates to `Client.Add` and polls its asynchronous request through `EditorApplication.update`. Accept credential-free HTTPS, `ssh://`, and SCP-style SSH plus the single UPM `?path=` query and optional non-empty `#revision`. Reject HTTP, embedded HTTPS credentials, SSH passwords, other queries, whitespace/control characters, and malformed URLs before mutation. Never log or include the submitted URL in failure diagnostics.
 - Manager Console exposes `1. Create Package`, then `2. Publish Changed`, then `Add Agent Skill`, followed by `Publish Package`, catalog/manifest access, and AI guide router refresh. Package README and settings SO access must stay in Unity top-menu package entries such as `Tools/Package/<Package Name>/README` and `Tools/Package/<Package Name>/Setting SO`, not in `Project Files` or Package Manager package rows.
 - `1. Create Package` creates an operational skeleton only: `package.json`, README, AI guide, package menu, PackageInfo, and an Editor asmdef. A content package must add and design its `Runtime`, optional UI, and `Tests/Editor` assemblies explicitly; skeleton creation does not establish a reusable content architecture or prove Unity compilation.
 - Do not create another package merely for a configured instance of an existing content framework. Content-domain ownership and extraction decisions belong to the consuming project's content-boundary documentation.
@@ -123,7 +128,7 @@ Read this file when:
 - Publish HTTP requests must apply the shared 30-second connection/read timeout. Bulk UI progress must identify local validation, remote preflight, repository publish, catalog batch/fallback, and final catalog refresh stages; cancellation during a catalog request must abort that request, while cancellation during repository publishing takes effect after active repository operations finish.
 - If repository publish succeeds but catalog append fails, keep the successful catalog append items in the publish window and expose `Retry Catalog Append` so the user can update the spreadsheet without pushing repositories again.
 - When retry items are unavailable after window recreation, domain reload, or Editor restart, expose `Recover Catalog Entry` for changed package rows. Prepare recovery only when the refreshed catalog lacks the version, the immutable remote tag and repository visibility match, and the tag checkout matches the local package after narrowly normalizing `_fingerprint`, JSON whitespace, and Unity PackageInfo YAML serialization. Execute only after exact recovery approval and perform catalog upsert/refresh without repository, branch, or tag mutation.
-- Package section classification should treat Git/registry dependencies in `Packages/manifest.json` as Downloaded Packages. Only local `file:` dependencies or package folders under `Packages/` without a manifest dependency should be treated as Embedded Packages.
+- Package section classification should first remove collections into `Package Collections`, then treat Git/registry dependencies in `Packages/manifest.json` as Downloaded Packages. Only local `file:` dependencies or package folders under `Packages/` without a manifest dependency should be treated as Embedded Packages.
 - The `Check Update` panel must include only installed packages whose catalog latest version is higher than the installed version. Do not treat any version difference as an update, because that can downgrade packages such as `1.0.30 -> 1.0.29`.
 - `Force Update` must run catalog refresh first, show a confirmation list of downloaded packages, and then re-apply catalog latest Git UPM URLs/dependencies for downloaded packages only. Embedded packages are skipped so local edits are not deleted.
 - `Latest Git` buttons in package details and the `Check Update` panel should open the catalog latest version's GitHub tag URL in the browser without modifying `Packages/manifest.json`.

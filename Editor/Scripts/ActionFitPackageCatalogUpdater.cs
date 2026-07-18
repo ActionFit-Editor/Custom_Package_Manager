@@ -175,7 +175,7 @@ public static class ActionFitPackageCatalogUpdater
         }
     }
 
-    private static string BuildCatalogCsv(string packageCsv, string versionCsv, string voteSummaryCsv)
+    internal static string BuildCatalogCsv(string packageCsv, string versionCsv, string voteSummaryCsv)
     {
         var packages = ReadCsv(packageCsv)
             .Where(r => !string.IsNullOrWhiteSpace(GetAny(r, "package_id", "packageId")))
@@ -188,8 +188,8 @@ public static class ActionFitPackageCatalogUpdater
             .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
         var rows = new StringBuilder();
-        rows.AppendLine("catalog_id,package_id,display_name,owner,repo_url,version,status,is_latest,unity_min,description,changelog,dependencies,likes,dislikes,vote_score,comment_count");
-        rows.AppendLine("catalogId(string)[key],packageId(string),displayName(string),owner(string),repoUrl(string),version(string),status(string),isLatest(bool)[nondata],unityMin(string),description(string),changelog(string),dependencies(string),likes(int),dislikes(int),voteScore(int),commentCount(int)");
+        rows.AppendLine("catalog_id,package_id,display_name,package_type,owner,repo_url,version,status,is_latest,unity_min,description,changelog,dependencies,likes,dislikes,vote_score,comment_count");
+        rows.AppendLine("catalogId(string)[key],packageId(string),displayName(string),packageType(string),owner(string),repoUrl(string),version(string),status(string),isLatest(bool)[nondata],unityMin(string),description(string),changelog(string),dependencies(string),likes(int),dislikes(int),voteScore(int),commentCount(int)");
 
         foreach (var version in ReadCsv(versionCsv))
         {
@@ -201,6 +201,7 @@ public static class ActionFitPackageCatalogUpdater
             voteSummaries.TryGetValue(packageId, out var voteSummary);
             string catalogId = FirstNonEmpty(GetAny(version, "catalog_id", "catalogId"), $"{packageId}@{packageVersion}");
             string displayName = FirstNonEmpty(GetAny(package, "display_name", "displayName"), GetAny(version, "display_name", "displayName"), packageId);
+            string packageType = FirstNonEmpty(GetAny(package, "package_type", "packageType"), GetAny(version, "package_type", "packageType"));
             string owner = FirstNonEmpty(Get(package, "owner"), Get(version, "owner"), "ActionFit");
             string repoUrl = FirstNonEmpty(GetAny(package, "repo_url", "repoUrl"), GetAny(version, "repo_url", "repoUrl"));
             string status = FirstNonEmpty(Get(version, "status"), Get(package, "status"), "verified");
@@ -221,6 +222,7 @@ public static class ActionFitPackageCatalogUpdater
                 Csv(catalogId),
                 Csv(packageId),
                 Csv(displayName),
+                Csv(packageType),
                 Csv(owner),
                 Csv(repoUrl),
                 Csv(packageVersion),
