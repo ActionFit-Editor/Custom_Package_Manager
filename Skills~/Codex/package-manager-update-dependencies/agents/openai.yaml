@@ -1,0 +1,6 @@
+interface:
+  display_name: "Update Package Dependencies"
+  short_description: "Plan and apply embedded dependency updates"
+  default_prompt: "Use $package-manager-update-dependencies to plan safe ActionFit dependency updates before applying or publishing them."
+policy:
+  allow_implicit_invocation: false

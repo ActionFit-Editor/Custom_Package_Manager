@@ -13,3 +13,4 @@ else
 fi
 
 "$python_bin" "$script_dir/test-package-contract-validator.py"
+"$python_bin" "$script_dir/test-package-dependency-updater.py"

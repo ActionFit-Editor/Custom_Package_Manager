@@ -7,7 +7,7 @@ ActionFit UPM package catalog viewer and installer for Unity. It installs packag
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.102"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.103"
   }
 }
 ```
@@ -31,13 +31,28 @@ Tokens, credentials, private keys, signing material, vendor configuration, and o
 
 ## Package Agent Skills
 
-Custom Package Manager의 `Install or Refresh Agent Skills`는 이 패키지 자체에서도 Codex와 Claude에 다음 read-only skill을 설치합니다.
+Custom Package Manager의 `Install or Refresh Agent Skills`는 이 패키지 자체에서도 Codex와 Claude에 다음 skill을 설치합니다.
 
 - `package-manager-help`: 패키지 관리 기능, 설치된 스킬, 릴리스 준비와 안전 경계를 설명합니다.
 - `package-manager-audit`: 로컬 manifest/lock/package metadata와 agent-skill 등록 상태를 변경 없이 점검합니다.
 - `package-manager-validate`: 기존 `Tools~/package_contract_validator.py`를 한 패키지, 변경 패키지 또는 전체 embedded 패키지 범위로 실행합니다.
+- `package-manager-update-dependencies`: physical embedded ActionFit 패키지의 dependency 최신화 범위를 plan하고, 정확한 별도 승인 뒤 release metadata까지 원자적으로 apply합니다.
 
-세 skill은 catalog refresh, manifest rewrite, install/update/embed/remove, installed skill refresh, publish, repository 생성, Git push/tag와 catalog append를 실행하지 않습니다.
+help/audit/validate는 read-only입니다. dependency updater는 수동 호출 전용 write-capable skill이며 plan은 항상 read-only입니다. apply에는 성공한 Catalog refresh 확인, 현재 `planId`와 정확한 승인 문자열이 모두 필요하고 contract validation 실패 시 전체 파일을 복구합니다. 실제 publish는 apply와 분리되며 사용자가 다시 명시적으로 요청한 경우에만 기존 `ActionFitPackageBulkPublishApi`의 preflight와 승인을 dependency-safe layer 순서로 사용합니다.
+
+### Embedded Dependency Automation
+
+Unity의 `ActionFitPackageWorkflowApi.Inspect`가 `RefreshCatalog = true`로 성공한 뒤 다음 명령으로 변경 계획을 확인합니다.
+
+```bash
+python3 Packages/com.actionfit.custompackagemanager/Tools~/package_dependency_updater.py plan \
+  --repo-root . \
+  --catalog-refreshed
+```
+
+이 도구는 top-level physical `Packages/com.actionfit.*`만 읽고 dependency graph를 fixed point로 계산합니다. catalog/local embedded 중 더 최신인 dependency를 선택하며 downgrade하지 않고, local-ahead package는 publish prerequisite로 표시합니다. major update, cycle, malformed SemVer, project override, missing physical dependency는 안전하게 차단합니다.
+
+Plan 결과의 `requiredApprovalText`를 그대로 승인한 경우에만 동일한 `planId`로 apply할 수 있습니다. Apply는 affected package의 `package.json`, README 설치 tag, AI guide version, PackageInfo release note만 원자적으로 갱신하고 package contract validation 실패 시 모두 rollback합니다. Python 도구는 GitHub push, tag 생성, Catalog append 또는 credential 접근을 수행하지 않습니다.
 
 An ActionFit package can register Codex and Claude skills with `Skills~/manifest.json`:
 

@@ -7,7 +7,7 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.custompackagemanager`
 - Display name: Custom Package Manager
 - Repository: `https://github.com/ActionFit-Editor/Custom_Package_Manager.git`
-- Current package version at generation time: `1.1.102`
+- Current package version at generation time: `1.1.103`
 - Unity version: `6000.2`
 
 ## Purpose
@@ -16,9 +16,9 @@ Custom Package Manager manages ActionFit UPM catalog install/update/remove/publi
 
 ## Agent Skills
 
-- `Skills~/manifest.json` registers schema v2 `package-manager-help`, `package-manager-audit`, and `package-manager-validate` for Codex and Claude.
-- All three skills are read-only. Audit inspects local package distribution, metadata, AI guides, and skill registration without catalog refresh; validate runs the existing package-owned contract CLI.
-- Help reads generated `PACKAGE_SKILLS.md` as the authoritative inventory. None of these skills install, update, embed, remove, refresh installed skills, publish, push, tag, append catalog rows, or expose credentials.
+- `Skills~/manifest.json` registers schema v2 `package-manager-help`, `package-manager-audit`, `package-manager-validate`, and `package-manager-update-dependencies` for Codex and Claude.
+- Help, audit, and validate are read-only. The dependency updater is manual-only and write-capable: plan is read-only, apply requires a proven Catalog refresh plus exact content-bound approval, and validation failure rolls back every planned file.
+- Help reads generated `PACKAGE_SKILLS.md` as the authoritative inventory. Publishing remains a separate explicit approval through `ActionFitPackageBulkPublishApi`; no skill exposes credentials or implements direct GitHub/Catalog mutation in Python.
 
 ## Project Router Registration
 
@@ -67,7 +67,9 @@ Read this file when:
 - `Editor/Scripts/ActionFitPackageSkillInstaller.cs`: discovers package `Skills~/manifest.json` registrations, safely synchronizes project-local Codex and Claude skills, preserves user modifications, and migrates legacy AI Jira ownership state.
 - `Editor/Scripts/ActionFitPackageSkillScaffold.cs`: public schema v2 skill-add API plus the embedded-package Editor window; creates the mandatory help skill and Codex metadata without overwriting existing sources.
 - `Tools~/package_contract_validator.py`: Unity-independent package contract CLI for package selection, changed-package discovery, SemVer/version-bump checks, metadata/document/asmdef validation, stable diagnostics, and JSON results.
-- `Tests/Shell/run-tests.sh`: Python fixture regression suite for valid, invalid, changed-version, output, and infrastructure result contracts.
+- `Tools~/package_dependency_updater.py`: standard-library planner/applicator for fixed-point embedded ActionFit dependency updates, exact approval, atomic release metadata writes, rollback, and dependency-safe publish layers.
+- `Tests/Shell/test-package-dependency-updater.py`: dependency closure, no-downgrade, local-ahead prerequisite, major/cycle blocking, deterministic plan, exact apply, and rollback regression coverage.
+- `Tests/Shell/run-tests.sh`: Python fixture regression suite for package contracts and dependency automation.
 - `Editor/Documentation/PackageCommunityWebAppContract.md`: required spreadsheet sheets and Web App actions for package votes, comments, and batch catalog publish confirmation.
 - `Editor/Documentation/ContentBundleInstallerContract.md` and `Editor/Templates~/ContentBundleInstaller/`: reusable reflection-based, self-removing Git UPM installer contract and starter files.
 - `Editor/PackageInfo/ActionFitPackageInfo_SO.asset`: catalog metadata source for this package.
@@ -94,6 +96,9 @@ Read this file when:
 - Required package reconciliation may restore only missing owned values. It must report conflicts instead of overwriting a user-managed value.
 - Keep project override ownership at `ProjectSettings/ActionFitPackageOverrides.json`. Accept only a PackageInfo-declared Public package with a credential-free HTTPS Git dependency; store its public base repository URL, version/revision/content hash, and project-relative package path. Do not store absolute machine paths, credentials, or private remotes, and do not emit the remote URL into generated AI state. Exclude registered overrides from individual and automatic bulk upstream publishing, and require explicit restore-to-base completion or a new package ID/repository fork.
 - Release authorization uses only the safe GitHub CLI login string and a profile allowlist. Never read, store, or log credentials, tokens, or raw authentication errors.
+- Dependency automation must scan only physical top-level embedded ActionFit packages and must exclude project overrides, links, downloaded packages, and nested fixtures. Use Catalog/local maximum versions without downgrades, fixed-point consumer bumps, explicit major opt-in, and cycle blocking.
+- Treat `package_dependency_updater.py plan` as read-only. Apply requires a successful Catalog refresh assertion, exact current `planId`, and exact approval text; update only package manifest/version documentation/PackageInfo release notes atomically and roll all planned files back when contract validation fails.
+- Applying dependency metadata never authorizes package publication. Prepare and execute each dependency-safe publish layer only through the existing `ActionFitPackageBulkPublishApi` with a new exact approval, and stop the sequence on the first failure.
 
 ## Menu And Catalog Notes
 

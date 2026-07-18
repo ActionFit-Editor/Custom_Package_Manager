@@ -20,6 +20,12 @@
       "agents": ["codex", "claude"],
       "includeShared": false,
       "access": "read-only"
+    },
+    {
+      "name": "package-manager-update-dependencies",
+      "agents": ["codex", "claude"],
+      "includeShared": false,
+      "access": "write-capable"
     }
   ]
 }
