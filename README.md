@@ -1,35 +1,41 @@
 # Custom Package Manager (com.actionfit.custompackagemanager)
 
-ActionFit UPM package catalog viewer and installer for Unity. It installs packages into `Packages/manifest.json` as Git URL dependencies, applies selected versions, removes packages, and supports manual publish workflows for ActionFit editor packages.
+Unity에서 ActionFit UPM 패키지 카탈로그를 조회하고 설치하는 도구입니다. 패키지를 Git URL 의존성으로 `Packages/manifest.json`에 설치하고, 선택한 버전을 적용하거나 제거하며 ActionFit Editor 패키지의 수동 publish workflow를 지원합니다.
 
-## Install
+## 설치
 
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.104"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.106"
   }
 }
 ```
 
-## Repository Visibility Policy
+## 저장소 공개 범위 정책
 
-New package and `Fork as New` repositories default to **Public**. Choose **Private** only as an explicit exception when approved ownership, distribution, or confidentiality constraints require restricted source access. Existing PackageInfo visibility is preserved until an authorized migration changes it.
+새 패키지와 `Fork as New` 저장소의 기본 공개 범위는 **Public**입니다. 승인된 소유권, 배포 또는 기밀성 제약 때문에 소스 접근을 제한해야 할 때만 명시적 예외로 **Private**을 선택합니다. 기존 PackageInfo 공개 범위는 승인된 마이그레이션으로 변경하기 전까지 보존합니다.
 
-Tokens, credentials, private keys, signing material, vendor configuration, and other secrets are prohibited from package content and metadata regardless of repository visibility. Keep them in ignored local settings, environment variables, or an approved secret store; a Private repository is not a package-secret container. If public distribution rights are unresolved, block publication for review instead of silently switching the package to Private.
+저장소 공개 범위와 관계없이 token, 자격 증명, private key, signing material, vendor 설정과 그 밖의 secret을 패키지 콘텐츠나 메타데이터에 포함하면 안 됩니다. Git에서 제외된 로컬 설정, 환경 변수 또는 승인된 secret store에 보관하세요. Private 저장소도 패키지 secret 보관소가 아닙니다. 공개 배포 권리가 확정되지 않았다면 패키지를 몰래 Private으로 바꾸지 말고 publish를 차단해 검토합니다.
 
-## Menu
+## README 작성 언어 정책
 
-- `Tools > Package > Custom Package Manager > Package Manager`: install, apply versions, remove packages, inspect package details, and check updates.
-- `Tools > Package > Custom Package Manager > SDK Profiles`: load a bridge package's versioned SDK profile, inspect current state, review an exact plan, and explicitly apply, repair, update, remove, or recover it.
-- `Tools > Package > Custom Package Manager > Manager Console`: create packages, publish changed or selected package versions, add schema v2 agent skills, open catalog/manifest files, and refresh the AI guide router.
-- `Tools > Package > Custom Package Manager > Install or Refresh Agent Skills`: discovers registered skills from installed ActionFit packages and safely synchronizes their managed project-local copies.
-- `Tools > Package > Custom Package Manager > Remove Managed Agent Skills`: removes only unchanged managed copies and disables automatic recreation until an explicit refresh.
-- `Tools > Package > Custom Package Manager > Add Agent Skill`: adds a schema v2 skill to an editable embedded package and creates its mandatory package help skill on first use.
-- `Tools > Package > <Package Name> > README`: opens that package's README in an editor window.
-- `Tools > Package > <Package Name> > Setting SO`: focuses that package's settings ScriptableObject when the package has one.
+ActionFit 패키지의 `README.md`는 사람이 읽는 사용 문서이므로 한국어를 기본 언어로 작성합니다. 패키지를 publish하기 전에 작성자 또는 검토자는 README의 제목, 설치 방법, 사용법, 설정, 주의사항, 마이그레이션 및 릴리스 관련 설명이 한국어 중심으로 최신 상태인지 확인해야 합니다.
 
-## Package Agent Skills
+패키지 ID, 타입 및 API 이름, Unity 메뉴 경로, 명령어, 설정 키, 파일 경로, 코드 예제와 외부에서 정의된 제품명·고유명사는 정확성을 위해 원문 표기를 유지합니다. 이 규칙은 기존 README를 자동 번역하지 않으며, 공유 AI 문서인 `AI_GUIDE.md`는 프로젝트 간 재사용을 위해 영어로 작성하는 예외를 유지합니다.
+
+## 메뉴
+
+- `Tools > Package > Custom Package Manager > Package Manager`: 패키지 설치, 버전 적용, 제거, 상세 정보 확인과 업데이트 검사를 수행합니다.
+- `Tools > Package > Custom Package Manager > SDK Profiles`: bridge 패키지의 versioned SDK profile을 불러오고 현재 상태와 정확한 plan을 검토한 뒤 명시적으로 적용, 복구, 업데이트, 제거 또는 recovery합니다.
+- `Tools > Package > Custom Package Manager > Manager Console`: 패키지 생성, 변경되거나 선택한 패키지 버전 publish, schema v2 Agent Skill 추가, catalog/manifest 열기와 AI guide router refresh를 수행합니다.
+- `Tools > Package > Custom Package Manager > Install or Refresh Agent Skills`: 설치된 ActionFit 패키지의 등록 skill을 검색하고 관리되는 프로젝트 로컬 복사본을 안전하게 동기화합니다.
+- `Tools > Package > Custom Package Manager > Remove Managed Agent Skills`: 변경되지 않은 관리 복사본만 제거하고 명시적 refresh 전까지 자동 재생성을 비활성화합니다.
+- `Tools > Package > Custom Package Manager > Add Agent Skill`: 편집 가능한 embedded 패키지에 schema v2 skill을 추가하고 최초 실행 시 필수 package help skill을 생성합니다.
+- `Tools > Package > <Package Name> > README`: 해당 패키지 README를 Editor 창에서 엽니다.
+- `Tools > Package > <Package Name> > Setting SO`: 패키지가 설정 ScriptableObject를 보유한 경우 해당 에셋을 선택합니다.
+
+## 패키지 Agent Skill
 
 Custom Package Manager의 `Install or Refresh Agent Skills`는 이 패키지 자체에서도 Codex와 Claude에 다음 skill을 설치합니다.
 
@@ -40,7 +46,7 @@ Custom Package Manager의 `Install or Refresh Agent Skills`는 이 패키지 자
 
 help/audit/validate는 read-only입니다. dependency updater는 수동 호출 전용 write-capable skill이며 plan은 항상 read-only입니다. apply에는 성공한 Catalog refresh 확인, 현재 `planId`와 정확한 승인 문자열이 모두 필요하고 contract validation 실패 시 전체 파일을 복구합니다. 실제 publish는 apply와 분리되며 사용자가 다시 명시적으로 요청한 경우에만 기존 `ActionFitPackageBulkPublishApi`의 preflight와 승인을 dependency-safe layer 순서로 사용합니다.
 
-### Embedded Dependency Automation
+### Embedded 의존성 자동화
 
 Unity의 `ActionFitPackageWorkflowApi.Inspect`가 `RefreshCatalog = true`로 성공한 뒤 다음 명령으로 변경 계획을 확인합니다.
 
@@ -54,7 +60,7 @@ python3 Packages/com.actionfit.custompackagemanager/Tools~/package_dependency_up
 
 Plan 결과의 `requiredApprovalText`를 그대로 승인한 경우에만 동일한 `planId`로 apply할 수 있습니다. Apply는 affected package의 `package.json`, README 설치 tag, AI guide version, PackageInfo release note만 원자적으로 갱신하고 package contract validation 실패 시 모두 rollback합니다. Python 도구는 GitHub push, tag 생성, Catalog append 또는 credential 접근을 수행하지 않습니다.
 
-An ActionFit package can register Codex and Claude skills with `Skills~/manifest.json`:
+ActionFit 패키지는 `Skills~/manifest.json`으로 Codex 및 Claude skill을 등록할 수 있습니다.
 
 ```json
 {
@@ -78,45 +84,45 @@ An ActionFit package can register Codex and Claude skills with `Skills~/manifest
 }
 ```
 
-Schema v2 requires an explicit lowercase `skillPrefix`, `helpSkill` equal to `<skillPrefix>-help`, and a registered help skill whose agents cover every agent used by the package. Every skill name starts with `<skillPrefix>-`; `access` is explicitly `read-only` or `write-capable`. The runtime installer temporarily continues to read schema v1 packages, but the package contract validator rejects v1 for changed or newly published packages.
+Schema v2에는 명시적인 소문자 `skillPrefix`, `<skillPrefix>-help`와 같은 `helpSkill`, 패키지가 사용하는 모든 agent를 포함하는 등록 help skill이 필요합니다. 모든 skill 이름은 `<skillPrefix>-`로 시작하고 `access`는 `read-only` 또는 `write-capable`로 명시합니다. Runtime installer는 호환성을 위해 schema v1 패키지를 임시로 읽지만 패키지 계약 검증기는 변경되거나 새로 publish하는 패키지의 v1을 거부합니다.
 
-Place sources at `Skills~/Codex/<skill-name>` and `Skills~/Claude/<skill-name>`. Each source must contain a `SKILL.md` whose frontmatter `name` matches the registration and whose `description` explains what the skill does and when to use it. Optional package-wide files under `Skills~/Shared` are overlaid only when `includeShared` is true; shared and agent sources must not contain the same relative file.
+소스는 `Skills~/Codex/<skill-name>`과 `Skills~/Claude/<skill-name>`에 둡니다. 각 소스에는 등록과 동일한 frontmatter `name`, skill의 기능과 사용 시점을 설명하는 `description`을 가진 `SKILL.md`가 있어야 합니다. `Skills~/Shared` 아래의 선택형 패키지 공통 파일은 `includeShared`가 true일 때만 overlay하며 shared와 agent 소스가 같은 상대 경로 파일을 포함하면 안 됩니다.
 
-During installation, the manager generates `PACKAGE_SKILLS.md` inside each installed help skill from `package.json`, the schema v2 manifest, and the target agent's frontmatter descriptions. The generated file is included in the managed hash and is the help skill's authoritative inventory for package identity, related skills, `$name` invocation, and access. Do not author `PACKAGE_SKILLS.md` in package sources.
+설치할 때 manager는 `package.json`, schema v2 manifest와 대상 agent의 frontmatter description으로 각 설치 help skill 안에 `PACKAGE_SKILLS.md`를 생성합니다. 생성 파일은 관리 hash에 포함되며 package identity, 관련 skill, `$name` 호출과 access의 authoritative inventory입니다. 패키지 소스에 `PACKAGE_SKILLS.md`를 직접 작성하지 않습니다.
 
-The manager installs registered sources into `.agents/skills/<skill-name>` and `.claude/skills/<skill-name>`. Installation runs after Editor load and package registration, but is skipped in batch mode. Managed ownership and hashes are stored in ignored `UserSettings/ActionFitPackageManager/skill-install-state.json`. Missing targets are installed, unchanged managed targets are updated, and unmanaged, modified, linked, or conflicting targets are preserved with a warning. Automatic synchronization never deletes a target when a package disappears; deletion is available only through the explicit removal menu and only for unchanged managed copies.
+Manager는 등록 소스를 `.agents/skills/<skill-name>`과 `.claude/skills/<skill-name>`에 설치합니다. 설치는 Editor load와 패키지 등록 후 실행되며 batch mode에서는 건너뜁니다. 관리 소유권과 hash는 Git에서 제외된 `UserSettings/ActionFitPackageManager/skill-install-state.json`에 저장합니다. 누락된 target은 설치하고 변경되지 않은 관리 target은 업데이트하며, 관리되지 않거나 수정되거나 link이거나 충돌하는 target은 경고와 함께 보존합니다. 패키지가 사라져도 자동 동기화가 target을 삭제하지 않습니다. 삭제는 명시적 제거 메뉴에서 변경되지 않은 관리 복사본에만 가능합니다.
 
-The Package Manager detail view shows each package's aggregate `Agent Skills` state: registered, current, update available, missing, preserved, and conflict counts. Embedded package rows also expose `Add Agent Skill`; downloaded packages must be embedded before their sources can be edited. The same scaffolding window is available from Manager Console.
+Package Manager 상세 화면은 패키지별 집계 `Agent Skills` 상태인 registered, current, update available, missing, preserved 및 conflict 수를 표시합니다. Embedded 패키지 행에는 `Add Agent Skill`도 표시되며 downloaded 패키지는 소스를 편집하기 전에 embed해야 합니다. 같은 scaffolding 창을 Manager Console에서도 열 수 있습니다.
 
-Skill names are limited to lowercase letters, digits, and hyphens. The manifest cannot specify source or target paths, so packages cannot redirect installation outside the fixed package and project-local skill roots. Symbolic links and reparse points are rejected, and copied scripts are never executed during installation.
+Skill 이름은 소문자, 숫자와 hyphen만 허용합니다. Manifest에서 source 또는 target 경로를 지정할 수 없으므로 고정 패키지 및 프로젝트 로컬 skill root 밖으로 설치를 redirect할 수 없습니다. Symbolic link와 reparse point를 거부하며 설치 중 복사한 script를 실행하지 않습니다.
 
-Projects previously managed by AI Jira keep their old `UserSettings/AIJira/skill-install-state.json`. Custom Package Manager reads that file as migration input, adopts ownership only when the target still matches its recorded hash, preserves the legacy file, and respects a previously disabled automatic-install preference.
+이전에 AI Jira가 관리하던 프로젝트는 기존 `UserSettings/AIJira/skill-install-state.json`을 유지합니다. Custom Package Manager는 이 파일을 마이그레이션 입력으로 읽고 target이 기록된 hash와 여전히 일치할 때만 소유권을 인수하며 legacy 파일과 이전에 비활성화한 자동 설치 설정을 보존합니다.
 
-## External SDK Install Profiles
+## 외부 SDK 설치 Profile
 
-`SDKInstallProfile.json` is a versioned, vendor-neutral declaration for installing one external SDK from official sources. Schema v1 keeps the existing exact immutable source contract and synchronous `Plan` API. Schema v2 can opt each source into `ResolutionPolicy: anyInstalledElseLatestStable`: the async resolver preserves any already resolved required package version, and consults declared official metadata only when that package is missing. Profiles declare vendor and license metadata, Unity/platform compatibility, allowed HTTPS domains, artifact/Git/registry sources, optional modules and their dependency closure, scoped registries, and existing-install detection rules. Git sources may declare a safe relative `GitSubpath`; the planner composes it as the UPM `?path=<subpath>#<immutable-revision>` dependency value. Profiles never contain credentials or vendor configuration values.
+`SDKInstallProfile.json`은 공식 출처에서 외부 SDK 하나를 설치하는 versioned·vendor-neutral 선언입니다. Schema v1은 기존의 정확한 불변 source 계약과 동기 `Plan` API를 유지합니다. Schema v2는 각 source에서 `ResolutionPolicy: anyInstalledElseLatestStable`을 선택할 수 있습니다. 비동기 resolver는 이미 해석된 필수 패키지 버전을 보존하고 해당 패키지가 없을 때만 선언된 공식 metadata를 조회합니다. Profile은 vendor 및 license metadata, Unity/platform 호환성, 허용 HTTPS domain, artifact/Git/registry source, 선택 module과 dependency closure, scoped registry 및 기존 설치 감지 규칙을 선언합니다. Git source는 안전한 상대 `GitSubpath`를 선언할 수 있고 planner는 이를 UPM `?path=<subpath>#<immutable-revision>` 의존성 값으로 조합합니다. Profile에는 자격 증명이나 vendor 설정 값을 포함하지 않습니다.
 
-Schema-v2 latest sources declare a matching `LatestResolver` (`registryMetadata`, `gitRelease`, or `artifactMetadata`) plus a query-free `MetadataUrl` on `AllowedDomains`. The resolver accepts the canonical `PackageId` plus `Releases` document, native npm/UPM `versions` metadata for registries, and GitHub-style release arrays for Git sources. Every canonical release declares stable exact `Version` and optional `MinimumUnityVersion`/`MaximumUnityVersion`; Git releases also declare `ImmutableRevision`, while artifact releases declare credential-free `Url`, exact `PackageVersion`, and `Sha256`. Artifact metadata without an explicit SHA-256 is rejected. Drafts and prereleases are excluded. Fully missing sources sharing a non-empty `VersionFamily` resolve the newest compatible common version. A partially installed family pins every missing selected package to the installed version only when that version remains officially available and compatible; conflicting or unavailable family versions are blocked.
+Schema v2 latest source는 일치하는 `LatestResolver`(`registryMetadata`, `gitRelease`, `artifactMetadata`)와 `AllowedDomains`의 query 없는 `MetadataUrl`을 선언합니다. Resolver는 canonical `PackageId` 및 `Releases` 문서, registry의 native npm/UPM `versions` metadata와 Git source의 GitHub 형식 release 배열을 받습니다. 모든 canonical release는 안정적인 정확한 `Version`과 선택형 `MinimumUnityVersion`/`MaximumUnityVersion`을 선언합니다. Git release는 `ImmutableRevision`, artifact release는 자격 증명 없는 `Url`, 정확한 `PackageVersion`, `Sha256`도 선언합니다. 명시적 SHA-256이 없는 artifact metadata는 거부합니다. Draft와 prerelease는 제외합니다. 비어 있지 않은 `VersionFamily`를 공유하는 source가 모두 누락된 경우 호환되는 가장 최신 공통 버전을 해석합니다. 일부만 설치된 family는 해당 버전이 공식적으로 제공되고 호환될 때만 누락된 선택 패키지를 설치된 버전에 고정하며 충돌하거나 사용할 수 없는 family 버전은 차단합니다.
 
-`ResolveAsync` and `PreparePlanAsync` are non-mutating. Installed-state detection compares `Packages/manifest.json`, `Packages/packages-lock.json`, and, for the open project, Unity's registered packages. A manifest-only declaration, duplicate, invalid source, missing registration, inconsistent resolution, legacy conflict, or ambiguous partial state blocks planning. When every selected latest-policy dependency is already resolved, planning returns `NO_CHANGES` and execution does not write manifest or ownership state. Missing packages resolve to an immutable version/commit/checksum snapshot; the exact metadata content hash and project package-state hashes are included in the plan ID and revalidated before execution.
+`ResolveAsync`와 `PreparePlanAsync`는 상태를 변경하지 않습니다. 설치 상태 감지는 `Packages/manifest.json`, `Packages/packages-lock.json`, 열린 프로젝트의 Unity 등록 패키지를 비교합니다. Manifest에만 있는 선언, 중복, 잘못된 source, 누락된 등록, 일관되지 않은 해석, legacy 충돌 또는 모호한 부분 상태는 plan을 차단합니다. 선택한 latest-policy 의존성이 모두 이미 해석되어 있으면 `NO_CHANGES`를 반환하고 manifest나 ownership 상태를 쓰지 않습니다. 누락된 패키지는 불변 version/commit/checksum snapshot으로 해석하며 정확한 metadata content hash와 프로젝트 package-state hash를 plan ID에 포함하고 실행 전에 다시 검증합니다.
 
-Use `Tools > Package > Custom Package Manager > SDK Profiles` or the `SDK Profiles` toolbar button:
+`Tools > Package > Custom Package Manager > SDK Profiles` 또는 `SDK Profiles` toolbar button을 사용합니다.
 
-1. Load an installed bridge package's `Editor/SDKInstallProfile.json`.
-2. Select optional modules and run `Inspect (read-only)`.
-3. Choose `Apply`, `Repair`, `Update`, or `Remove`, then run `Resolve + Prepare Plan (read-only)`.
-4. Review every dependency, scoped-registry, artifact-cache, and ownership change plus the content-bound plan ID.
-5. Use the separate confirmation dialog to execute that exact plan.
+1. 설치된 bridge 패키지의 `Editor/SDKInstallProfile.json`을 불러옵니다.
+2. 선택 module을 지정하고 `Inspect (read-only)`를 실행합니다.
+3. `Apply`, `Repair`, `Update`, `Remove` 중 하나를 선택한 뒤 `Resolve + Prepare Plan (read-only)`을 실행합니다.
+4. 모든 의존성, scoped registry, artifact cache, ownership 변경과 content-bound plan ID를 검토합니다.
+5. 별도 확인 dialog에서 정확히 해당 plan을 실행합니다.
 
-Execution revalidates the profile, plan ID, manifest, packages lock, Unity registered packages, ownership, and official metadata snapshots before mutation. Artifact downloads require credential-free HTTPS on declared domains, a verified SHA-256, and matching `package/package.json` identity. Manifest and ownership writes are atomic and transaction journals are kept under `UserSettings/ActionFitPackageManager/SdkTransactions`. A domain reload only reports pending journals; recovery changes project state only through the explicit recovery action.
+실행은 변경 전에 profile, plan ID, manifest, packages lock, Unity 등록 패키지, ownership과 공식 metadata snapshot을 다시 검증합니다. Artifact download에는 선언 domain의 자격 증명 없는 HTTPS, 검증된 SHA-256과 일치하는 `package/package.json` identity가 필요합니다. Manifest 및 ownership은 원자적으로 쓰고 transaction journal은 `UserSettings/ActionFitPackageManager/SdkTransactions`에 유지합니다. Domain reload는 대기 journal만 보고하며 recovery는 명시적 복구 동작에서만 프로젝트 상태를 변경합니다.
 
-Ownership schema version 1 records only entries created or deliberately adopted by each profile. Removal preserves compatible dependencies, registry scopes, cached artifacts, or shared entries that were not created by that profile, and conflicts block execution instead of overwriting user-managed state.
+Ownership schema version 1은 각 profile이 생성하거나 의도적으로 인수한 항목만 기록합니다. 제거는 해당 profile이 만들지 않은 호환 의존성, registry scope, cache artifact 또는 공유 항목을 보존하며 충돌 시 사용자 관리 상태를 덮어쓰지 않고 실행을 차단합니다.
 
-Bridge package authors can call `ActionFitSdkBridgePackageTemplate.Create`. The template requires `Public` repository visibility and a valid profile whose `BridgePackageId` matches the package ID. It adds the installed `com.actionfit.custompackagemanager` version as an explicit package dependency plus `Editor/SDKInstallProfile.json`, `THIRD_PARTY_NOTICES.md`, and an Editor contract-test assembly. Bridge packages are source-only: no SDK binaries, archives, credentials, `google-services.json`, or `GoogleService-Info.plist` may be redistributed.
+Bridge 패키지 작성자는 `ActionFitSdkBridgePackageTemplate.Create`를 호출할 수 있습니다. Template에는 `Public` 저장소 공개 범위와 패키지 ID에 `BridgePackageId`가 일치하는 유효 profile이 필요합니다. 설치된 `com.actionfit.custompackagemanager` 버전을 명시적 패키지 의존성으로 추가하고 `Editor/SDKInstallProfile.json`, `THIRD_PARTY_NOTICES.md`와 Editor 계약 테스트 어셈블리를 생성합니다. Bridge 패키지는 source-only이며 SDK 바이너리, archive, 자격 증명, `google-services.json` 또는 `GoogleService-Info.plist`를 재배포하면 안 됩니다.
 
-## Package Contract Validator
+## 패키지 계약 검증기
 
-`Tools~/package_contract_validator.py` validates embedded `Packages/com.actionfit.*` packages without starting Unity or contacting external services. Run it from the consuming Unity project root with Python 3:
+`Tools~/package_contract_validator.py`는 Unity를 시작하거나 외부 서비스에 연결하지 않고 embedded `Packages/com.actionfit.*` 패키지를 검증합니다. 사용하는 Unity 프로젝트 root에서 Python 3로 실행합니다.
 
 ```bash
 # One package. Add --base-ref to enforce a version bump for changed files.
@@ -134,131 +140,131 @@ python Packages/com.actionfit.custompackagemanager/Tools~/package_contract_valid
 python Packages/com.actionfit.custompackagemanager/Tools~/package_contract_validator.py --all
 ```
 
-The validator checks `package.json`, SemVer and changed-package version bumps, README install tags, `AI_GUIDE.md` identity/version/router entries, schema v2 prefix/help/access rules, registered skill sources and `SKILL.md` frontmatter, `ActionFitPackageInfo_SO`, and package asmdefs. When a package contains `Editor/SDKInstallProfile.json`, it also enforces profile schema/source immutability, public bridge visibility, third-party notices, source-only size boundaries, and forbidden vendor files or credentials. It writes the same JSON schema to stdout and optional `--output`; every diagnostic includes `code`, `severity`, `path`, `line`, `message`, and `suggestedFix`.
+검증기는 `package.json`, SemVer와 변경 패키지 버전 상승, README 설치 tag, `AI_GUIDE.md` identity/version/router 항목, schema v2 prefix/help/access 규칙, 등록 skill source와 `SKILL.md` frontmatter, `ActionFitPackageInfo_SO` 및 패키지 asmdef를 확인합니다. 패키지에 `Editor/SDKInstallProfile.json`이 있으면 profile schema/source 불변성, public bridge 공개 범위, 서드파티 고지, source-only 크기 경계와 금지된 vendor 파일 또는 자격 증명도 검사합니다. 동일한 JSON schema를 stdout과 선택형 `--output`에 쓰며 모든 진단에는 `code`, `severity`, `path`, `line`, `message`, `suggestedFix`가 포함됩니다.
 
-Exit codes are stable for local automation and CI:
+Exit code는 로컬 자동화 및 CI에서 안정적으로 유지됩니다.
 
-- `0`: every selected package passed.
-- `1`: one or more package contract diagnostics have `severity: error`.
-- `2`: the validator could not run reliably because of arguments, Git, repository, or result-output infrastructure.
+- `0`: 선택한 모든 패키지가 통과했습니다.
+- `1`: 하나 이상의 패키지 계약 진단에 `severity: error`가 있습니다.
+- `2`: argument, Git, 저장소 또는 결과 출력 infrastructure 문제로 검증기를 안정적으로 실행하지 못했습니다.
 
-`--changed` requires `--base-ref`. `--package` and `--all` can run without Git comparison, but version-bump enforcement is enabled only when `--base-ref` is supplied. The validator does not inspect catalogs, GitHub remotes, credentials, Unity compilation, or package tests.
+`--changed`에는 `--base-ref`가 필요합니다. `--package`와 `--all`은 Git 비교 없이 실행할 수 있지만 버전 상승 강제 검사는 `--base-ref`를 제공할 때만 활성화됩니다. 검증기는 catalog, GitHub remote, 자격 증명, Unity compile 또는 패키지 테스트를 검사하지 않습니다.
 
-When Unity invokes the package-owned validator from an isolated `file:` dependency, the Editor adapter resolves the real package repository root from the installed package path instead of assuming the disposable project's virtual `Packages` path is physical. Publish preparation also returns contract diagnostics before requiring a physical embedded folder or inspecting catalog, credential, and remote state.
+Unity가 격리된 `file:` 의존성에서 패키지 소유 검증기를 호출하면 Editor adapter는 일회용 프로젝트의 가상 `Packages` 경로가 physical이라고 가정하지 않고 설치된 패키지 경로에서 실제 패키지 저장소 root를 해석합니다. Publish 준비도 physical embedded 폴더를 요구하거나 catalog, 자격 증명 및 remote 상태를 검사하기 전에 계약 진단을 반환합니다.
 
-## Package Manager
+## 패키지 관리자
 
-### Content Bundles
+### Content Bundle
 
-A bootstrap package can pass a versioned JSON profile to `ActionFitContentBundleApi` so one Git URL installs a coherent default package set. Legacy schema version 1 installs its complete package list. Schema version 2 groups packages into required and optional modules: required modules cannot be deselected, default-selected modules preserve one-click installation, and direct consumers can select a smaller closure through `PlanSelectedModulesJson` / `InstallSelectedModulesJson`. Shared packages are installed once. The manager plans all dependency changes first, preserves compatible embedded packages and equal/newer canonical tags, upgrades only older tags from the same canonical repository, and blocks local, forked, branch-based, unparseable, or user-modified values instead of overwriting them.
+Bootstrap 패키지는 versioned JSON profile을 `ActionFitContentBundleApi`에 전달해 하나의 Git URL로 응집력 있는 기본 패키지 묶음을 설치할 수 있습니다. Legacy schema version 1은 전체 패키지 목록을 설치합니다. Schema version 2는 패키지를 필수 및 선택 module로 그룹화합니다. 필수 module은 선택 해제할 수 없고 기본 선택 module은 한 번의 설치 흐름을 유지하며 직접 사용자는 `PlanSelectedModulesJson` / `InstallSelectedModulesJson`으로 더 작은 closure를 선택할 수 있습니다. 공유 패키지는 한 번만 설치합니다. Manager는 모든 의존성 변경을 먼저 plan하고 호환되는 embedded 패키지와 같거나 최신인 canonical tag를 보존하며, 같은 canonical 저장소의 오래된 tag만 업그레이드합니다. Local, fork, branch 기반, 해석 불가 또는 사용자가 수정한 값은 덮어쓰지 않고 차단합니다.
 
-Successful installation is journaled, writes `Packages/manifest.json` atomically, waits until every required package is registered, persists ownership in `ProjectSettings/ActionFitContentBundles.json`, then removes the bootstrap dependency. Interrupted install/release transactions remain under `UserSettings/ActionFitPackageManager/ContentBundleTransactions` for Editor-load recovery.
+성공한 설치는 journal에 기록하고 `Packages/manifest.json`을 원자적으로 쓴 뒤 모든 필수 패키지가 등록될 때까지 기다립니다. 이후 `ProjectSettings/ActionFitContentBundles.json`에 ownership을 영속화하고 bootstrap 의존성을 제거합니다. 중단된 install/release transaction은 Editor load 복구를 위해 `UserSettings/ActionFitPackageManager/ContentBundleTransactions`에 남깁니다.
 
-Active bundles appear above normal package rows. Their selected modules can be changed only through `PlanModifyModules` / `ModifyModules`; the UI shows the exact package diff before applying it. Selected packages cannot be removed directly, required modules remain selected, and package-registration events reconcile missing required manifest entries. Release requires the profile's exact GitHub-login allowlist and preserves shared, embedded, non-owned, and user-modified dependencies. Batchmode mutation is disabled; inspection and planning APIs remain read-only.
+활성 bundle은 일반 패키지 행 위에 표시됩니다. 선택 module은 `PlanModifyModules` / `ModifyModules`에서만 변경할 수 있고 UI가 적용 전 정확한 패키지 diff를 보여줍니다. 선택 패키지는 직접 제거할 수 없고 필수 module은 선택 상태를 유지하며 패키지 등록 event가 누락된 필수 manifest 항목을 복구합니다. Release에는 profile의 정확한 GitHub login allowlist가 필요하고 shared, embedded, 비소유 및 사용자 수정 의존성을 보존합니다. Batchmode 변경은 비활성화되며 조사 및 plan API는 읽기 전용입니다.
 
-Public Editor APIs:
+공개 Editor API:
 
 - `ActionFitContentBundleApi.InspectJson` / `PlanJson`
 - `ActionFitContentBundleApi.PlanSelectedModulesJson` / `InstallSelectedModulesJson` / `RepairSelectedModulesJson`
-- `ActionFitContentBundleApi.InstallJson` / `RepairJson` for default module selection
+- 기본 module 선택용 `ActionFitContentBundleApi.InstallJson` / `RepairJson`
 - `ActionFitContentBundleApi.PlanModifyModules` / `ModifyModules`
 - `ActionFitContentBundleApi.PlanRelease` / `Release` / `Remove`
-- `ActionFitContentBundleApi.Recover`, `GetStatuses`, `IsRequiredPackage`, and `IsManagedPackage`
+- `ActionFitContentBundleApi.Recover`, `GetStatuses`, `IsRequiredPackage`, `IsManagedPackage`
 
-New installer packages should start from `Editor/Templates~/ContentBundleInstaller/` and follow `Editor/Documentation/ContentBundleInstallerContract.md`. The Editor-only bootstrap discovers Custom Package Manager by reflection, installs only a missing or older canonical manager tag, preserves embedded/local/forked/newer manager sources, invokes the default module install, and lets the manager remove the verified bootstrap dependency.
+새 installer 패키지는 `Editor/Templates~/ContentBundleInstaller/`에서 시작하고 `Editor/Documentation/ContentBundleInstallerContract.md`를 따릅니다. Editor 전용 bootstrap은 reflection으로 Custom Package Manager를 찾고 누락되었거나 오래된 canonical manager tag만 설치합니다. Embedded/local/fork/newer manager source를 보존하고 기본 module 설치를 호출한 뒤 manager가 검증된 bootstrap 의존성을 제거하게 합니다.
 
-- `Reload`: reloads the active catalog and current package install state.
-- `Update Catalog`: downloads the local catalog CSV from the configured spreadsheet/web app.
-- `Force Update`: runs `Update Catalog`, lists downloaded packages, and re-applies their catalog latest Git UPM URLs to `Packages/manifest.json` after confirmation. Embedded packages are skipped.
-- `Check Update`: shows installed packages whose catalog latest version is higher than the current version.
-- `Console`: opens the Manager Console.
-- `SDK Profiles`: opens the external SDK inspection, plan, execution, and explicit recovery window.
+- `Reload`: 활성 catalog와 현재 패키지 설치 상태를 다시 불러옵니다.
+- `Update Catalog`: 설정된 spreadsheet/web app에서 로컬 catalog CSV를 내려받습니다.
+- `Force Update`: `Update Catalog`를 실행하고 downloaded 패키지를 나열한 뒤 확인을 거쳐 catalog 최신 Git UPM URL을 `Packages/manifest.json`에 다시 적용합니다. Embedded 패키지는 건너뜁니다.
+- `Check Update`: catalog 최신 버전이 현재 버전보다 높은 설치 패키지를 표시합니다.
+- `Console`: Manager Console을 엽니다.
+- `SDK Profiles`: 외부 SDK 조사, plan, 실행 및 명시적 recovery 창을 엽니다.
 
-Package sections are grouped as Package Manager, Embedded Packages, Downloaded Packages, and Available Packages. Git/registry dependencies in `Packages/manifest.json` are shown as Downloaded Packages. Local `file:` dependencies or package folders under `Packages/` without a manifest dependency are shown as Embedded Packages.
+패키지 section은 Package Manager, Embedded Packages, Downloaded Packages, Available Packages로 나뉩니다. `Packages/manifest.json`의 Git/registry 의존성은 Downloaded Packages로 표시합니다. Local `file:` 의존성 또는 manifest 의존성 없이 `Packages/` 아래에 있는 패키지 폴더는 Embedded Packages로 표시합니다.
 
-Package sections are sorted by package community score, `likes - dislikes`, highest first. When the catalog spreadsheet Web App exposes `package_vote_summary`, `Update Catalog` imports `likes`, `dislikes`, `vote_score`, and `comment_count` into the local catalog CSV.
+패키지 section은 `likes - dislikes`로 계산한 community score가 높은 순서로 정렬합니다. Catalog spreadsheet Web App이 `package_vote_summary`를 제공하면 `Update Catalog`가 `likes`, `dislikes`, `vote_score`, `comment_count`를 로컬 catalog CSV로 가져옵니다.
 
-Package README and settings access live in the Unity top menu, not inside the Package Manager package rows. Each package gets `Tools > Package > <Package Name> > README`; packages that own or bootstrap a shared settings ScriptableObject also get `Setting SO` in the same separated lower menu group. Each package owns its own menu file and uses its package-specific asset path or safe factory method for `Setting SO`.
+패키지 README와 설정 접근 메뉴는 Package Manager 행이 아니라 Unity 상단 메뉴에 있습니다. 각 패키지는 `Tools > Package > <Package Name> > README`를 가지며 공유 설정 ScriptableObject를 소유하거나 bootstrap하는 패키지는 같은 분리된 하단 메뉴 그룹에 `Setting SO`도 가집니다. 각 패키지는 자체 메뉴 파일을 소유하고 `Setting SO`에 패키지별 에셋 경로나 안전한 factory method를 사용합니다.
 
-`Tools > Package` must stay grouped by menu priority: the package-wide Custom Package Manager entry is first, packages with executable tool commands come next, packages with only `Setting SO` + `README` come after that, and README-only packages are placed at the bottom. Keep separator gaps between those groups. Inside a package root, real tool commands stay above the separated lower `Setting SO` and `README` entries.
+`Tools > Package`는 메뉴 우선순위에 따라 그룹을 유지해야 합니다. 패키지 전체 Custom Package Manager 항목이 먼저, 실행 가능한 도구 명령이 있는 패키지가 다음, `Setting SO` + `README`만 있는 패키지가 그다음, README 전용 패키지가 마지막입니다. 그룹 사이에는 separator 간격을 유지합니다. 패키지 root 안에서 실제 도구 명령은 분리된 하단 `Setting SO`와 `README`보다 위에 둡니다.
 
-Use the established priority bands unless a package has a documented reason to differ: Package Manager `0-9`, executable tools `20-99`, `Setting SO` + `README` only packages `600-699`, and README-only packages `900-999`. New packages created by `1. Create Package` include a README-only package menu file by default.
+패키지에 문서화된 예외 사유가 없다면 정해진 priority band를 사용합니다. Package Manager는 `0-9`, 실행 도구는 `20-99`, `Setting SO` + `README` 전용 패키지는 `600-699`, README 전용 패키지는 `900-999`입니다. `1. Create Package`로 만든 새 패키지는 기본적으로 README 전용 패키지 메뉴 파일을 포함합니다.
 
-Downloaded packages include `Embed for Edit`, `Project Override`, and `Fork as New`. `Embed for Edit` uses Unity Package Manager's official `Client.Embed` operation to materialize the downloaded package under `Packages/<packageId>/`. After Unity reports success, the manager validates `package.json`, removes cache-only `_fingerprint` metadata, normalizes `Packages/manifest.json` to `file:<packageId>`, and preserves catalog repository metadata so edits can be published back to the existing package repository. If a physical local package folder already exists and its `package.json` name matches, the tool can use that existing folder without overwriting it. The manager records a package file baseline under `UserSettings/ActionFitPackageManager/EmbeddedBaselines` so later conversion warnings can report whether files changed after embedding. Modifying a downloaded package requires this Embed for Edit flow; updating the upstream repository directly and hand-pushing a version tag is not an approved modification path because the catalog never records the new version.
+Downloaded 패키지는 `Embed for Edit`, `Project Override`, `Fork as New`를 제공합니다. `Embed for Edit`는 Unity Package Manager의 공식 `Client.Embed` 작업으로 downloaded 패키지를 `Packages/<packageId>/` 아래에 materialize합니다. Unity가 성공을 보고하면 manager가 `package.json`을 검증하고 cache 전용 `_fingerprint` metadata를 제거하며 `Packages/manifest.json`을 `file:<packageId>`로 정규화합니다. 기존 패키지 저장소로 변경을 publish할 수 있도록 catalog 저장소 metadata도 보존합니다. Physical local 패키지 폴더가 이미 있고 `package.json` name이 일치하면 덮어쓰지 않고 기존 폴더를 사용할 수 있습니다. Manager는 `UserSettings/ActionFitPackageManager/EmbeddedBaselines`에 패키지 파일 baseline을 기록해 이후 변환 경고에서 embed 후 파일 변경 여부를 보고합니다. Downloaded 패키지를 수정하려면 이 Embed for Edit 흐름을 사용해야 합니다. Catalog가 새 버전을 기록하지 못하므로 upstream 저장소를 직접 수정하고 version tag를 수동 push하는 방식은 승인된 수정 경로가 아닙니다.
 
-`Project Override` uses the same protected embed transaction but is limited to PackageInfo-declared Public packages and records the public base repository URL, version, revision, and content hash in `ProjectSettings/ActionFitPackageOverrides.json`. It stores only a project-relative embedded path, never an absolute path or credential-bearing/private remote. Override status compares the current content hash and catalog latest version with the recorded base, is included in the generated AI package state without emitting the remote URL, and is excluded from single-package and automatic bulk upstream publishing. Use `Use Downloaded` to restore a catalog base and clear the record, or `Fork as New` with a new package ID/repository for independent publication.
+`Project Override`는 같은 보호 embed transaction을 사용하지만 PackageInfo에서 Public으로 선언된 패키지만 허용합니다. Public base 저장소 URL, version, revision 및 content hash를 `ProjectSettings/ActionFitPackageOverrides.json`에 기록합니다. 프로젝트 상대 embedded 경로만 저장하며 절대 경로나 자격 증명을 포함한/private remote는 저장하지 않습니다. Override 상태는 현재 content hash와 catalog 최신 버전을 기록된 base와 비교하고 remote URL을 노출하지 않은 채 생성 AI package state에 포함됩니다. 단일 패키지 및 자동 bulk upstream publish에서는 제외됩니다. Catalog base로 복원하고 기록을 지우려면 `Use Downloaded`, 새 패키지 ID/저장소로 독립 publish하려면 `Fork as New`를 사용합니다.
 
-Downloaded embedding is delegated to Unity Package Manager so Unity's virtual `Packages/<packageId>` mapping cannot redirect a custom folder move back into `Library/PackageCache`. Existing-folder conversion and `Fork as New` continue to use the atomic, journaled transaction shared by the UI and public AI API. Manifest writes use a verified temporary file and atomic replacement, and rollback restores affected dependency values before deleting any transaction-created package folder. Pending custom transactions are recorded under `UserSettings/ActionFitPackageManager/Transactions` and recovered after an Editor restart or domain reload. If dependency recovery cannot be verified, the local package folder is preserved and the API returns `RECOVERY_REQUIRED` with the journal path.
+Downloaded embedding은 Unity Package Manager에 위임하므로 Unity의 가상 `Packages/<packageId>` mapping이 custom 폴더 이동을 `Library/PackageCache` 안으로 되돌릴 수 없습니다. 기존 폴더 변환과 `Fork as New`는 UI와 public AI API가 공유하는 원자적 journal transaction을 계속 사용합니다. Manifest 쓰기는 검증된 임시 파일과 원자적 교체를 사용하고 rollback은 transaction이 생성한 패키지 폴더를 삭제하기 전에 영향받은 의존성 값을 복원합니다. 대기 중인 custom transaction은 `UserSettings/ActionFitPackageManager/Transactions`에 기록하고 Editor restart 또는 domain reload 후 복구합니다. 의존성 복구를 검증할 수 없으면 local 패키지 폴더를 보존하고 API가 journal 경로와 함께 `RECOVERY_REQUIRED`를 반환합니다.
 
-Unity can expose downloaded package cache contents through a logical `Packages/<packageId>` path even when no physical embedded folder exists. Conversion therefore uses guarded physical directory enumeration instead of `Directory.Exists` alone when deciding whether a reusable local folder exists. This prevents a downloaded cache projection from being mistaken for an embedded package and avoids writing a `file:` dependency without copying the package.
+Physical embedded 폴더가 없어도 Unity가 downloaded 패키지 cache 콘텐츠를 논리적 `Packages/<packageId>` 경로로 노출할 수 있습니다. 따라서 변환은 재사용 가능한 local 폴더 존재 여부를 판단할 때 `Directory.Exists`만 사용하지 않고 보호된 physical 디렉터리 열거를 사용합니다. Downloaded cache projection을 embedded 패키지로 오인하거나 패키지를 복사하지 않은 채 `file:` 의존성을 쓰는 문제를 방지합니다.
 
-`Fork as New` copies the downloaded package into a new `Packages/<newPackageId>/` folder, rewrites package metadata for the new `com.actionfit.*` package ID, creates PackageInfo metadata for a new repository, removes the original manifest dependency, and writes the new local `file:` dependency. Its repository visibility defaults to `Public`; `Private` must be selected explicitly as an approved exception. API requests that omit visibility are normalized to `Public`, while an unspecified `Private` request is rejected. This prevents the source package and the fork from compiling duplicate assemblies at the same time. If the copy or validation fails, the manifest is left unchanged so Unity does not resolve a broken `file:` dependency. Embedded packages include `Use Downloaded`, which returns the package to the downloaded flow through the same protected replacement process used by embedded updates.
+`Fork as New`는 downloaded 패키지를 새 `Packages/<newPackageId>/` 폴더로 복사하고 새 `com.actionfit.*` 패키지 ID에 맞게 metadata를 다시 씁니다. 새 저장소용 PackageInfo metadata를 만들고 원래 manifest 의존성을 제거한 뒤 새 local `file:` 의존성을 씁니다. 저장소 공개 범위 기본값은 `Public`이며 `Private`은 승인된 예외로 명시적으로 선택해야 합니다. Visibility가 없는 API 요청은 `Public`으로 정규화하고 지정되지 않은 `Private` 요청은 거부합니다. Source 패키지와 fork가 중복 어셈블리를 동시에 compile하지 않게 합니다. 복사 또는 검증이 실패하면 manifest를 그대로 유지해 Unity가 깨진 `file:` 의존성을 해석하지 않게 합니다. Embedded 패키지의 `Use Downloaded`는 embedded 업데이트와 같은 보호 교체 절차로 패키지를 downloaded 흐름으로 되돌립니다.
 
-Before an embedded package is replaced, the manager reports whether it changed since `Embed for Edit`, warns that local modifications are not merged, and creates a timestamped safety copy under `UserSettings/ActionFitPackageManager/EmbeddedBackups/<packageId>/`. The manifest is changed only after every required backup succeeds. If an embedded folder cannot be moved to the operating system trash, the manager restores the original manifest and any package folders already moved during that operation. Backups remain until they are removed manually.
+Embedded 패키지를 교체하기 전에 manager는 `Embed for Edit` 이후 변경 여부와 local 수정이 merge되지 않는다는 경고를 표시하고 `UserSettings/ActionFitPackageManager/EmbeddedBackups/<packageId>/` 아래에 timestamp가 있는 안전 복사본을 만듭니다. 필요한 모든 backup이 성공한 뒤에만 manifest를 변경합니다. Embedded 폴더를 운영체제 휴지통으로 옮길 수 없으면 원래 manifest와 해당 작업 중 이미 옮긴 패키지 폴더를 복원합니다. Backup은 수동으로 제거할 때까지 유지합니다.
 
-After editing an embedded package, bump its `package.json` version above the catalog latest version before using `Publish Changed`.
+Embedded 패키지를 수정한 뒤 `Publish Changed`를 사용하기 전에 `package.json` 버전을 catalog 최신 버전보다 높게 올립니다.
 
-## Community Feedback
+## 커뮤니티 피드백
 
-Each package detail view includes a `Community` foldout.
+각 패키지 상세 화면에는 `Community` foldout이 있습니다.
 
-- `Like` and `Dislike` share one vote per anonymous project ID and package.
-- The anonymous project ID is stored at `UserSettings/ActionFitPackageManager/community_id.txt` and is not a user account or machine identity.
-- After a project submits either `Like` or `Dislike`, both vote buttons are disabled for that package. The first submitted vote is final.
-- Comments use a `Title` and `Description`. Comment titles are shown as foldouts so users can scan titles first and open only the descriptions they want to read.
-- Each project can keep one editable comment per package.
+- `Like`와 `Dislike`는 익명 project ID 및 패키지당 하나의 vote를 공유합니다.
+- 익명 project ID는 `UserSettings/ActionFitPackageManager/community_id.txt`에 저장하며 사용자 계정이나 기기 identity가 아닙니다.
+- 프로젝트가 `Like` 또는 `Dislike` 중 하나를 제출하면 해당 패키지의 두 vote button을 모두 비활성화합니다. 첫 vote가 최종입니다.
+- Comment는 `Title`과 `Description`을 사용합니다. 사용자가 제목을 먼저 훑고 원하는 설명만 열 수 있도록 comment title을 foldout으로 표시합니다.
+- 각 프로젝트는 패키지당 편집 가능한 comment 하나를 유지할 수 있습니다.
 
-The configured catalog Web App must support `votePackage`, `upsertPackageComment`, and returning the `package_comments` sheet during `Update Catalog`. See `Editor/Documentation/PackageCommunityWebAppContract.md` for the required sheet and response contract.
+설정된 catalog Web App은 `votePackage`, `upsertPackageComment`와 `Update Catalog` 중 `package_comments` sheet 반환을 지원해야 합니다. 필요한 sheet 및 response 계약은 `Editor/Documentation/PackageCommunityWebAppContract.md`를 확인하세요.
 
-## Check Update
+## 업데이트 확인
 
-The `Check Update` panel shows installed packages only when the catalog latest version is higher than the current installed version.
+`Check Update` panel은 catalog 최신 버전이 현재 설치 버전보다 높을 때만 설치 패키지를 표시합니다.
 
-- Downloaded packages can be updated individually, by selection, or all at once. `Select Downloaded` and `Update Downloaded` never select embedded packages automatically.
-- Embedded packages are shown too, but must be selected explicitly or updated with `Convert & Update`. Selecting a different version creates a safety backup and converts the package to a Git UPM dependency; local modifications are not merged.
-- `Changes` shows changelog rows between the installed version and the selected target version.
-- `History` shows all catalog changelog rows for the package.
-- Package detail rows expose the same `Changes` and `History` behavior inline under the expanded package.
-- `Latest Git` opens the package's catalog latest GitHub repository tag in the default browser.
-- If the installed package is newer than the catalog latest version, it stays out of the `Check Update` panel to avoid accidental downgrade.
+- Downloaded 패키지는 개별, 선택 또는 전체 업데이트할 수 있습니다. `Select Downloaded`와 `Update Downloaded`는 embedded 패키지를 자동 선택하지 않습니다.
+- Embedded 패키지도 표시하지만 명시적으로 선택하거나 `Convert & Update`로 업데이트해야 합니다. 다른 버전을 선택하면 안전 backup을 만들고 패키지를 Git UPM 의존성으로 변환하며 local 수정은 merge하지 않습니다.
+- `Changes`는 설치 버전과 선택 target 버전 사이의 changelog 행을 표시합니다.
+- `History`는 해당 패키지의 모든 catalog changelog 행을 표시합니다.
+- 패키지 상세 행도 펼친 패키지 안에서 같은 `Changes`와 `History` 동작을 제공합니다.
+- `Latest Git`은 기본 browser에서 패키지의 catalog 최신 GitHub 저장소 tag를 엽니다.
+- 설치 패키지가 catalog 최신 버전보다 높으면 우발적 downgrade를 막기 위해 `Check Update` panel에 표시하지 않습니다.
 
-`Force Update` is separate from `Check Update`. It first refreshes the catalog, then shows a confirmation list of downloaded packages and writes the catalog latest URL for each listed package. This can refresh same-version manifest entries and dependency URLs without touching embedded packages.
+`Force Update`는 `Check Update`와 별개입니다. 먼저 catalog를 refresh한 뒤 downloaded 패키지 확인 목록을 표시하고 나열된 각 패키지에 catalog 최신 URL을 씁니다. Embedded 패키지를 건드리지 않고 같은 버전의 manifest 항목과 의존성 URL을 refresh할 수 있습니다.
 
-For example, updating from `1.0.1` to `1.0.4` shows the changelog rows for `1.0.2`, `1.0.3`, and `1.0.4` at display time. Those rows are not stored inside the newest release note.
+예를 들어 `1.0.1`에서 `1.0.4`로 업데이트하면 화면 표시 시점에 `1.0.2`, `1.0.3`, `1.0.4` changelog 행을 보여줍니다. 해당 행을 최신 release note 안에 누적 저장하지 않습니다.
 
-## Changelog Rules
+## 변경 이력 규칙
 
-Each package's `ActionFitPackageInfo_SO.ReleaseNote` must contain only the single version being prepared. Do not accumulate old changelog entries in the newest release note.
+각 패키지의 `ActionFitPackageInfo_SO.ReleaseNote`에는 준비 중인 단일 버전 내용만 포함해야 합니다. 최신 release note에 이전 changelog를 누적하지 않습니다.
 
-Package Manager composes `History` and `Changes` from separate catalog version rows. Release notes do not need headings such as `## 1.1.28`; the UI already displays the version label.
+Package Manager는 별도 catalog version 행으로 `History`와 `Changes`를 구성합니다. UI가 이미 버전 label을 표시하므로 release note에 `## 1.1.28` 같은 제목을 넣을 필요가 없습니다.
 
-## Unity Menu
+## Unity 메뉴
 
-- Package root: `Tools > Package > Custom Package Manager`.
-- Install or refresh agent skills: `Tools > Package > Custom Package Manager > Install or Refresh Agent Skills`.
-- Remove managed agent skills: `Tools > Package > Custom Package Manager > Remove Managed Agent Skills`.
-- Add a schema v2 agent skill: `Tools > Package > Custom Package Manager > Add Agent Skill`.
+- 패키지 root: `Tools > Package > Custom Package Manager`
+- Agent skill 설치 또는 refresh: `Tools > Package > Custom Package Manager > Install or Refresh Agent Skills`
+- 관리 Agent Skill 제거: `Tools > Package > Custom Package Manager > Remove Managed Agent Skills`
+- Schema v2 Agent Skill 추가: `Tools > Package > Custom Package Manager > Add Agent Skill`
 - README: `Tools > Package > Custom Package Manager > README`.
 - Setting SO: `Tools > Package > Custom Package Manager > Setting SO`.
-- Package commands stay under the same package root and appear above the separated README/Setting SO entries when those entries exist.
-- `Tools > Package` group order must remain: package-wide manager, executable tool packages, Setting SO + README-only packages, README-only packages.
-- Priority bands: Package Manager `0-9`, executable tools `20-99`, Setting SO + README-only `600-699`, README-only `900-999`.
+- 패키지 명령은 같은 패키지 root 아래에 유지하며 README/Setting SO 항목이 있으면 분리된 해당 항목보다 위에 표시합니다.
+- `Tools > Package` 그룹 순서는 패키지 전체 manager, 실행 도구 패키지, Setting SO + README 전용 패키지, README 전용 패키지를 유지합니다.
+- Priority band: Package Manager `0-9`, 실행 도구 `20-99`, Setting SO + README 전용 `600-699`, README 전용 `900-999`
 
-## AI Guide
+## AI 가이드
 
-Every ActionFit package should ship an `AI_GUIDE.md` at the package root. This file lets AI assistants in consuming projects understand package-specific rules without access to this source project's `Docs/AI` folder.
+모든 ActionFit 패키지는 패키지 root에 `AI_GUIDE.md`를 포함해야 합니다. 사용하는 프로젝트의 AI assistant가 원본 프로젝트 `Docs/AI` 폴더에 접근하지 않아도 패키지별 규칙을 이해할 수 있게 합니다.
 
-- `README.md`: human-facing setup and usage.
-- `AI_GUIDE.md`: AI-facing package identity, editing rules, release-note rules, migration notes, and the package's requested router entry.
-- `PACKAGE_AI_GUIDE_ROUTER.md`: package-shipped AI router for choosing which installed package `AI_GUIDE.md` should be read for a task, plus the request to link this router from the project's default AI reading sequence.
-- `package.json`: package ID, version, Unity version, and dependencies.
-- `Editor/PackageInfo/ActionFitPackageInfo_SO.asset`: catalog metadata and release note source.
+- `README.md`: 사람을 위한 설정과 사용법입니다.
+- `AI_GUIDE.md`: AI를 위한 package identity, 편집 규칙, release note 규칙, migration 참고 사항과 패키지가 요청한 router 항목입니다.
+- `PACKAGE_AI_GUIDE_ROUTER.md`: 작업별로 어떤 설치 패키지 `AI_GUIDE.md`를 읽을지 선택하고 이 router를 프로젝트 기본 AI 읽기 순서에 연결하도록 요청하는 패키지 포함 AI router입니다.
+- `package.json`: 패키지 ID, 버전, Unity 버전과 의존성입니다.
+- `Editor/PackageInfo/ActionFitPackageInfo_SO.asset`: catalog metadata와 release note 원본입니다.
 
-When package behavior changes, update that package's `AI_GUIDE.md` before publishing. Custom Package Manager reads each package's `Requested router entry` and refreshes `PACKAGE_AI_GUIDE_ROUTER.md` automatically.
+패키지 동작이 변경되면 publish 전에 해당 패키지의 `AI_GUIDE.md`를 업데이트합니다. Custom Package Manager는 각 패키지의 `Requested router entry`를 읽고 `PACKAGE_AI_GUIDE_ROUTER.md`를 자동 refresh합니다.
 
-### Public AI APIs
+### 공개 AI API
 
-The APIs below are Editor-only, public, static, dialog-free, and return serializable result objects.
+아래 API는 Editor 전용 public static API이며 dialog 없이 실행되고 직렬화 가능한 result object를 반환합니다.
 
 ```csharp
 var inspection = ActionFitPackageWorkflowApi.Inspect(new ActionFitPackageInspectionRequest
@@ -300,81 +306,81 @@ var sdkPlan = ActionFitSdkInstallApi.Plan(sdkProfile, new ActionFitSdkPlanReques
 ActionFitSdkExecutionResult sdkResult = await ActionFitSdkInstallApi.ApplyAsync(sdkPlan, sdkPlan.PlanId);
 ```
 
-- `ActionFitPackageWorkflowApi.Inspect`: optionally refreshes the shared spreadsheet without confirmation UI, reads the latest catalog row, compares it with the installed version, reports embedded change state, and returns safe workflow options.
-- `ActionFitPackageWorkflowApi.InspectJson`: JSON wrapper for Unity connectors and AI tools.
-- `ActionFitPackageEmbedApi.GetCandidates`: lists installed ActionFit packages that have a downloadable source.
-- `ActionFitPackageEmbedApi.Validate`: dry, read-only validation for `Embed for Edit`.
-- `ActionFitPackageEmbedApi.EmbedForEditAsync`: conversion API used by the Package Manager UI; its callback receives the final `EMBEDDED` or failure result after Unity Package Manager finishes.
-- `ActionFitPackageEmbedApi.EmbedForEdit`: start-oriented convenience API. Downloaded packages return `EMBED_STARTED`; callers that require final success must use the async overload or inspect package state afterward.
-- `ActionFitPackageEmbedApi.ExecuteJson`: JSON start-result wrapper for Unity connectors and AI tools. A returned `EMBED_STARTED` is not the final conversion result.
-- `ActionFitPackageEmbedApi.RecoverPendingTransactions`: explicit recovery entry point in addition to automatic Editor-load recovery.
-- `ActionFitPackageSkillScaffoldApi.Add` / `AddJson`: adds a schema v2 package skill to an embedded package without overwriting existing sources. The first addition creates `<skillPrefix>-help` for Codex and Claude plus Codex `agents/openai.yaml` metadata.
-- `ActionFitSdkInstallApi.ReadProfile` / `Inspect` / `Plan`: validates a bridge profile and returns read-only installation state or a content-bound plan.
-- `ActionFitSdkInstallApi.ApplyAsync` / `RepairAsync` / `UpdateAsync` / `RemoveAsync`: executes only the matching reviewed operation and exact plan ID; it has no dialog or implicit approval.
-- `ActionFitSdkInstallApi.InspectPendingTransactions` / `RecoverPendingTransactions`: reports pending journals without mutation, then restores them only through an explicit recovery call.
-- `ActionFitPackagePublishApi.Prepare`: runs the local package contract first, then refreshes the catalog, blocks reused versions, validates package metadata/authentication, checks the GitHub repository and immutable tag, and returns a content-bound plan ID without changing external state. When the catalog source URL differs from the selected Public or Private target, it also compares actual visibility, default branch, every branch/tag ref, and target documentation before preparing a repository migration.
-- `ActionFitPackagePublishApi.Execute`: re-runs every preflight and requires the same plan ID plus the exact `RequiredApprovalText` before repository push, tag push, and catalog upsert. Repository relocation additionally requires `ApproveRepositoryMigration = true` and the exact separate `MigrationApprovalText`.
-- `ActionFitPackagePublishApi.PrepareJson` / `ExecuteJson`: JSON wrappers for AI connectors. Execution never infers approval from preparation.
-- `ActionFitPackagePublishApi.PrepareCatalogRecovery` / `ExecuteCatalogRecovery`: verifies an existing immutable remote tag against the local package, requires an exact recovery approval, and appends only the missing catalog row without pushing `main` or tags. JSON wrappers are available as `PrepareCatalogRecoveryJson` / `ExecuteCatalogRecoveryJson`.
-- `ActionFitPackageBulkPublishApi.PrepareAllChanged`: discovers changed embedded packages or validates an explicit package ID list, refreshes catalog/GitHub state, and returns one content-bound bulk plan without external changes. A package whose immutable tag already exists while its Catalog version is missing is verified and classified under `CatalogRecoveryPackageIds` instead of failing as a normal publish conflict.
-- `ActionFitPackageBulkPublishApi.ExecuteAll`: requires the exact bulk plan ID, exact publish approval, exact repository-creation package set, and—when needed—the exact migration and Catalog recovery approvals. Approved migrations finish first; only `PublishPackageIds` enter repository workers, while verified recovery rows join the Catalog batch without any repository action.
-- `ActionFitPackageBulkPublishApi.PrepareAllChangedJson` / `ExecuteAllJson`: JSON wrappers for AI connectors. The Manager Console's `Publish All Changed` button calls this same API.
-- `ActionFitPackageRepositoryRetirementApi.Prepare` / `Execute`: after a verified Private-to-Public publication and Catalog refresh, prepares and executes one exact `Keep`, `Archive`, or `Delete` source disposition. `Keep` performs no mutation; Archive/Delete recheck the Public immutable tag, every migrated ref, every known Catalog version URL, current PackageInfo target, source visibility, and local dependency references before mutation.
-- `ActionFitPackageRepositoryRetirementApi.PrepareBatch` / `ExecuteBatch`: binds an exact selected package/mode set, revalidates the full set and each item again immediately before mutation, and retires sources serially. It stops on the first failure and preserves every later source. JSON wrappers are available for all four operations.
+- `ActionFitPackageWorkflowApi.Inspect`: 확인 UI 없이 선택적으로 공유 spreadsheet를 refresh하고 최신 catalog 행을 읽어 설치 버전과 비교한 뒤 embedded 변경 상태와 안전한 workflow 선택지를 반환합니다.
+- `ActionFitPackageWorkflowApi.InspectJson`: Unity connector 및 AI 도구용 JSON wrapper입니다.
+- `ActionFitPackageEmbedApi.GetCandidates`: 내려받을 수 있는 source가 있는 설치 ActionFit 패키지를 나열합니다.
+- `ActionFitPackageEmbedApi.Validate`: `Embed for Edit`용 dry 읽기 전용 검증입니다.
+- `ActionFitPackageEmbedApi.EmbedForEditAsync`: Package Manager UI가 사용하는 변환 API입니다. Callback은 Unity Package Manager가 끝난 후 최종 `EMBEDDED` 또는 실패 결과를 받습니다.
+- `ActionFitPackageEmbedApi.EmbedForEdit`: 시작 결과 중심 편의 API입니다. Downloaded 패키지는 `EMBED_STARTED`를 반환하며 최종 성공이 필요한 호출자는 async overload를 사용하거나 이후 패키지 상태를 확인해야 합니다.
+- `ActionFitPackageEmbedApi.ExecuteJson`: Unity connector 및 AI 도구용 JSON 시작 결과 wrapper입니다. 반환된 `EMBED_STARTED`는 최종 변환 결과가 아닙니다.
+- `ActionFitPackageEmbedApi.RecoverPendingTransactions`: Editor load 자동 recovery 외에 제공하는 명시적 recovery entry point입니다.
+- `ActionFitPackageSkillScaffoldApi.Add` / `AddJson`: 기존 source를 덮어쓰지 않고 embedded 패키지에 schema v2 package skill을 추가합니다. 최초 추가 시 Codex 및 Claude용 `<skillPrefix>-help`와 Codex `agents/openai.yaml` metadata를 만듭니다.
+- `ActionFitSdkInstallApi.ReadProfile` / `Inspect` / `Plan`: bridge profile을 검증하고 읽기 전용 설치 상태 또는 content-bound plan을 반환합니다.
+- `ActionFitSdkInstallApi.ApplyAsync` / `RepairAsync` / `UpdateAsync` / `RemoveAsync`: 검토한 작업과 정확한 plan ID가 일치할 때만 실행합니다. Dialog나 암묵적 승인은 없습니다.
+- `ActionFitSdkInstallApi.InspectPendingTransactions` / `RecoverPendingTransactions`: 상태 변경 없이 대기 journal을 보고하고 명시적 recovery 호출에서만 복원합니다.
+- `ActionFitPackagePublishApi.Prepare`: 로컬 패키지 계약을 먼저 실행하고 catalog refresh, 재사용 버전 차단, 패키지 metadata/authentication 검증, GitHub 저장소 및 불변 tag 확인 후 외부 상태를 변경하지 않는 content-bound plan ID를 반환합니다. Catalog source URL이 선택한 Public/Private target과 다르면 저장소 migration plan 전에 실제 공개 범위, default branch, 모든 branch/tag ref와 target 문서도 비교합니다.
+- `ActionFitPackagePublishApi.Execute`: 모든 preflight를 다시 실행하고 저장소 push, tag push 및 catalog upsert 전에 같은 plan ID와 정확한 `RequiredApprovalText`를 요구합니다. 저장소 이동에는 `ApproveRepositoryMigration = true`와 정확한 별도 `MigrationApprovalText`도 필요합니다.
+- `ActionFitPackagePublishApi.PrepareJson` / `ExecuteJson`: AI connector용 JSON wrapper입니다. 실행이 준비 단계에서 승인을 추론하지 않습니다.
+- `ActionFitPackagePublishApi.PrepareCatalogRecovery` / `ExecuteCatalogRecovery`: 기존 불변 remote tag를 로컬 패키지와 검증하고 정확한 recovery 승인을 요구한 뒤 `main`이나 tag를 push하지 않고 누락된 catalog 행만 추가합니다. JSON wrapper는 `PrepareCatalogRecoveryJson` / `ExecuteCatalogRecoveryJson`입니다.
+- `ActionFitPackageBulkPublishApi.PrepareAllChanged`: 변경된 embedded 패키지를 찾거나 명시한 패키지 ID 목록을 검증하고 catalog/GitHub 상태를 refresh한 뒤 외부 변경 없는 하나의 content-bound bulk plan을 반환합니다. 불변 tag가 이미 있지만 Catalog 버전이 누락된 패키지는 일반 publish 충돌로 실패하지 않고 검증 후 `CatalogRecoveryPackageIds`로 분류됩니다.
+- `ActionFitPackageBulkPublishApi.ExecuteAll`: 정확한 bulk plan ID, 정확한 publish 승인, 정확한 저장소 생성 패키지 집합과 필요 시 정확한 migration 및 Catalog recovery 승인을 요구합니다. 승인된 migration을 먼저 끝내고 `PublishPackageIds`만 저장소 worker에 전달하며 검증된 recovery 행은 저장소 작업 없이 Catalog batch에 합칩니다.
+- `ActionFitPackageBulkPublishApi.PrepareAllChangedJson` / `ExecuteAllJson`: AI connector용 JSON wrapper입니다. Manager Console의 `Publish All Changed` button도 같은 API를 호출합니다.
+- `ActionFitPackageRepositoryRetirementApi.Prepare` / `Execute`: 검증된 Private-to-Public publish와 Catalog refresh 후 정확한 `Keep`, `Archive`, `Delete` source 처분 하나를 준비하고 실행합니다. `Keep`은 변경하지 않으며 Archive/Delete는 변경 전에 Public 불변 tag, 모든 migration ref, 알려진 모든 Catalog version URL, 현재 PackageInfo target, source 공개 범위와 local 의존성 참조를 다시 확인합니다.
+- `ActionFitPackageRepositoryRetirementApi.PrepareBatch` / `ExecuteBatch`: 정확히 선택한 패키지/mode 집합을 bind하고 변경 직전에 전체 집합과 각 항목을 다시 검증한 뒤 source를 순차 retire합니다. 첫 실패에서 중단하고 이후 source를 보존합니다. 네 작업 모두 JSON wrapper를 제공합니다.
 
-Batchmode callers can use:
+Batchmode 호출자는 다음 entry point를 사용할 수 있습니다.
 
-- `-executeMethod ActionFitPackageEmbedCli.Run` with `-actionFitEmbedRequest <request.json>` and `-actionFitEmbedResult <result.json>`. Do not add Unity's `-quit` option: this command waits for the asynchronous embed result, writes the result file, and exits Unity itself.
-- `-executeMethod ActionFitPackageWorkflowCli.Run` with `-actionFitInspectRequest <request.json>` and `-actionFitInspectResult <result.json>`.
-- `-executeMethod ActionFitPackagePublishCli.Prepare` or `ActionFitPackagePublishCli.Execute` with `-actionFitPublishRequest <request.json>` and `-actionFitPublishResult <result.json>`.
-- `-executeMethod ActionFitPackageBulkPublishCli.PrepareAllChanged` or `ActionFitPackageBulkPublishCli.ExecuteAll` with `-actionFitBulkPublishRequest <request.json>` and `-actionFitBulkPublishResult <result.json>`.
+- `-executeMethod ActionFitPackageEmbedCli.Run`, `-actionFitEmbedRequest <request.json>`, `-actionFitEmbedResult <result.json>`을 함께 사용합니다. Unity `-quit` option은 추가하지 않습니다. 이 명령이 비동기 embed 결과를 기다리고 결과 파일을 쓴 뒤 Unity를 직접 종료합니다.
+- `-executeMethod ActionFitPackageWorkflowCli.Run`, `-actionFitInspectRequest <request.json>`, `-actionFitInspectResult <result.json>`을 함께 사용합니다.
+- `-executeMethod ActionFitPackagePublishCli.Prepare` 또는 `ActionFitPackagePublishCli.Execute`를 `-actionFitPublishRequest <request.json>` 및 `-actionFitPublishResult <result.json>`과 함께 사용합니다.
+- `-executeMethod ActionFitPackageBulkPublishCli.PrepareAllChanged` 또는 `ActionFitPackageBulkPublishCli.ExecuteAll`을 `-actionFitBulkPublishRequest <request.json>` 및 `-actionFitBulkPublishResult <result.json>`과 함께 사용합니다.
 
-Inspection is advisory and never publishes. Workflow options mark repository publishing with `RequiresExplicitPublishApproval`; AI must not push, tag, create a repository, or append a catalog row unless the user explicitly requests that external action.
+Inspection은 조언용이며 publish하지 않습니다. Workflow 선택지는 저장소 publish에 `RequiresExplicitPublishApproval`을 표시합니다. 사용자가 외부 작업을 명시적으로 요청하지 않으면 AI는 push, tag, 저장소 생성 또는 catalog 행 추가를 실행하면 안 됩니다.
 
-`Prepare` is always read-only. A successful plan returns an exact approval string such as `PUBLISH com.actionfit.example@1.2.3 PLAN <planId>`. `Execute` rejects missing or mismatched approval, rechecks the refreshed catalog and remote tag, and rejects a changed content hash or plan. New repository creation additionally requires `ApproveRepositoryCreation = true`. Bidirectional repository relocation has a separate `MIGRATE ... PLAN <planId>` approval and never changes source visibility in place or mutates the source during publication. A Private source may be archived or deleted only by a later retirement plan with its own exact approval. If repository push succeeds but catalog upsert fails, the result reports `RetryCatalogAppendAvailable = true` instead of pushing the repository again.
+`Prepare`는 항상 읽기 전용입니다. 성공한 plan은 `PUBLISH com.actionfit.example@1.2.3 PLAN <planId>` 같은 정확한 승인 문자열을 반환합니다. `Execute`는 누락되거나 일치하지 않는 승인을 거부하고 refresh된 catalog와 remote tag를 다시 확인하며 변경된 content hash 또는 plan을 거부합니다. 새 저장소 생성에는 `ApproveRepositoryCreation = true`도 필요합니다. 양방향 저장소 이동은 별도 `MIGRATE ... PLAN <planId>` 승인을 가지며 source 공개 범위를 제자리에서 바꾸거나 publish 중 source를 변경하지 않습니다. Private source는 이후 자체 정확한 승인을 가진 retirement plan에서만 archive 또는 delete할 수 있습니다. 저장소 push는 성공했지만 catalog upsert가 실패하면 저장소를 다시 push하지 않고 `RetryCatalogAppendAvailable = true`를 보고합니다.
 
-Custom Package Manager scans installed `AI_GUIDE.md` files from embedded `Packages/com.actionfit.*` folders and Git UPM `Library/PackageCache/com.actionfit.*@*` folders, then refreshes `PACKAGE_AI_GUIDE_ROUTER.md` from their `Requested router entry` blocks. Router entries are rewritten to the actual discovered guide path, so Git UPM packages point at `Library/PackageCache/...@hash/AI_GUIDE.md`. When a consuming project already has a primary AI markdown entry point, it also generates a `packages/actionfit-packages.md` compatibility pointer next to that entry point and adds an auto-managed section so the project-level AI router can discover `PACKAGE_AI_GUIDE_ROUTER.md`.
+Custom Package Manager는 embedded `Packages/com.actionfit.*`와 Git UPM `Library/PackageCache/com.actionfit.*@*` 폴더에서 설치된 `AI_GUIDE.md`를 검색한 뒤 각 `Requested router entry` block으로 `PACKAGE_AI_GUIDE_ROUTER.md`를 refresh합니다. Router 항목은 실제 검색한 guide 경로로 다시 쓰므로 Git UPM 패키지는 `Library/PackageCache/...@hash/AI_GUIDE.md`를 가리킵니다. 사용하는 프로젝트에 primary AI markdown entry point가 이미 있으면 그 옆에 `packages/actionfit-packages.md` 호환 pointer를 생성하고 프로젝트 수준 AI router가 `PACKAGE_AI_GUIDE_ROUTER.md`를 찾을 수 있도록 자동 관리 section을 추가합니다.
 
-If an AI assistant reads this package documentation before the automatic router has registered it, the package `AI_GUIDE.md` exposes its requested router entry and `PACKAGE_AI_GUIDE_ROUTER.md` tells the assistant where the router should be linked.
+자동 router가 등록되기 전에 AI assistant가 이 패키지 문서를 읽더라도 package `AI_GUIDE.md`가 요청 router 항목을 노출하고 `PACKAGE_AI_GUIDE_ROUTER.md`가 router를 연결할 위치를 안내합니다.
 
-## Manager Console
+## 관리자 콘솔
 
-- `1. Create Package`: defaults repository visibility to `Public`, permits `Private` only through an explicit exception selection, then creates the `Packages/com.actionfit.*` package skeleton, README, AI guide, README-only package menu file, asmdef, and PackageInfo SO. API requests that omit visibility are normalized to `Public`; an unspecified `Private` request or invalid enum value is rejected. The completed skeleton must pass the package-owned round-trip contract validator before creation returns successfully.
-- `2. Publish Changed`: normal publish path and the second Manager Console action. It finds top-level `Packages/com.actionfit.*` packages whose local `package.json` version is higher than the catalog latest version, includes newly created packages that are not yet registered, and uses the same approval-gated API for single and bulk publication. Nested `package.json` files under test fixtures or package content are not publish candidates. `Publish All Changed` separates normal publish rows from verified Catalog recovery rows, asks for a separate exact recovery approval, runs only normal repository publishes with up to 4 workers, then appends both groups by one Catalog batch request. Each package's `Repository Visibility` in `ActionFitPackageInfo_SO` selects the public/private GitHub profile.
-- `Add Agent Skill`: the third Manager Console action. It opens the same no-overwrite schema v2 scaffolding window used by embedded package detail rows. The first addition creates the mandatory help sources for Codex and Claude; later additions update only the manifest and newly requested source paths.
-- `Publish Package`: manual publish path for an already registered package when you need to type a specific version. After writing that version, it enters the same approval-gated preflight, migration, repository publish, and catalog sequence as `Publish Changed`.
-- `Open Catalog`: selects the local or fallback catalog CSV.
-- `Open Manifest`: opens the project `Packages/manifest.json`.
-- `Refresh AI Guide Router`: refreshes `PACKAGE_AI_GUIDE_ROUTER.md`, regenerates the local `packages/actionfit-packages.md` compatibility pointer next to the discovered AI entry point, and refreshes that entry point's auto-managed package guide section when one exists. The router code now keeps AI entry point registration behind adapter-style helpers so additional AI tools can be added without duplicating package guide scanning.
+- `1. Create Package`: 저장소 공개 범위 기본값을 `Public`으로 사용하고 명시적 예외 선택에서만 `Private`을 허용한 뒤 `Packages/com.actionfit.*` 패키지 skeleton, README, AI guide, README 전용 패키지 메뉴 파일, asmdef와 PackageInfo SO를 만듭니다. Visibility가 없는 API 요청은 `Public`으로 정규화하고 지정되지 않은 `Private` 요청 또는 잘못된 enum 값은 거부합니다. 완성된 skeleton은 생성 성공을 반환하기 전에 패키지 소유 round-trip 계약 검증을 통과해야 합니다.
+- `2. Publish Changed`: 일반 publish 경로이자 Manager Console의 두 번째 동작입니다. Local `package.json` 버전이 catalog 최신 버전보다 높은 top-level `Packages/com.actionfit.*` 패키지와 아직 등록되지 않은 새 패키지를 찾고 단일/bulk publish에 같은 승인 기반 API를 사용합니다. Test fixture 또는 패키지 콘텐츠 아래 중첩 `package.json`은 publish 후보가 아닙니다. `Publish All Changed`는 일반 publish 행과 검증된 Catalog recovery 행을 분리하고 별도 정확한 recovery 승인을 요구합니다. 최대 4개 worker로 일반 저장소 publish만 실행한 뒤 두 그룹을 하나의 Catalog batch 요청으로 추가합니다. 각 패키지 `ActionFitPackageInfo_SO`의 `Repository Visibility`가 public/private GitHub profile을 선택합니다.
+- `Add Agent Skill`: Manager Console의 세 번째 동작입니다. Embedded 패키지 상세 행과 같은 no-overwrite schema v2 scaffolding 창을 엽니다. 최초 추가는 Codex 및 Claude 필수 help source를 만들고 이후 추가는 manifest와 새로 요청한 source 경로만 업데이트합니다.
+- `Publish Package`: 이미 등록된 패키지의 특정 버전을 직접 입력할 때 쓰는 수동 publish 경로입니다. 버전을 쓴 뒤 `Publish Changed`와 같은 승인 기반 preflight, migration, 저장소 publish 및 catalog sequence로 진입합니다.
+- `Open Catalog`: local 또는 fallback catalog CSV를 선택합니다.
+- `Open Manifest`: 프로젝트 `Packages/manifest.json`을 엽니다.
+- `Refresh AI Guide Router`: `PACKAGE_AI_GUIDE_ROUTER.md`를 refresh하고 검색한 AI entry point 옆에 local `packages/actionfit-packages.md` 호환 pointer를 다시 생성하며 해당 entry point에 자동 관리 package guide section이 있으면 refresh합니다. Router code는 추가 AI 도구에서 package guide 검색을 중복하지 않도록 AI entry point 등록을 adapter helper 뒤에 유지합니다.
 
-## Catalog And Manifest
+## 카탈로그 및 Manifest
 
-- Local catalog path: `Assets/_Data/_CustomPackageManager/package_catalog.csv`.
-- Fallback catalog path: `Packages/com.actionfit.custompackagemanager/Editor/Catalog/package_catalog.csv`.
-- Optional community summary sheet: `package_vote_summary`.
-- Optional community comments sheet: `package_comments`, cached under `UserSettings/ActionFitPackageManager/package_comments.csv` when `Update Catalog` runs.
-- Installing or applying a version updates `Packages/manifest.json` and runs Unity Package Manager resolve.
-- Catalog `dependencies` entries are applied before the selected package. ActionFit package dependencies must exist in the catalog so they can be written as Git UPM URLs; non-ActionFit registry dependencies fall back to their raw version string.
-- Expanded package rows show the selected version's dependencies. ActionFit dependencies show the resolved catalog Git URL when available; registry/raw dependencies show the raw version value.
-- `Update Catalog` preserves quoted multi-line CSV cells such as release notes, so later columns like `dependencies` stay aligned and show correctly in package details.
-- Manifest dependency formatting is normalized when written.
+- Local catalog 경로: `Assets/_Data/_CustomPackageManager/package_catalog.csv`
+- Fallback catalog 경로: `Packages/com.actionfit.custompackagemanager/Editor/Catalog/package_catalog.csv`
+- 선택형 community summary sheet: `package_vote_summary`
+- 선택형 community comment sheet: `package_comments`이며 `Update Catalog` 실행 시 `UserSettings/ActionFitPackageManager/package_comments.csv`에 cache합니다.
+- 버전을 설치하거나 적용하면 `Packages/manifest.json`을 업데이트하고 Unity Package Manager resolve를 실행합니다.
+- Catalog `dependencies` 항목은 선택한 패키지보다 먼저 적용합니다. ActionFit 패키지 의존성을 Git UPM URL로 쓰려면 catalog에 존재해야 하며 ActionFit이 아닌 registry 의존성은 raw 버전 문자열을 fallback으로 사용합니다.
+- 펼친 패키지 행은 선택 버전의 의존성을 표시합니다. ActionFit 의존성은 가능한 경우 해석된 catalog Git URL을 표시하고 registry/raw 의존성은 raw 버전 값을 표시합니다.
+- `Update Catalog`는 release note 같은 quoted multi-line CSV cell을 보존해 이후 `dependencies` 같은 column이 정렬되고 패키지 상세에 정확히 표시되게 합니다.
+- Manifest 의존성 형식은 쓸 때 정규화합니다.
 
-## Publish Notes
+## Publish 참고 사항
 
-`Publish Package` and `Publish Changed` refresh the catalog before uploading, block publishing when the refreshed catalog already contains the same `package_id@version`, create or refresh the local publish clone, commit copied package files, push `main`, push the version tag when needed, and append the catalog row. When a duplicate version is found, the default policy is to stop instead of overwriting the existing Git tag/catalog row; change `package.json` or `Publish Version`, or use `Fork as New` when the package should become a separate package/repository. The Unity Console prints `[ActionFitPackageManager]` logs for repository check, clone path, file copy, commit/tag, branch push, tag push, and catalog append steps.
+`Publish Package`와 `Publish Changed`는 upload 전에 catalog를 refresh하고 같은 `package_id@version`이 이미 있으면 publish를 차단합니다. Local publish clone을 생성 또는 refresh하고 복사한 패키지 파일을 commit한 뒤 `main`과 필요 시 version tag를 push하고 catalog 행을 추가합니다. 중복 버전이 발견되면 기존 Git tag/catalog 행을 덮어쓰지 않고 중단하는 것이 기본 정책입니다. `package.json` 또는 `Publish Version`을 바꾸거나 별도 패키지/저장소로 분리해야 하면 `Fork as New`를 사용합니다. Unity Console은 저장소 확인, clone 경로, 파일 복사, commit/tag, branch push, tag push 및 catalog append 단계에 `[ActionFitPackageManager]` log를 출력합니다.
 
-Publish preflight also supports a repository that exists but has no first commit yet. GitHub's empty-repository conflict response from the tag lookup is treated as an available tag while the repository remains classified as existing. Git command output streams are drained concurrently so large warning output, including line-ending warnings, cannot block publication.
+Publish preflight는 저장소는 존재하지만 첫 commit이 아직 없는 경우도 지원합니다. Tag 조회에서 GitHub가 반환하는 empty-repository conflict는 저장소를 existing으로 유지하면서 tag를 사용 가능하다고 처리합니다. Git command output stream은 동시에 drain해 line-ending warning을 포함한 많은 경고 출력이 publish를 막지 않게 합니다.
 
-`Publish All Changed` validates package contracts once before approval, reuses the same in-process approved plan during execution, and rechecks the mutable catalog, content hash, version, repository, tag, and recovery equivalence immediately before mutation. Deserialized/API-supplied plan data cannot bypass contract validation because its validation receipt is not serialized. A matching existing tag is marked `Recover Catalog only` in the plan; content or visibility mismatches remain blocked and recommend the next patch version. GitHub remote preflight and normal repository publishing run with up to 4 workers. Recovery candidates never enter repository workers and require `CatalogRecoveryApprovalText` separately from the publish approval. The progress dialog identifies local validation, GitHub checks, repository publishing, catalog batch/fallback, and final refresh stages and can cancel before mutation or stop before catalog registration after repository publishing completes.
+`Publish All Changed`는 승인 전에 패키지 계약을 한 번 검증하고 실행 중 같은 in-process 승인 plan을 재사용하며, 변경 직전에 변경 가능한 catalog, content hash, version, repository, tag 및 recovery equivalence를 다시 확인합니다. Validation receipt는 직렬화되지 않으므로 deserialize하거나 API로 제공한 plan data가 계약 검증을 우회할 수 없습니다. 일치하는 기존 tag는 plan에서 `Recover Catalog only`로 표시합니다. Content 또는 visibility가 다르면 차단하고 다음 patch 버전을 권장합니다. GitHub remote preflight와 일반 저장소 publish는 최대 4개 worker로 실행합니다. Recovery 후보는 저장소 worker에 들어가지 않으며 publish 승인과 별도로 `CatalogRecoveryApprovalText`가 필요합니다. Progress dialog는 local 검증, GitHub 확인, 저장소 publish, catalog batch/fallback 및 최종 refresh 단계를 표시하고 변경 전 취소하거나 저장소 publish 완료 후 catalog 등록 전에 중단할 수 있습니다.
 
-When an existing catalog repository URL differs from the selected Public or Private publish target, `Publish Changed` treats it as an explicit repository migration. Preflight shows both repositories' actual GitHub visibility, default branch, all branch/tag refs, current-version tag conflicts, and requires both `README.md` and `AI_GUIDE.md` to reference the target URL. A missing target may be created only with the existing creation approval; source branches and tags are then mirrored without force or prune against the target, the target default branch is aligned, and all refs are rechecked. Tags must keep exact immutable SHAs. A target branch may be ahead only when GitHub proves that its current commit contains the source commit as an ancestor, which is the expected state after publishing a new package commit; behind, diverged, missing, and unverifiable ancestry remain blocked. A target with the wrong visibility and unsafe target refs is blocked, and the same repository is never changed in place. The source remains unchanged throughout migration, package publication, and Catalog update.
+기존 catalog 저장소 URL이 선택한 Public 또는 Private publish target과 다르면 `Publish Changed`가 명시적 저장소 migration으로 처리합니다. Preflight는 두 저장소의 실제 GitHub visibility, default branch, 모든 branch/tag ref와 현재 버전 tag 충돌을 표시하고 `README.md`와 `AI_GUIDE.md`가 모두 target URL을 참조하도록 요구합니다. 누락된 target은 기존 생성 승인으로만 만들 수 있습니다. 이후 source branch와 tag를 force 또는 prune 없이 target에 mirror하고 target default branch를 맞춘 뒤 모든 ref를 다시 확인합니다. Tag는 정확한 불변 SHA를 유지해야 합니다. Target branch가 source commit을 ancestor로 포함한다고 GitHub가 증명할 때만 ahead를 허용합니다. 이는 새 패키지 commit publish 후 기대하는 상태입니다. Behind, diverged, missing 또는 검증 불가 ancestry는 차단합니다. 잘못된 visibility 또는 안전하지 않은 target ref가 있는 target도 차단하고 같은 저장소를 제자리에서 변경하지 않습니다. Migration, 패키지 publish 및 Catalog 업데이트 중 source는 변경하지 않습니다.
 
-For a verified Private-to-Public migration, each publish row exposes `Previous Repository` with `Keep` as the default. `Archive` and `Delete` are separate post-publish phases: they are prepared only after the new Public tag and Catalog row exist, show the exact source/target/ref changes and warnings, require a content-bound approval, refresh all checks immediately before mutation, and block while any known Catalog version or the current project's manifest, lock file, or embedded package metadata still references the old Private URL. Archive is reversible and recommended. Delete is irreversible; GitHub Issues, pull requests, settings, secrets, Actions configuration, stars, forks, and other repository metadata are not migrated. External consumers cannot be proven from the current checkout, so their dependencies must be checked separately. Bulk retirement applies only to explicitly selected rows and stops at the first failure, preserving later sources.
+검증된 Private-to-Public migration에서는 각 publish 행에 기본값 `Keep`인 `Previous Repository`가 표시됩니다. `Archive`와 `Delete`는 별도 post-publish 단계입니다. 새 Public tag와 Catalog 행이 존재한 뒤에만 준비하고 정확한 source/target/ref 변경 및 경고를 보여주며 content-bound 승인을 요구하고 변경 직전에 모든 검사를 refresh합니다. 알려진 Catalog 버전이나 현재 프로젝트 manifest, lock 파일 또는 embedded 패키지 metadata가 기존 Private URL을 참조하면 차단합니다. Archive는 복구 가능하며 권장합니다. Delete는 되돌릴 수 없고 GitHub Issue, pull request, 설정, secret, Actions 설정, star, fork 및 기타 저장소 metadata는 migration하지 않습니다. 현재 checkout으로 외부 consumer를 증명할 수 없으므로 해당 의존성은 별도로 확인해야 합니다. Bulk retirement는 명시적으로 선택한 행에만 적용하고 첫 실패에서 중단해 이후 source를 보존합니다.
 
-Catalog and GitHub HTTP requests use a 30-second connection/read timeout. The catalog Web App should support `upsertPackageVersions` and return either a matching `count` or per-item confirmations. Unsupported batch responses fall back to serial `upsertPackageVersion`; timeout and cancellation failures do not start a potentially long serial fallback. If repository publishing succeeds but catalog append fails or is canceled, the window keeps those rows and shows `Retry Catalog Append` so the spreadsheet update can be retried without pushing repositories again. The Unity Console logs elapsed milliseconds for catalog refresh, GitHub preflight, repository publish, batch append, serial fallback, and total bulk execution.
+Catalog와 GitHub HTTP 요청은 30초 connection/read timeout을 사용합니다. Catalog Web App은 `upsertPackageVersions`를 지원하고 일치하는 `count` 또는 항목별 확인을 반환해야 합니다. 지원하지 않는 batch response는 serial `upsertPackageVersion`으로 fallback합니다. Timeout 또는 취소 실패에서는 오래 걸릴 수 있는 serial fallback을 시작하지 않습니다. 저장소 publish는 성공했지만 catalog append가 실패하거나 취소되면 창이 해당 행을 유지하고 `Retry Catalog Append`를 표시해 저장소를 다시 push하지 않고 spreadsheet 업데이트를 재시도할 수 있게 합니다. Unity Console은 catalog refresh, GitHub preflight, 저장소 publish, batch append, serial fallback 및 전체 bulk 실행의 경과 millisecond를 기록합니다.
 
-If the window-held retry rows are no longer available after a window recreation, domain reload, or Editor restart, use `Recover Catalog Entry` on the changed package row. Recovery requires the version to be absent from the refreshed catalog, the immutable remote tag and repository visibility to match, and the checked-out tag content to match the local package after only safe `_fingerprint`, JSON whitespace, and Unity PackageInfo YAML serialization normalization. A mismatch is blocked and recommends the next patch version. A successful recovery performs only catalog upsert and refresh; it never creates a repository or pushes, moves, deletes, or overwrites a branch or tag.
+창을 다시 만들거나 domain reload 또는 Editor restart 후 창이 보관하던 retry 행을 더 이상 사용할 수 없으면 변경 패키지 행의 `Recover Catalog Entry`를 사용합니다. Recovery에는 refresh된 catalog에 해당 버전이 없고 불변 remote tag와 저장소 visibility가 일치하며 checkout한 tag content가 안전한 `_fingerprint`, JSON whitespace 및 Unity PackageInfo YAML serialization 정규화만 제외하고 local 패키지와 일치해야 합니다. 불일치는 차단하고 다음 patch 버전을 권장합니다. 성공한 recovery는 catalog upsert와 refresh만 수행하며 저장소 생성, branch/tag push, move, delete 또는 overwrite를 하지 않습니다.
 
-`Settings` stores one GitHub token in `GitHub Publish Default` and separate repository creation organizations for public and private repositories. Fill `_githubToken` once, then set `Repo Creation - Public` and `Repo Creation - Private` org values when the repository owners differ. `Repo Creation - Public` is the default target for new packages; the private profile is used only after an explicit exception selection. Private catalog entries can point at private GitHub repositories, so consuming projects still need GitHub access to install them. Never copy the configured token into package files or repository metadata.
+`Settings`는 `GitHub Publish Default`에 GitHub token 하나와 public/private 저장소별 생성 organization을 저장합니다. `_githubToken`은 한 번 입력하고 저장소 owner가 다르면 `Repo Creation - Public`과 `Repo Creation - Private` org 값을 설정합니다. 새 패키지 기본 target은 `Repo Creation - Public`이며 private profile은 명시적 예외 선택 후에만 사용합니다. Private catalog 항목은 private GitHub 저장소를 가리킬 수 있으므로 사용하는 프로젝트도 설치를 위한 GitHub 접근 권한이 필요합니다. 설정한 token을 패키지 파일이나 저장소 metadata에 복사하면 안 됩니다.
 
-Before preparing package contents, the publisher refreshes the local publish clone from `origin/main` so an older cached clone does not affect the prepared state.
+패키지 콘텐츠를 준비하기 전에 publisher가 local publish clone을 `origin/main`에서 refresh해 오래된 cache clone이 준비 상태에 영향을 주지 않게 합니다.

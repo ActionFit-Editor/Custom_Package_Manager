@@ -7,7 +7,7 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.custompackagemanager`
 - Display name: Custom Package Manager
 - Repository: `https://github.com/ActionFit-Editor/Custom_Package_Manager.git`
-- Current package version at generation time: `1.1.104`
+- Current package version at generation time: `1.1.106`
 - Unity version: `6000.2`
 
 ## Purpose
@@ -89,7 +89,7 @@ Read this file when:
 - Do not change package IDs, repository names, public menu paths, serialized field names, or package assembly names casually; these can affect installed projects.
 - Preserve Unity `.meta` files when adding, moving, or renaming files inside the package.
 - When behavior changes, update this `AI_GUIDE.md` in the same package before publishing so consuming projects receive the latest AI context.
-- Keep `README.md` focused on human usage. Keep this file focused on AI-facing architecture, constraints, migration notes, and package-specific editing rules.
+- Keep `README.md` focused on human usage and write it primarily in Korean. Use Korean for headings, setup, usage, configuration, cautions, migration, and release-facing prose while preserving exact package IDs, type/API names, menu paths, commands, configuration keys, file paths, code samples, and externally defined proper names. Keep this file focused on AI-facing architecture, constraints, migration notes, and package-specific editing rules.
 - Content bundle profiles must use HTTPS canonical Git URLs pinned to exact version tags. Preserve embedded, local/file, forked, branch, unparseable, newer canonical, shared, and user-modified package values according to the planner result. Keep schema version 1 compatible as an all-package legacy selection. Schema version 2 must assign every package to at least one module, force required modules into every selection, install shared package IDs once, and let optional module changes flow only through a reviewed `PlanModifyModules` / `ModifyModules` transaction.
 - Keep bundle ownership at `ProjectSettings/ActionFitContentBundles.json` and transaction journals under `UserSettings/ActionFitPackageManager/ContentBundleTransactions`. Never delete a pending journal before the manifest and ownership state are verified.
 - A bootstrap dependency may be removed only after every required package is registered and ownership state reloads successfully. Keep mutation disabled in batchmode.
@@ -227,7 +227,7 @@ Read this file when:
 - Recommended AI workflow package families: `com.actionfit.ai-jira` (Jira skills and lifecycle), `com.actionfit.ai-worktrees` (reusable worktree slots), `com.actionfit.ai-pr` (branch/commit/PR workflow), `com.actionfit.ai-docs` (AI documentation maintenance rules; not yet created), `com.actionfit.ai-unitycli` (Unity CLI usage), and `com.actionfit.ai-project-sequence` (project initialization sequence; not yet created).
 - Keep implementation scripts behind project compatibility wrappers until all active projects have moved to package routing.
 - Migration order: add package skeletons with `package.json`, `README.md`, `AI_GUIDE.md`, and PackageInfo metadata first; move portable rules into package `AI_GUIDE.md` files while leaving project-specific rules in the project docs; add compatibility pointers from existing project docs to the package router; move executable tooling only after package-local wrappers preserve existing project command paths; publish manually after version checks, tag checks, catalog updates, and user approval.
-- Write shared package `AI_GUIDE.md` files in English so another project can reuse them without project-local translation work. Keep user-facing generated Jira text, QA notes, and PR descriptions in Korean when a package rule requires Korean output.
+- Write shared package `AI_GUIDE.md` files in English so another project can reuse them without project-local translation work. This is an explicit exception to the Korean-first rule for human-facing package `README.md` files. Keep user-facing generated Jira text, QA notes, and PR descriptions in Korean when a package rule requires Korean output.
 - Do not commit local Jira URLs, credentials, board IDs, status names, or user-specific config into any package.
 - Do not auto-publish packages from an AI session unless the user explicitly asks for publishing.
 
@@ -258,7 +258,7 @@ When files under `Packages/com.actionfit.*/` embedded packages are modified, pre
 5. If a package version has already been tagged and any further code, README, PackageInfo, catalog, or release-note change is made, bump to the next unused patch version before finishing.
 6. Do not infer publish status from local files or memory. Re-check remote tags after each follow-up change that affects the package release.
 7. Treat each package's `Editor/PackageInfo/ActionFitPackageInfo_SO.asset` as the source of package metadata, repository name, description, and release note.
-8. Before publish, check the package `README.md` that will be pushed to Git. Update it when version, usage, menu paths, settings, cautions, or behavior no longer match.
+8. Before publish, check the package `README.md` that will be pushed to Git. It must be current and written primarily in Korean for human-facing headings, setup, usage, settings, cautions, migration, and release prose. Preserve exact identifiers, menu paths, commands, configuration keys, file paths, code samples, and externally defined proper names; do not rely on automatic translation.
 9. Update the package root `AI_GUIDE.md` whenever behavior, workflow, migration, public menu paths, serialized data, release process, or AI-facing rules change.
 10. Unless the user explicitly asks, do not run `publish_upm.sh`, `Publish Changed`, `Publish Package`, GitHub push/tag, or catalog upsert.
 
