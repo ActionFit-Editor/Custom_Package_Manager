@@ -1254,21 +1254,25 @@ public static class ActionFitPackageSkillBootstrap
     public static ActionFitPackageSkillInstallResult InstallOrRefresh()
     {
         string projectRoot = ProjectRootPath;
-        return ActionFitPackageSkillInstallService.InstallOrRefresh(
+        ActionFitPackageSkillInstallResult result = ActionFitPackageSkillInstallService.InstallOrRefresh(
             FindRegisteredPackageRoots(projectRoot),
             projectRoot,
             Path.Combine(projectRoot, StateRelativePath),
             Path.Combine(projectRoot, TempRelativePath),
             Path.Combine(projectRoot, LegacyStateRelativePath));
+        ActionFitPackageManagerRefreshSignal.Request();
+        return result;
     }
 
     public static ActionFitPackageSkillInstallResult RemoveManaged()
     {
         string projectRoot = ProjectRootPath;
-        return ActionFitPackageSkillInstallService.RemoveManaged(
+        ActionFitPackageSkillInstallResult result = ActionFitPackageSkillInstallService.RemoveManaged(
             projectRoot,
             Path.Combine(projectRoot, StateRelativePath),
             Path.Combine(projectRoot, TempRelativePath));
+        ActionFitPackageManagerRefreshSignal.Request();
+        return result;
     }
 
     public static ActionFitPackageSkillInspectionResult InspectRegisteredSkills()

@@ -19,7 +19,7 @@ catalog 설정 `ActionFitPackageCatalogSettings_SO`는 공통 provider가 `Asset
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.110"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.111"
   }
 }
 ```
@@ -167,6 +167,10 @@ Exit code는 로컬 자동화 및 CI에서 안정적으로 유지됩니다.
 Unity가 격리된 `file:` 의존성에서 패키지 소유 검증기를 호출하면 Editor adapter는 일회용 프로젝트의 가상 `Packages` 경로가 physical이라고 가정하지 않고 설치된 패키지 경로에서 실제 패키지 저장소 root를 해석합니다. Publish 준비도 physical embedded 폴더를 요구하거나 catalog, 자격 증명 및 remote 상태를 검사하기 전에 계약 진단을 반환합니다.
 
 ## 패키지 관리자
+
+Package Manager 창은 catalog, manifest, embedded `package.json`, Content Bundle, Project Override, Agent Skill 상태를 `Reload` 시점에 한 번 읽어 메모리 snapshot으로 표시합니다. 스크롤과 repaint는 snapshot만 조회하므로 패키지 수에 비례한 파일 시스템 재검사를 반복하지 않습니다.
+
+UPM 패키지 등록 변경, catalog 또는 embedded `package.json` import, Content Bundle/Project Override 상태 저장, Agent Skill 갱신이 발생하면 callback이 다음 Editor tick의 단일 refresh로 합쳐집니다. 따라서 일반 사용에서는 수동 `Reload` 없이 최신 상태를 유지하며, 외부 도구가 감지 대상 밖의 파일을 직접 변경했거나 refresh 오류 뒤 상태를 다시 확인해야 할 때만 `Reload`를 fallback으로 사용할 수 있습니다. 설치·제거·변환·업데이트 실행 직전의 안전 검증은 snapshot과 별개로 현재 프로젝트 상태를 다시 확인합니다.
 
 `Search`는 package ID, 표시 이름, owner뿐 아니라 package type, 저장소, 버전, 상태, Unity 최소 버전, 설명, 변경 내역과 의존성을 함께 검색합니다. 활성 Content Bundle도 bundle ID, 이름, 상태, 필수 패키지, module ID·이름·패키지로 같은 검색어에 필터링됩니다.
 

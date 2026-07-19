@@ -66,6 +66,15 @@ public static class ActionFitPackageProjectOverrideApi
             string.Equals(item.packageId, packageId, StringComparison.Ordinal));
     }
 
+    internal static string[] GetRegisteredPackageIdsForPackageManager()
+    {
+        return ActionFitPackageProjectOverrideStateStore.Load().overrides
+            .Select(item => item.packageId)
+            .Where(packageId => !string.IsNullOrWhiteSpace(packageId))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+    }
+
     public static ActionFitPackageProjectOverrideResult CompleteRestoreToBase(string packageId)
     {
         try
@@ -308,6 +317,7 @@ internal static class ActionFitPackageProjectOverrideStateStore
         state.overrides ??= Array.Empty<ActionFitPackageProjectOverrideRecord>();
         state.overrides = state.overrides.OrderBy(item => item.packageId, StringComparer.Ordinal).ToArray();
         ActionFitPackageManifestUtility.WriteAtomic(Path, JsonUtility.ToJson(state, true) + "\n", false);
+        ActionFitPackageManagerRefreshSignal.Request();
     }
 }
 #endif

@@ -10,6 +10,7 @@ using UnityEditor;
 using UnityEditor.PackageManager;
 using UnityEditor.PackageManager.Requests;
 using UnityEngine;
+using Unity.Profiling;
 
 public class ActionFitPackageManagerWindow : EditorWindow
 {
@@ -19,6 +20,8 @@ public class ActionFitPackageManagerWindow : EditorWindow
     private const string EmbeddedBaselineRelativePath = "UserSettings/ActionFitPackageManager/EmbeddedBaselines";
     private static readonly string PackageCatalogPath = Path.Combine("Packages", PackageName, CatalogRelativePath).Replace("\\", "/");
     private static readonly string PackageCachePath = Path.Combine("Library", "PackageCache").Replace("\\", "/");
+    private static readonly ProfilerMarker OnGuiProfilerMarker = new("ActionFit.PackageManager.OnGUI");
+    private static readonly ProfilerMarker ReloadProfilerMarker = new("ActionFit.PackageManager.Reload");
     private static string ProjectRootPath => Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
     private static string ManifestFullPath => Path.Combine(ProjectRootPath, "Packages", "manifest.json");
     private static string ProjectRelativeFullPath(string relativePath)
@@ -41,13 +44,14 @@ public class ActionFitPackageManagerWindow : EditorWindow
     private readonly HashSet<string> _expandedCommentKeys = new();
     private readonly HashSet<string> _selectedUpdatePackageIds = new();
     private readonly Dictionary<string, EmbeddedChangeState> _embeddedChangeStatesByPackage = new();
-    private readonly Dictionary<string, ActionFitPackageSkillStatus> _skillStatusesByPackage = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, ActionFitPackageCommunityClient.Summary> _communitySummariesByPackage = new();
     private readonly Dictionary<string, CommentPanelState> _commentStatesByPackage = new();
     private readonly Dictionary<string, string> _communityMessagesByPackage = new();
     private readonly Dictionary<string, HashSet<string>> _selectedModulesByBundle = new(StringComparer.Ordinal);
     private readonly List<PackageGroup> _packages = new();
+    private ActionFitPackageManagerSnapshot _snapshot = ActionFitPackageManagerSnapshot.Empty;
     private ActionFitPackageCatalogSettings_SO _settings;
+    private string _activeCatalogPath = PackageCatalogPath;
     private Vector2 _scroll;
     private string _filter = "";
     private bool _showUpdateManager;
@@ -71,6 +75,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
     {
         _settings = ActionFitPackageCatalogSettingsProvider.FindOrCreate();
         Events.registeredPackages += OnRegisteredPackages;
+        ActionFitPackageManagerRefreshSignal.RefreshRequested += OnRefreshRequested;
         if (_gitAddRequest != null && !_gitAddRequest.IsCompleted)
             RegisterGitAddPolling();
         Reload();
@@ -79,24 +84,28 @@ public class ActionFitPackageManagerWindow : EditorWindow
     private void OnDisable()
     {
         Events.registeredPackages -= OnRegisteredPackages;
+        ActionFitPackageManagerRefreshSignal.RefreshRequested -= OnRefreshRequested;
         EditorApplication.update -= PollGitAddRequest;
     }
 
     private void OnGUI()
     {
-        DrawToolbar();
-
-        if (_packages.Count == 0)
+        using (OnGuiProfilerMarker.Auto())
         {
-            EditorGUILayout.HelpBox($"Catalog not found or empty.\n{ActiveCatalogPath}", MessageType.Warning);
+            DrawToolbar();
+
+            if (_packages.Count == 0)
+            {
+                EditorGUILayout.HelpBox($"Catalog not found or empty.\n{_activeCatalogPath}", MessageType.Warning);
+            }
+
+            _filter = EditorGUILayout.TextField("Search", _filter);
+            _scroll = EditorGUILayout.BeginScrollView(_scroll);
+
+            DrawPackageSections();
+
+            EditorGUILayout.EndScrollView();
         }
-
-        _filter = EditorGUILayout.TextField("Search", _filter);
-        _scroll = EditorGUILayout.BeginScrollView(_scroll);
-
-        DrawPackageSections();
-
-        EditorGUILayout.EndScrollView();
     }
 
     private void DrawToolbar()
@@ -216,13 +225,13 @@ public class ActionFitPackageManagerWindow : EditorWindow
         var manager = filtered.Where(p => p.Id == PackageName).ToList();
         var collections = SortPackagesForDisplay(filtered.Where(p => p.Id != PackageName && p.IsCollection));
         var catalogPackages = filtered.Where(p => p.Id != PackageName && !p.IsCollection).ToList();
-        var embedded = SortPackagesForDisplay(catalogPackages.Where(p => GetInstalledVersion(p.Id).IsEmbedded));
+        var embedded = SortPackagesForDisplay(catalogPackages.Where(p => GetDisplayedInstalledVersion(p.Id).IsEmbedded));
         var downloaded = SortPackagesForDisplay(catalogPackages.Where(p =>
         {
-            var installed = GetInstalledVersion(p.Id);
+            var installed = GetDisplayedInstalledVersion(p.Id);
             return installed.IsInstalled && !installed.IsEmbedded;
         }));
-        var available = SortPackagesForDisplay(catalogPackages.Where(p => !GetInstalledVersion(p.Id).IsInstalled));
+        var available = SortPackagesForDisplay(catalogPackages.Where(p => !GetDisplayedInstalledVersion(p.Id).IsInstalled));
 
         DrawPackageSection("Package Manager", manager);
         EditorGUILayout.Space(4);
@@ -252,7 +261,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
     private void DrawContentBundleSection()
     {
-        ActionFitContentBundleStatus[] allStatuses = ActionFitContentBundleApi.GetStatuses();
+        ActionFitContentBundleStatus[] allStatuses = _snapshot.ContentBundleStatuses;
         ActionFitContentBundleStatus[] statuses = allStatuses
             .Where(status => ActionFitPackageManagerInputUtility.MatchesContentBundle(_filter, status))
             .ToArray();
@@ -432,13 +441,13 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
     private void DrawPackage(PackageGroup package)
     {
-        var installed = GetInstalledVersion(package.Id);
+        var installed = GetDisplayedInstalledVersion(package.Id);
         var versions = package.Versions;
         int selected = GetSelectedVersionIndex(package, installed.Version);
         var selectedVersion = versions[selected];
-        bool requiredByBundle = ActionFitContentBundleApi.IsRequiredPackage(package.Id, out string bundleDisplayName);
-        bool managedByBundle = ActionFitContentBundleApi.IsManagedPackage(package.Id, out string managedBundleDisplayName);
-        bool projectOverride = ActionFitPackageProjectOverrideApi.IsProjectOverride(package.Id);
+        bool requiredByBundle = _snapshot.TryGetRequiredBundle(package.Id, out string bundleDisplayName);
+        bool managedByBundle = _snapshot.TryGetManagedBundle(package.Id, out string managedBundleDisplayName);
+        bool projectOverride = _snapshot.IsProjectOverride(package.Id);
 
         using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
         {
@@ -532,7 +541,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
             using (new EditorGUILayout.HorizontalScope())
             {
-                string skillSummary = _skillStatusesByPackage.TryGetValue(
+                string skillSummary = _snapshot.TryGetSkillStatus(
                     package.Id,
                     out ActionFitPackageSkillStatus skillStatus)
                     ? skillStatus.Summary
@@ -590,7 +599,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
     private void DrawVoteControls(PackageGroup package)
     {
-        string localVote = ActionFitPackageCommunityClient.GetLocalVote(package.Id);
+        string localVote = _snapshot.GetLocalVote(package.Id);
         bool hasLocalVote = !string.IsNullOrWhiteSpace(localVote);
         using (new EditorGUILayout.HorizontalScope())
         {
@@ -714,7 +723,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
         {
             _communitySummariesByPackage[package.Id] = summary;
             _communityMessagesByPackage[package.Id] = message;
-            Repaint();
+            QueueReload();
             return;
         }
 
@@ -912,7 +921,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
         var result = new List<UpdateCandidate>();
         foreach (var package in packages)
         {
-            var installed = GetInstalledVersion(package.Id);
+            var installed = GetDisplayedInstalledVersion(package.Id);
             if (!installed.IsInstalled || package.LatestVersion == null) continue;
             if (!IsVersionNewer(package.LatestVersion.Version, installed.Version)) continue;
 
@@ -1081,47 +1090,62 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
     private void Reload()
     {
-        _packages.Clear();
-        _selectedVersionByPackage.Clear();
-        _embeddedChangeStatesByPackage.Clear();
-        ReloadSkillStatuses();
-
-        string path = ProjectRelativeFullPath(ActiveCatalogPath);
-        if (File.Exists(path))
+        using (ReloadProfilerMarker.Auto())
         {
-            var rows = ReadCatalog(path);
-            _packages.AddRange(rows
-                .GroupBy(r => r.Id)
-                .Select(g => new PackageGroup(g.Key, g.OrderByDescending(v => v.Version, PackageVersionComparer.Instance).ToList()))
-                .OrderBy(g => g.DisplayName, StringComparer.OrdinalIgnoreCase));
-        }
+            try
+            {
+                string activeCatalogPath = ResolveActiveCatalogPath();
+                string path = ProjectRelativeFullPath(activeCatalogPath);
+                var refreshedPackages = new List<PackageGroup>();
+                if (File.Exists(path))
+                {
+                    var rows = ReadCatalog(path);
+                    refreshedPackages.AddRange(rows
+                        .GroupBy(r => r.Id)
+                        .Select(g => new PackageGroup(g.Key, g.OrderByDescending(v => v.Version, PackageVersionComparer.Instance).ToList()))
+                        .OrderBy(g => g.DisplayName, StringComparer.OrdinalIgnoreCase));
+                }
 
-        LoadCachedCommentStates();
+                ActionFitPackageManagerSnapshot refreshedSnapshot = ActionFitPackageManagerSnapshot.Capture(
+                    refreshedPackages.Select(package => package.Id),
+                    ProjectRootPath);
+                var refreshedEmbeddedStates = refreshedSnapshot.InstalledStates.States
+                    .Where(pair => pair.Value.IsEmbedded)
+                    .ToDictionary(
+                        pair => pair.Key,
+                        pair => ScanEmbeddedChangeState(pair.Key),
+                        StringComparer.Ordinal);
+
+                _packages.Clear();
+                _packages.AddRange(refreshedPackages);
+                _selectedVersionByPackage.Clear();
+                _embeddedChangeStatesByPackage.Clear();
+                foreach (var pair in refreshedEmbeddedStates)
+                    _embeddedChangeStatesByPackage[pair.Key] = pair.Value;
+                _snapshot = refreshedSnapshot;
+                _activeCatalogPath = activeCatalogPath;
+                try
+                {
+                    LoadCachedCommentStates();
+                }
+                catch (Exception exception)
+                {
+                    Debug.LogWarning(
+                        $"[ActionFitPackageManager] Cached comments could not be refreshed: {exception.Message}");
+                }
+            }
+            catch (Exception exception)
+            {
+                Debug.LogWarning(
+                    $"[ActionFitPackageManager] Refresh failed; keeping the previous snapshot: {exception.Message}");
+            }
+        }
     }
 
-    private void ReloadSkillStatuses()
+    private static string ResolveActiveCatalogPath()
     {
-        _skillStatusesByPackage.Clear();
-        try
-        {
-            ActionFitPackageSkillInspectionResult inspection =
-                ActionFitPackageSkillBootstrap.InspectRegisteredSkills();
-            foreach (ActionFitPackageSkillStatus status in inspection.Packages)
-                _skillStatusesByPackage[status.PackageId] = status;
-        }
-        catch (Exception exception)
-        {
-            Debug.LogWarning($"[ActionFitPackageManager] Agent skill status inspection failed: {exception.Message}");
-        }
-    }
-
-    private static string ActiveCatalogPath
-    {
-        get
-        {
-            string local = ActionFitPackageCatalogSettingsProvider.LocalCatalogPath;
-            return File.Exists(ProjectRelativeFullPath(local)) ? local : PackageCatalogPath;
-        }
+        string local = ActionFitPackageCatalogSettingsProvider.LocalCatalogPath;
+        return File.Exists(ProjectRelativeFullPath(local)) ? local : PackageCatalogPath;
     }
 
     private void UpdateCatalog()
@@ -2047,17 +2071,19 @@ public class ActionFitPackageManagerWindow : EditorWindow
 
     private void OnRegisteredPackages(PackageRegistrationEventArgs args)
     {
-        QueueReload();
+        ActionFitPackageManagerRefreshSignal.Request();
+    }
+
+    private void OnRefreshRequested()
+    {
+        if (this == null) return;
+        Reload();
+        Repaint();
     }
 
     private void QueueReload()
     {
-        EditorApplication.delayCall += () =>
-        {
-            if (this == null) return;
-            Reload();
-            Repaint();
-        };
+        ActionFitPackageManagerRefreshSignal.Request();
     }
 
     private PackageVersion FindVersion(string packageId, string version)
@@ -2190,7 +2216,7 @@ public class ActionFitPackageManagerWindow : EditorWindow
         if (_embeddedChangeStatesByPackage.TryGetValue(packageId, out EmbeddedChangeState cached))
             return cached;
 
-        return RefreshEmbeddedChangeState(packageId);
+        return EmbeddedChangeState.Unknown;
     }
 
     private EmbeddedChangeState RefreshEmbeddedChangeState(string packageId)
@@ -2477,6 +2503,16 @@ public class ActionFitPackageManagerWindow : EditorWindow
         }
 
         return InstalledPackage.NotInstalled;
+    }
+
+    private InstalledPackage GetDisplayedInstalledVersion(string packageId)
+    {
+        ActionFitPackageManagerInstalledState state = _snapshot.InstalledStates.Get(packageId);
+        return new InstalledPackage(
+            state.IsInstalled,
+            state.IsEmbedded,
+            state.Version,
+            state.Label);
     }
 
     private static List<(string Id, string Version)> ParseDependencies(string raw)

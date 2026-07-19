@@ -98,6 +98,7 @@ public static class ActionFitPackageCatalogUpdater
                 ? $"Catalog is already up to date and comments cache updated: {path}"
                 : $"Catalog is already up to date: {path}";
             Debug.Log($"[ActionFitPackageManager] Catalog refresh complete ({stopwatch.ElapsedMilliseconds} ms): {message}");
+            ActionFitPackageManagerRefreshSignal.Request();
             return true;
         }
 
@@ -106,6 +107,7 @@ public static class ActionFitPackageCatalogUpdater
         AssetDatabase.SaveAssets();
         message = commentsChanged ? $"Catalog and comments cache updated: {path}" : $"Catalog updated: {path}";
         Debug.Log($"[ActionFitPackageManager] Catalog refresh complete ({stopwatch.ElapsedMilliseconds} ms): {message}");
+        ActionFitPackageManagerRefreshSignal.Request();
         return true;
     }
 

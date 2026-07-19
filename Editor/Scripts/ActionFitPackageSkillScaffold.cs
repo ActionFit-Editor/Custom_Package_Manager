@@ -265,6 +265,7 @@ public static class ActionFitPackageSkillScaffoldApi
                     .ToArray();
                 WriteManifestAtomic(manifestPath, manifest);
 
+                ActionFitPackageManagerRefreshSignal.Request();
                 return new ActionFitPackageSkillScaffoldResult
                 {
                     Success = true,

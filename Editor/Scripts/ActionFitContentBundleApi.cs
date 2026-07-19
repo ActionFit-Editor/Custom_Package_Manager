@@ -397,9 +397,48 @@ public static class ActionFitContentBundleApi
 
     public static ActionFitContentBundleStatus[] GetStatuses()
     {
-        var statuses = new List<ActionFitContentBundleStatus>();
+        bool manifestExists = File.Exists(ActionFitPackagePaths.ManifestPath);
+        string manifest = manifestExists ? ReadManifest() : "";
+        return InspectForPackageManager(manifest, manifestExists).Statuses;
+    }
+
+    internal static ActionFitContentBundleManagerInspection InspectForPackageManager(
+        string manifest,
+        bool manifestExists)
+    {
         ActionFitContentBundleStateFile state = ActionFitContentBundleStateStore.Load();
-        string manifest = File.Exists(ActionFitPackagePaths.ManifestPath) ? ReadManifest() : "";
+        var requiredBundleByPackage = new Dictionary<string, string>(StringComparer.Ordinal);
+        var managedBundleByPackage = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (ActionFitContentBundleRecord bundle in state.bundles)
+        {
+            string displayName = string.IsNullOrWhiteSpace(bundle.displayName) ? bundle.bundleId : bundle.displayName;
+            foreach (ActionFitContentBundlePackageOwnership package in bundle.packages ?? Array.Empty<ActionFitContentBundlePackageOwnership>())
+            {
+                if (string.IsNullOrWhiteSpace(package.packageId)) continue;
+                if (!managedBundleByPackage.ContainsKey(package.packageId))
+                    managedBundleByPackage[package.packageId] = displayName;
+                if (package.required && !requiredBundleByPackage.ContainsKey(package.packageId))
+                    requiredBundleByPackage[package.packageId] = displayName;
+            }
+        }
+
+        return new ActionFitContentBundleManagerInspection(
+            BuildStatuses(state, manifest ?? "", manifestExists),
+            requiredBundleByPackage,
+            managedBundleByPackage);
+    }
+
+    private static ActionFitContentBundleStatus[] BuildStatuses(
+        ActionFitContentBundleStateFile state,
+        string manifest,
+        bool manifestExists)
+    {
+        var statuses = new List<ActionFitContentBundleStatus>();
+        (string Path, ActionFitContentBundleTransactionJournal Journal)[] journals =
+            ActionFitContentBundleJournalStore.LoadAll();
+        string currentLogin = state.bundles.Length > 0 || journals.Length > 0
+            ? ActionFitContentBundleGitHubIdentity.GetCurrentLogin()
+            : "";
 
         foreach (ActionFitContentBundleRecord record in state.bundles.OrderBy(item => item.bundleId, StringComparer.Ordinal))
         {
@@ -407,7 +446,7 @@ public static class ActionFitContentBundleApi
             ActionFitContentBundleSelection selection = ActionFitContentBundlePlanner.ResolveSelection(
                 profile,
                 record.selectedModuleIds);
-            ActionFitContentBundlePlan drift = File.Exists(ActionFitPackagePaths.ManifestPath)
+            ActionFitContentBundlePlan drift = manifestExists
                 ? ActionFitContentBundlePlanner.PlanReconcile(record, manifest, ActionFitContentBundleEnvironment.GetEmbeddedPackage)
                 : FailedPlan("MANIFEST_MISSING", "Packages/manifest.json is missing.");
             statuses.Add(new ActionFitContentBundleStatus
@@ -426,7 +465,7 @@ public static class ActionFitContentBundleApi
                                      !string.IsNullOrWhiteSpace(ActionFitPackageManifestUtility.GetDependency(manifest, record.bootstrapPackageId)),
                 releaseAuthorized = ActionFitContentBundlePlanner.IsReleaseAuthorized(
                     profile,
-                    ActionFitContentBundleGitHubIdentity.GetCurrentLogin()),
+                    currentLogin),
                 requiredPackageIds = (record.packages ?? Array.Empty<ActionFitContentBundlePackageOwnership>())
                     .Where(package => package.required)
                     .Select(package => package.packageId)
@@ -438,7 +477,7 @@ public static class ActionFitContentBundleApi
             });
         }
 
-        foreach ((string _, ActionFitContentBundleTransactionJournal journal) in ActionFitContentBundleJournalStore.LoadAll())
+        foreach ((string _, ActionFitContentBundleTransactionJournal journal) in journals)
         {
             if (statuses.Any(status => string.Equals(status.bundleId, journal.bundleId, StringComparison.Ordinal)))
                 continue;
@@ -476,7 +515,7 @@ public static class ActionFitContentBundleApi
                                      !string.IsNullOrWhiteSpace(ActionFitPackageManifestUtility.GetDependency(manifest, profile.bootstrapPackageId)),
                 releaseAuthorized = ActionFitContentBundlePlanner.IsReleaseAuthorized(
                     profile,
-                    ActionFitContentBundleGitHubIdentity.GetCurrentLogin()),
+                    currentLogin),
                 requiredPackageIds = (selection.profile.packages ?? Array.Empty<ActionFitContentBundlePackageSpec>())
                     .Where(package => package.required)
                     .Select(package => package.packageId)
@@ -1878,6 +1917,7 @@ internal static class ActionFitContentBundleStateStore
         if (parsed == null || parsed.schemaVersion != 1)
             throw new InvalidOperationException("Content bundle ownership state is invalid.");
         ActionFitPackageManifestUtility.WriteAtomic(Path, json, false);
+        ActionFitPackageManagerRefreshSignal.Request();
     }
 }
 
@@ -1932,6 +1972,7 @@ internal static class ActionFitContentBundleJournalStore
     public static void Save(ActionFitContentBundleTransactionJournal journal, string path)
     {
         ActionFitPackageManifestUtility.WriteAtomic(path, JsonUtility.ToJson(journal, true) + "\n", false);
+        ActionFitPackageManagerRefreshSignal.Request();
     }
 
     public static ActionFitContentBundleTransactionJournal Load(string path)
@@ -1965,7 +2006,9 @@ internal static class ActionFitContentBundleJournalStore
 
     public static void Delete(string path)
     {
-        if (File.Exists(path)) File.Delete(path);
+        if (!File.Exists(path)) return;
+        File.Delete(path);
+        ActionFitPackageManagerRefreshSignal.Request();
     }
 }
 
