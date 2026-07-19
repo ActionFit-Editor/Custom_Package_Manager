@@ -11,7 +11,7 @@ import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable, Sequence
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, urlparse
 
 
 SCHEMA_VERSION = "1.0"
@@ -33,6 +33,10 @@ SKILL_NAME_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 SKILL_AGENTS = {"codex": "Codex", "claude": "Claude"}
 SKILL_ACCESS = {"read-only", "write-capable"}
 GENERATED_SKILL_INVENTORY = "PACKAGE_SKILLS.md"
+CUSTOM_PACKAGE_MANAGER_ID = "com.actionfit.custompackagemanager"
+GENERATED_ROUTER_PATH = (
+    "Packages/com.actionfit.custompackagemanager/PACKAGE_AI_GUIDE_ROUTER.md"
+)
 SDK_PROFILE_RELATIVE_PATH = Path("Editor/SDKInstallProfile.json")
 SDK_FORBIDDEN_FILE_NAMES = {"google-services.json", "googleservice-info.plist"}
 SDK_FORBIDDEN_SUFFIXES = {
@@ -1399,6 +1403,116 @@ def validate_sdk_bridge(
                     f"SDK bridge file {relative} appears to contain a credential or private key.",
                     "Remove credentials and keep local vendor configuration outside the package.",
                 )
+                )
+
+
+def validate_settings_so_lifecycle(
+    repo_root: Path,
+    package_id: str,
+    package_root: Path,
+    manifest: dict[str, Any] | None,
+    diagnostics: list[Diagnostic],
+) -> None:
+    source_files: list[tuple[Path, str]] = []
+    for path in sorted(package_root.rglob("*.cs")):
+        try:
+            source_files.append((path, path.read_text(encoding="utf-8-sig")))
+        except (OSError, UnicodeError):
+            continue
+
+    registrations = [
+        (path, text)
+        for path, text in source_files
+        if re.search(r"\[\s*ActionFitSettingsAsset\s*\(", text)
+    ]
+    if not registrations:
+        return
+
+    manifest_path = package_root / "package.json"
+    dependencies = manifest.get("dependencies") if isinstance(manifest, dict) else None
+    so_version = dependencies.get("com.actionfit.sosingleton") if isinstance(dependencies, dict) else None
+    if not isinstance(so_version, str) or parse_semver(so_version) is None:
+        diagnostics.append(
+            diagnostic(
+                "SETTINGS_SO_DEPENDENCY_MISSING",
+                relative_path(repo_root, manifest_path),
+                "A registered settings SO requires a direct semantic-version dependency on com.actionfit.sosingleton.",
+                "Add com.actionfit.sosingleton to package.json dependencies using the prepared package version.",
+                line=line_for(json.dumps(manifest or {}, ensure_ascii=False, indent=2), '"dependencies"'),
+            )
+        )
+
+    all_source = "\n".join(text for _, text in source_files)
+    if not re.search(r'MenuItem\s*\([^\n]*"[^"\n]*Setting SO"', all_source):
+        diagnostics.append(
+            diagnostic(
+                "SETTINGS_SO_MENU_MISSING",
+                relative_path(repo_root, registrations[0][0]),
+                "A registered settings SO package must expose a Setting SO menu entry.",
+                "Add a package-scoped Setting SO menu that resolves the asset through ActionFitSettingsAssetProvider.",
+            )
+        )
+
+    asmdefs: list[tuple[Path, dict[str, Any]]] = []
+    for path in sorted(package_root.rglob("*.asmdef")):
+        try:
+            value = json.loads(path.read_text(encoding="utf-8-sig"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            continue
+        if isinstance(value, dict):
+            asmdefs.append((path, value))
+
+    reference_names = {
+        reference
+        for _, asmdef in asmdefs
+        for reference in asmdef.get("references", [])
+        if isinstance(reference, str)
+    }
+    required_references = {"com.actionfit.sosingleton", "com.actionfit.sosingleton.Editor"}
+    missing_references = sorted(required_references - reference_names)
+    if missing_references:
+        diagnostics.append(
+            diagnostic(
+                "SETTINGS_SO_ASMDEF_REFERENCE_MISSING",
+                relative_path(repo_root, registrations[0][0]),
+                "Registered settings SO assemblies are missing shared lifecycle references: "
+                + ", ".join(missing_references),
+                "Reference com.actionfit.sosingleton from the settings assembly and com.actionfit.sosingleton.Editor from its Editor integration assembly.",
+            )
+        )
+
+    for path, text in registrations:
+        relative = path.relative_to(package_root).as_posix()
+        is_runtime = "ActionFitSettingsAssetLifetime.RuntimeSingleton" in text
+        if is_runtime:
+            class_match = re.search(r"class\s+(?P<type>[A-Za-z_][A-Za-z0-9_]*)\s*:\s*SO_Singleton\s*<\s*(?P=type)\s*>", text)
+            if class_match is None:
+                diagnostics.append(
+                    diagnostic(
+                        "SETTINGS_SO_RUNTIME_BASE_INVALID",
+                        relative_path(repo_root, path),
+                        "RuntimeSingleton settings must inherit SO_Singleton<Self>.",
+                        "Change the registered type to inherit SO_Singleton with its own type argument.",
+                        line=line_for(text, "RuntimeSingleton"),
+                    )
+                )
+            if not relative.startswith("Runtime/"):
+                diagnostics.append(
+                    diagnostic(
+                        "SETTINGS_SO_RUNTIME_LOCATION_INVALID",
+                        relative_path(repo_root, path),
+                        "RuntimeSingleton settings source must live under the package Runtime folder.",
+                        "Move the runtime settings type to Runtime without moving or reserializing its project-owned asset.",
+                    )
+                )
+        elif not relative.startswith("Editor/"):
+            diagnostics.append(
+                diagnostic(
+                    "SETTINGS_SO_EDITOR_LOCATION_INVALID",
+                    relative_path(repo_root, path),
+                    "EditorOnly settings source must live under the package Editor folder.",
+                    "Move the settings source into the Editor assembly; preserve the project-owned asset GUID and path.",
+                )
             )
 
 
@@ -1437,7 +1551,7 @@ def changed_paths(repo_root: Path, base_commit: str) -> set[str]:
 
 
 def package_ids_from_paths(paths: Iterable[str]) -> set[str]:
-    package_ids: set[str] = set()
+    paths_by_package: dict[str, set[str]] = {}
     for path in paths:
         parts = path.split("/")
         if len(parts) < 2 or parts[0] != "Packages":
@@ -1447,7 +1561,13 @@ def package_ids_from_paths(paths: Iterable[str]) -> set[str]:
         if len(parts) == 2 and candidate.endswith(".meta"):
             candidate = candidate[:-5]
         if PACKAGE_ID_PATTERN.fullmatch(candidate):
-            package_ids.add(candidate)
+            paths_by_package.setdefault(candidate, set()).add(path)
+
+    package_ids: set[str] = set()
+    for package_id, package_paths in paths_by_package.items():
+        if package_id == CUSTOM_PACKAGE_MANAGER_ID and package_paths == {GENERATED_ROUTER_PATH}:
+            continue
+        package_ids.add(package_id)
     return package_ids
 
 
@@ -1504,6 +1624,125 @@ def validate_version_bump(
         )
 
 
+def immutable_git_dependency(value: str) -> bool:
+    if value.count("#") != 1:
+        return False
+    source_url, revision = value.split("#", 1)
+    parsed = urlparse(source_url)
+    query = parse_qsl(parsed.query, keep_blank_values=True)
+    safe_subpath = not query or (
+        len(query) == 1
+        and query[0][0] == "path"
+        and bool(query[0][1])
+        and not query[0][1].startswith("/")
+        and ".." not in Path(query[0][1]).parts
+    )
+    safe_url = (
+        parsed.scheme.lower() == "https"
+        and bool(parsed.hostname)
+        and parsed.username is None
+        and parsed.password is None
+        and parsed.path.endswith(".git")
+        and safe_subpath
+    )
+    normalized_revision = revision[1:] if revision.startswith("v") else revision
+    immutable_revision = (
+        re.fullmatch(r"[0-9a-fA-F]{40}", revision) is not None
+        or parse_semver(normalized_revision) is not None
+    )
+    return safe_url and immutable_revision
+
+
+def validate_downloaded_transition(
+    repo_root: Path,
+    package_id: str,
+    base_commit: str,
+) -> dict[str, Any]:
+    diagnostics: list[Diagnostic] = []
+    project_manifest_path = repo_root / "Packages" / "manifest.json"
+    project_lock_path = repo_root / "Packages" / "packages-lock.json"
+    project_manifest, manifest_text = load_json(
+        repo_root,
+        project_manifest_path,
+        diagnostics,
+        "PROJECT_MANIFEST_JSON_INVALID",
+    )
+    project_lock, lock_text = load_json(
+        repo_root,
+        project_lock_path,
+        diagnostics,
+        "PROJECT_PACKAGE_LOCK_JSON_INVALID",
+    )
+
+    dependency: str | None = None
+    dependencies = project_manifest.get("dependencies") if project_manifest else None
+    candidate = dependencies.get(package_id) if isinstance(dependencies, dict) else None
+    if isinstance(candidate, str) and candidate.strip():
+        dependency = candidate.strip()
+    else:
+        diagnostics.append(
+            diagnostic(
+                "DOWNLOADED_TRANSITION_DEPENDENCY_MISSING",
+                relative_path(repo_root, project_manifest_path),
+                f"Deleted embedded package {package_id} is not a top-level project dependency.",
+                f"Add {package_id} to Packages/manifest.json with an immutable HTTPS Git reference or restore the embedded directory.",
+                line=line_for(manifest_text or "", f'"{package_id}"'),
+            )
+        )
+
+    if dependency is not None and not immutable_git_dependency(dependency):
+        diagnostics.append(
+            diagnostic(
+                "DOWNLOADED_TRANSITION_GIT_REFERENCE_INVALID",
+                relative_path(repo_root, project_manifest_path),
+                f"Downloaded package {package_id} must use a credential-free HTTPS .git URL with a full commit or exact SemVer tag.",
+                "Replace the manifest dependency with an immutable HTTPS Git UPM reference.",
+                line=line_for(manifest_text or "", f'"{package_id}"'),
+            )
+        )
+
+    lock_dependencies = project_lock.get("dependencies") if project_lock else None
+    lock_entry = lock_dependencies.get(package_id) if isinstance(lock_dependencies, dict) else None
+    lock_valid = (
+        isinstance(lock_entry, dict)
+        and lock_entry.get("depth") == 0
+        and lock_entry.get("source") == "git"
+        and dependency is not None
+        and lock_entry.get("version") == dependency
+        and isinstance(lock_entry.get("hash"), str)
+        and re.fullmatch(r"[0-9a-fA-F]{40}", lock_entry["hash"]) is not None
+    )
+    if not lock_valid:
+        diagnostics.append(
+            diagnostic(
+                "DOWNLOADED_TRANSITION_LOCK_INVALID",
+                relative_path(repo_root, project_lock_path),
+                f"Downloaded package {package_id} must have a depth-0 Git lock entry whose version matches the manifest and whose hash is a full commit.",
+                "Resolve the immutable Git dependency with Unity and commit the matching Packages/packages-lock.json entry.",
+                line=line_for(lock_text or "", f'"{package_id}"'),
+            )
+        )
+
+    base_manifest = manifest_at_commit(repo_root, base_commit, package_id)
+    if base_manifest is None:
+        diagnostics.append(
+            diagnostic(
+                "DOWNLOADED_TRANSITION_BASE_PACKAGE_MISSING",
+                f"Packages/{package_id}",
+                f"The base commit does not contain an embedded package manifest for {package_id}.",
+                "Restore the missing package or validate the downloaded dependency outside an embedded-to-downloaded transition.",
+            )
+        )
+
+    valid = not any(item.severity == "error" for item in diagnostics)
+    return {
+        "packageId": package_id,
+        "version": dependency,
+        "valid": valid,
+        "diagnostics": [asdict(item) for item in diagnostics],
+    }
+
+
 def validate_package(
     repo_root: Path,
     package_id: str,
@@ -1513,6 +1752,8 @@ def validate_package(
     diagnostics: list[Diagnostic] = []
     package_root = repo_root / "Packages" / package_id
     if not package_root.is_dir():
+        if base_commit is not None and package_id in changed_package_ids:
+            return validate_downloaded_transition(repo_root, package_id, base_commit)
         diagnostics.append(
             diagnostic(
                 "PACKAGE_DIRECTORY_MISSING",
@@ -1530,6 +1771,7 @@ def validate_package(
     validate_skills(repo_root, package_id, package_root, diagnostics)
     validate_package_info(repo_root, package_id, package_root, manifest, diagnostics)
     validate_asmdefs(repo_root, package_id, package_root, diagnostics)
+    validate_settings_so_lifecycle(repo_root, package_id, package_root, manifest, diagnostics)
     validate_sdk_bridge(repo_root, package_id, package_root, manifest, diagnostics)
     validate_version_bump(
         repo_root,

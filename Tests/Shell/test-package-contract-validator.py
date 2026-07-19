@@ -16,6 +16,7 @@ PACKAGE_ROOT = SCRIPT_DIR.parents[1]
 VALIDATOR = PACKAGE_ROOT / "Tools~" / "package_contract_validator.py"
 FIXTURES = SCRIPT_DIR / "Fixtures~"
 PACKAGE_ID = "com.actionfit.sample"
+MANAGER_ID = "com.actionfit.custompackagemanager"
 
 
 class PackageContractValidatorTests(unittest.TestCase):
@@ -52,6 +53,95 @@ class PackageContractValidatorTests(unittest.TestCase):
         )
         self.assertEqual(0, completed.returncode, completed.stderr)
 
+    def initialize_git_repo(self, repo_root: Path) -> None:
+        self.git(repo_root, "init")
+        self.git(repo_root, "config", "user.email", "package-contract-test@example.invalid")
+        self.git(repo_root, "config", "user.name", "Package Contract Test")
+        self.git(repo_root, "add", "Packages")
+        self.git(repo_root, "commit", "-m", "fixture base")
+
+    def write_downloaded_dependency(
+        self,
+        repo_root: Path,
+        *,
+        source: str = "git",
+        commit_hash: str = "0123456789abcdef0123456789abcdef01234567",
+    ) -> str:
+        dependency = "https://example.com/actionfit/sample.git#1.2.3"
+        packages_root = repo_root / "Packages"
+        (packages_root / "manifest.json").write_text(
+            json.dumps({"dependencies": {PACKAGE_ID: dependency}}),
+            encoding="utf-8",
+        )
+        (packages_root / "packages-lock.json").write_text(
+            json.dumps(
+                {
+                    "dependencies": {
+                        PACKAGE_ID: {
+                            "version": dependency,
+                            "depth": 0,
+                            "source": source,
+                            "dependencies": {},
+                            "hash": commit_hash,
+                        }
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        return dependency
+
+    def make_manager_repo(self) -> tuple[tempfile.TemporaryDirectory[str], Path, Path]:
+        temporary = tempfile.TemporaryDirectory()
+        repo_root = Path(temporary.name)
+        package_root = repo_root / "Packages" / MANAGER_ID
+        package_root.parent.mkdir(parents=True)
+        shutil.copytree(FIXTURES / "valid-package", package_root)
+        for path in package_root.rglob("*"):
+            if not path.is_file():
+                continue
+            try:
+                content = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+            path.write_text(content.replace(PACKAGE_ID, MANAGER_ID), encoding="utf-8")
+        return temporary, repo_root, package_root
+
+    def write_settings_lifecycle_contract(
+        self,
+        package_root: Path,
+        *,
+        runtime: bool = False,
+        valid_base: bool = True,
+    ) -> None:
+        manifest_path = package_root / "package.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["dependencies"]["com.actionfit.sosingleton"] = "1.0.6"
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+        editor_root = package_root / "Editor"
+        (editor_root / "SamplePackageMenu.cs").write_text(
+            '[MenuItem(MenuRoot + "Setting SO")]\n', encoding="utf-8"
+        )
+        editor_asmdef_path = editor_root / f"{PACKAGE_ID}.Editor.asmdef"
+        editor_asmdef = json.loads(editor_asmdef_path.read_text(encoding="utf-8"))
+        editor_asmdef["references"] = [
+            "com.actionfit.sosingleton",
+            "com.actionfit.sosingleton.Editor",
+        ]
+        editor_asmdef_path.write_text(json.dumps(editor_asmdef), encoding="utf-8")
+
+        source_root = package_root / ("Runtime" if runtime else "Editor")
+        source_root.mkdir(exist_ok=True)
+        lifetime = "RuntimeSingleton" if runtime else "EditorOnly"
+        base_type = "SO_Singleton<SampleSettingsSO>" if runtime and valid_base else "ScriptableObject"
+        (source_root / "SampleSettingsSO.cs").write_text(
+            "using ActionFit.SOSingleton;\n"
+            f'[ActionFitSettingsAsset("Sample", ActionFitSettingsAssetLifetime.{lifetime})]\n'
+            f"public sealed class SampleSettingsSO : {base_type} {{}}\n",
+            encoding="utf-8",
+        )
+
     def test_valid_package_and_all_modes_succeed(self) -> None:
         temporary, repo_root, _ = self.make_repo("valid-package")
         self.addCleanup(temporary.cleanup)
@@ -62,6 +152,42 @@ class PackageContractValidatorTests(unittest.TestCase):
             self.assertTrue(result["success"])
             self.assertEqual(1, result["summary"]["packages"])
             self.assertEqual([], result["diagnostics"])
+
+    def test_valid_registered_settings_so_contract_passes(self) -> None:
+        temporary, repo_root, package_root = self.make_repo("valid-package")
+        self.addCleanup(temporary.cleanup)
+        self.write_settings_lifecycle_contract(package_root)
+
+        code, result = self.run_cli(repo_root, "--package", PACKAGE_ID)
+
+        self.assertEqual(0, code, result["diagnostics"])
+
+    def test_registered_settings_so_reports_dependency_menu_asmdef_and_runtime_failures(self) -> None:
+        temporary, repo_root, package_root = self.make_repo("valid-package")
+        self.addCleanup(temporary.cleanup)
+        self.write_settings_lifecycle_contract(package_root, runtime=True, valid_base=False)
+        manifest_path = package_root / "package.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["dependencies"].pop("com.actionfit.sosingleton")
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        (package_root / "Editor" / "SamplePackageMenu.cs").unlink()
+        asmdef_path = package_root / "Editor" / f"{PACKAGE_ID}.Editor.asmdef"
+        asmdef = json.loads(asmdef_path.read_text(encoding="utf-8"))
+        asmdef["references"] = []
+        asmdef_path.write_text(json.dumps(asmdef), encoding="utf-8")
+
+        code, result = self.run_cli(repo_root, "--package", PACKAGE_ID)
+
+        self.assertEqual(1, code)
+        codes = {item["code"] for item in result["diagnostics"]}
+        self.assertTrue(
+            {
+                "SETTINGS_SO_DEPENDENCY_MISSING",
+                "SETTINGS_SO_MENU_MISSING",
+                "SETTINGS_SO_ASMDEF_REFERENCE_MISSING",
+                "SETTINGS_SO_RUNTIME_BASE_INVALID",
+            }.issubset(codes)
+        )
 
     def test_invalid_fixture_reports_stable_contract_codes(self) -> None:
         temporary, repo_root, _ = self.make_repo("invalid-package")
@@ -519,11 +645,7 @@ class PackageContractValidatorTests(unittest.TestCase):
     def test_changed_mode_detects_missing_and_valid_version_bumps(self) -> None:
         temporary, repo_root, package_root = self.make_repo("valid-package")
         self.addCleanup(temporary.cleanup)
-        self.git(repo_root, "init")
-        self.git(repo_root, "config", "user.email", "package-contract-test@example.invalid")
-        self.git(repo_root, "config", "user.name", "Package Contract Test")
-        self.git(repo_root, "add", "Packages")
-        self.git(repo_root, "commit", "-m", "fixture base")
+        self.initialize_git_repo(repo_root)
 
         readme_path = package_root / "README.md"
         readme_path.write_text(readme_path.read_text(encoding="utf-8") + "\nChanged behavior.\n", encoding="utf-8")
@@ -547,11 +669,7 @@ class PackageContractValidatorTests(unittest.TestCase):
     def test_changed_mode_maps_package_folder_meta_to_owning_package(self) -> None:
         temporary, repo_root, package_root = self.make_repo("valid-package")
         self.addCleanup(temporary.cleanup)
-        self.git(repo_root, "init")
-        self.git(repo_root, "config", "user.email", "package-contract-test@example.invalid")
-        self.git(repo_root, "config", "user.name", "Package Contract Test")
-        self.git(repo_root, "add", "Packages")
-        self.git(repo_root, "commit", "-m", "fixture base")
+        self.initialize_git_repo(repo_root)
 
         (repo_root / "Packages" / f"{PACKAGE_ID}.meta").write_text(
             "fileFormatVersion: 2\nguid: 1234567890abcdef1234567890abcdef\n",
@@ -570,6 +688,91 @@ class PackageContractValidatorTests(unittest.TestCase):
         self.assertEqual(0, code)
         self.assertTrue(result["success"])
         self.assertEqual([PACKAGE_ID], [item["packageId"] for item in result["packages"]])
+
+    def test_changed_mode_accepts_embedded_package_converted_to_downloaded_git(self) -> None:
+        temporary, repo_root, package_root = self.make_repo("valid-package")
+        self.addCleanup(temporary.cleanup)
+        self.initialize_git_repo(repo_root)
+        shutil.rmtree(package_root)
+        dependency = self.write_downloaded_dependency(repo_root)
+
+        code, result = self.run_cli(repo_root, "--changed", "--base-ref", "HEAD")
+
+        self.assertEqual(0, code, result["diagnostics"])
+        self.assertTrue(result["success"])
+        self.assertEqual([PACKAGE_ID], [item["packageId"] for item in result["packages"]])
+        self.assertEqual(dependency, result["packages"][0]["version"])
+
+    def test_changed_mode_rejects_deleted_package_without_downloaded_contract(self) -> None:
+        temporary, repo_root, package_root = self.make_repo("valid-package")
+        self.addCleanup(temporary.cleanup)
+        self.initialize_git_repo(repo_root)
+        shutil.rmtree(package_root)
+
+        code, result = self.run_cli(repo_root, "--changed", "--base-ref", "HEAD")
+
+        self.assertEqual(1, code)
+        self.assertFalse(result["success"])
+        self.assertIn(
+            "DOWNLOADED_TRANSITION_DEPENDENCY_MISSING",
+            {item["code"] for item in result["diagnostics"]},
+        )
+
+    def test_changed_mode_rejects_downloaded_transition_with_invalid_lock(self) -> None:
+        temporary, repo_root, package_root = self.make_repo("valid-package")
+        self.addCleanup(temporary.cleanup)
+        self.initialize_git_repo(repo_root)
+        shutil.rmtree(package_root)
+        self.write_downloaded_dependency(repo_root, source="embedded", commit_hash="short")
+
+        code, result = self.run_cli(repo_root, "--changed", "--base-ref", "HEAD")
+
+        self.assertEqual(1, code)
+        self.assertIn(
+            "DOWNLOADED_TRANSITION_LOCK_INVALID",
+            {item["code"] for item in result["diagnostics"]},
+        )
+
+    def test_changed_mode_excludes_generated_router_only_change(self) -> None:
+        temporary, repo_root, package_root = self.make_manager_repo()
+        self.addCleanup(temporary.cleanup)
+        router_path = package_root / "PACKAGE_AI_GUIDE_ROUTER.md"
+        router_path.write_text("# Router\n\n## Package Guide Entries\n", encoding="utf-8")
+        self.initialize_git_repo(repo_root)
+        router_path.write_text(
+            router_path.read_text(encoding="utf-8") + "- Downloaded package guide.\n",
+            encoding="utf-8",
+        )
+
+        code, result = self.run_cli(repo_root, "--changed", "--base-ref", "HEAD")
+
+        self.assertEqual(0, code, result["diagnostics"])
+        self.assertEqual([], result["packages"])
+
+    def test_changed_mode_keeps_manager_selected_when_router_and_source_change(self) -> None:
+        temporary, repo_root, package_root = self.make_manager_repo()
+        self.addCleanup(temporary.cleanup)
+        router_path = package_root / "PACKAGE_AI_GUIDE_ROUTER.md"
+        router_path.write_text("# Router\n\n## Package Guide Entries\n", encoding="utf-8")
+        self.initialize_git_repo(repo_root)
+        router_path.write_text(
+            router_path.read_text(encoding="utf-8") + "- Downloaded package guide.\n",
+            encoding="utf-8",
+        )
+        readme_path = package_root / "README.md"
+        readme_path.write_text(
+            readme_path.read_text(encoding="utf-8") + "\nChanged validator behavior.\n",
+            encoding="utf-8",
+        )
+
+        code, result = self.run_cli(repo_root, "--changed", "--base-ref", "HEAD")
+
+        self.assertEqual(1, code)
+        self.assertEqual([MANAGER_ID], [item["packageId"] for item in result["packages"]])
+        self.assertIn(
+            "PACKAGE_VERSION_NOT_INCREMENTED",
+            {item["code"] for item in result["diagnostics"]},
+        )
 
     def test_output_file_matches_stdout_contract(self) -> None:
         temporary, repo_root, _ = self.make_repo("valid-package")

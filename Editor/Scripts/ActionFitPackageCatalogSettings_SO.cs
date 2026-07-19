@@ -1,4 +1,5 @@
 #if UNITY_EDITOR
+using ActionFit.SOSingleton;
 using UnityEngine;
 using UnityEngine.Serialization;
 
@@ -25,6 +26,7 @@ public readonly struct ActionFitPackageGitHubProfile
     public bool IsPrivate => Visibility == ActionFitPackageRepositoryVisibility.Private;
 }
 
+[ActionFitSettingsAsset("CustomPackageManager", ActionFitSettingsAssetLifetime.EditorOnly)]
 public class ActionFitPackageCatalogSettings_SO : ScriptableObject
 {
     [Header("Google Sheet Catalog")]

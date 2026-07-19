@@ -17,6 +17,9 @@ public class ActionFitPackageCreateWindow : EditorWindow
     private string _status = "verified";
     private string _description = "";
     private string _releaseNote = "검증된 최초 버전";
+    private ActionFitPackageSettingsMode _settingsMode = ActionFitPackageSettingsMode.None;
+    private string _settingsTypeName = "";
+    private string _settingsOwner = "";
     private Vector2 _scroll;
 
     public static void Open()
@@ -51,6 +54,21 @@ public class ActionFitPackageCreateWindow : EditorWindow
         EditorGUILayout.LabelField("Release Note");
         _releaseNote = EditorGUILayout.TextArea(_releaseNote, GUILayout.MinHeight(52));
 
+        EditorGUILayout.Space(8);
+        EditorGUILayout.LabelField("Settings SO", EditorStyles.boldLabel);
+        _settingsMode = (ActionFitPackageSettingsMode)EditorGUILayout.EnumPopup("Lifecycle", _settingsMode);
+        if (_settingsMode != ActionFitPackageSettingsMode.None)
+        {
+            _settingsTypeName = EditorGUILayout.TextField("Settings Type", _settingsTypeName);
+            _settingsOwner = EditorGUILayout.TextField("_Data Owner Folder", _settingsOwner);
+            string path = _settingsMode == ActionFitPackageSettingsMode.RuntimeSingleton
+                ? $"Assets/_Data/_{_settingsOwner}/Resources/SO/{_settingsTypeName}.asset"
+                : $"Assets/_Data/_{_settingsOwner}/{_settingsTypeName}.asset";
+            EditorGUILayout.HelpBox(
+                $"The generated package registers this settings type with the shared SO lifecycle.\n{path}",
+                MessageType.Info);
+        }
+
         EditorGUILayout.Space(12);
         using (new EditorGUILayout.HorizontalScope())
         {
@@ -73,6 +91,11 @@ public class ActionFitPackageCreateWindow : EditorWindow
         string suffix = Regex.Replace(_displayName.Trim().ToLowerInvariant(), @"[^a-z0-9._-]+", "");
         _packageId = $"com.actionfit.{suffix}";
         _repoName = Regex.Replace(_displayName.Trim(), @"[^A-Za-z0-9._-]+", "_").Trim('_', '.', '-');
+        string typeStem = ToPascalIdentifier(_displayName);
+        if (string.IsNullOrWhiteSpace(_settingsTypeName))
+            _settingsTypeName = $"{typeStem}SettingsSO";
+        if (string.IsNullOrWhiteSpace(_settingsOwner))
+            _settingsOwner = typeStem;
     }
 
     private void CreatePackage()
@@ -92,6 +115,9 @@ public class ActionFitPackageCreateWindow : EditorWindow
                 Status = _status,
                 Description = _description,
                 ReleaseNote = _releaseNote,
+                SettingsMode = _settingsMode,
+                SettingsTypeName = _settingsTypeName,
+                SettingsOwner = _settingsOwner,
             };
 
             var info = ActionFitPackageInfoUtility.CreatePackage(request);
@@ -121,5 +147,21 @@ public class ActionFitPackageCreateWindow : EditorWindow
         => _repositoryVisibilitySelection == 1
             ? ActionFitPackageRepositoryVisibility.Private
             : ActionFitPackageRepositoryVisibility.Public;
+
+    private static string ToPascalIdentifier(string value)
+    {
+        var builder = new System.Text.StringBuilder();
+        foreach (Match match in Regex.Matches(value ?? string.Empty, @"[A-Za-z0-9]+"))
+        {
+            string token = match.Value;
+            if (builder.Length == 0 && char.IsDigit(token[0]))
+                builder.Append('_');
+            builder.Append(char.ToUpperInvariant(token[0]));
+            if (token.Length > 1)
+                builder.Append(token[1..]);
+        }
+
+        return builder.Length == 0 ? "ActionFitPackage" : builder.ToString();
+    }
 }
 #endif

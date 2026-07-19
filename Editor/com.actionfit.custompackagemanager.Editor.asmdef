@@ -1,7 +1,10 @@
 {
     "name": "com.actionfit.custompackagemanager.Editor",
     "rootNamespace": "",
-    "references": [],
+    "references": [
+        "com.actionfit.sosingleton",
+        "com.actionfit.sosingleton.Editor"
+    ],
     "includePlatforms": [
         "Editor"
     ],

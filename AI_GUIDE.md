@@ -7,10 +7,18 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.custompackagemanager`
 - Display name: Custom Package Manager
 - Repository: `https://github.com/ActionFit-Editor/Custom_Package_Manager.git`
-- Current package version at generation time: `1.1.108`
+- Current package version at generation time: `1.1.110`
 - Unity version: `6000.2`
 
 ## Purpose
+
+### Settings SO Lifecycle And Package Template
+
+- `ActionFitPackageCatalogSettings_SO` is registered as `EditorOnly` with canonical path `Assets/_Data/_CustomPackageManager/ActionFitPackageCatalogSettings_SO.asset`.
+- Package creation now offers `None`, `EditorOnly`, and `RuntimeSingleton` settings modes. `None` preserves the previous template.
+- Settings modes generate the registration, direct SO Singleton dependency, matching Runtime/Editor asmdef references, package `Setting SO` menu, lifecycle documentation, and an EditMode registration/path test.
+- `RuntimeSingleton` generates `SO_Singleton<Self>` and uses `Assets/_Data/_<Owner>/Resources/SO/<Type>.asset`; `EditorOnly` uses `Assets/_Data/_<Owner>/<Type>.asset`.
+- The package contract validator enforces the direct dependency, menu, assembly references, source location, and runtime self-generic base only for explicitly registered settings types.
 
 Custom Package Manager manages ActionFit UPM catalog search, collection classification, direct Git URL install, update/remove, and publish workflows. Use `README.md`, `package.json`, package source files, and `Editor/PackageInfo/ActionFitPackageInfo_SO.asset` together to understand the user-facing workflow and catalog metadata.
 
@@ -203,6 +211,8 @@ Read this file when:
 - The Unity Editor adapter resolves the package-owned validator from `PackageInfo.resolvedPath` and passes the repository root containing that physical `Packages/<package-id>` directory to the CLI. This must work for both the embedded project and an isolated `file:` dependency project.
 - `Tools/AI/validate_ai_docs.py` delegates changed ActionFit package checks to this validator so local AI documentation validation and publish preparation share one contract implementation.
 - `--package` and `--all` also enforce changed-package version bumps when `--base-ref` is supplied. Without a base ref they validate only the current package state.
+- `--changed` accepts a deleted embedded package as a downloaded transition only when the base contains its package manifest and the current project manifest/lock agree on a credential-free immutable HTTPS Git dependency, depth zero, Git source, and a full resolved commit hash.
+- A change limited to the generated `PACKAGE_AI_GUIDE_ROUTER.md` does not select Custom Package Manager for a release bump. Any additional change under the package keeps normal selection and version enforcement.
 - The JSON result schema is shared by local AI and CI callers. Every diagnostic has `code`, `severity`, `path`, `line`, `message`, and `suggestedFix`; exit codes are `0` success, `1` contract failure, and `2` infrastructure failure.
 - Contract checks cover package.json fields and JSON, SemVer, changed-package version increases, README Git UPM install tags, AI guide identity/version/router entries, schema v2 skill prefix/help/access/inventory rules, registered sources and `SKILL.md` frontmatter, PackageInfo identity/required metadata, package-owned asmdefs, and SDK bridge source-only/profile contracts when present.
 - Directories whose names end in `~`, including validator fixtures and `Tools~`, are excluded from asmdef discovery because Unity does not import them as package assemblies.

@@ -6,6 +6,13 @@ using System.Text.RegularExpressions;
 using UnityEditor;
 using UnityEngine;
 
+public enum ActionFitPackageSettingsMode
+{
+    None,
+    EditorOnly,
+    RuntimeSingleton
+}
+
 public sealed class ActionFitPackageCreateRequest
 {
     public string PackageId;
@@ -19,6 +26,9 @@ public sealed class ActionFitPackageCreateRequest
     public string Owner;
     public string Status;
     public string ReleaseNote;
+    public ActionFitPackageSettingsMode SettingsMode;
+    public string SettingsTypeName;
+    public string SettingsOwner;
 }
 
 public static class ActionFitPackageInfoUtility
@@ -100,6 +110,10 @@ public static class ActionFitPackageInfoUtility
         Directory.CreateDirectory(fullPackageRoot);
         Directory.CreateDirectory(Path.Combine(fullPackageRoot, "Editor", "Scripts"));
         Directory.CreateDirectory(Path.Combine(fullPackageRoot, PackageInfoFolder));
+        if (request.SettingsMode == ActionFitPackageSettingsMode.RuntimeSingleton)
+            Directory.CreateDirectory(Path.Combine(fullPackageRoot, "Runtime"));
+        if (request.SettingsMode != ActionFitPackageSettingsMode.None)
+            Directory.CreateDirectory(Path.Combine(fullPackageRoot, "Tests", "Editor"));
 
         File.WriteAllText(Path.Combine(fullPackageRoot, "package.json"), BuildPackageJson(request), new UTF8Encoding(false));
         File.WriteAllText(Path.Combine(fullPackageRoot, "README.md"), BuildReadme(request), new UTF8Encoding(false));
@@ -108,12 +122,41 @@ public static class ActionFitPackageInfoUtility
             Path.Combine(fullPackageRoot, "Editor", "Scripts", $"{ToPascalIdentifier(request.DisplayName, request.PackageId)}PackageMenu.cs"),
             BuildPackageMenu(request),
             new UTF8Encoding(false));
+        if (request.SettingsMode == ActionFitPackageSettingsMode.EditorOnly)
+        {
+            File.WriteAllText(
+                Path.Combine(fullPackageRoot, "Editor", "Scripts", $"{request.SettingsTypeName}.cs"),
+                BuildSettingsSource(request),
+                new UTF8Encoding(false));
+        }
+        else if (request.SettingsMode == ActionFitPackageSettingsMode.RuntimeSingleton)
+        {
+            File.WriteAllText(
+                Path.Combine(fullPackageRoot, "Runtime", $"{request.SettingsTypeName}.cs"),
+                BuildSettingsSource(request),
+                new UTF8Encoding(false));
+            File.WriteAllText(
+                Path.Combine(fullPackageRoot, "Runtime", $"{request.PackageId}.asmdef"),
+                BuildRuntimeAsmdef(request.PackageId),
+                new UTF8Encoding(false));
+        }
+        if (request.SettingsMode != ActionFitPackageSettingsMode.None)
+        {
+            File.WriteAllText(
+                Path.Combine(fullPackageRoot, "Tests", "Editor", $"{request.SettingsTypeName}LifecycleTests.cs"),
+                BuildSettingsTests(request),
+                new UTF8Encoding(false));
+            File.WriteAllText(
+                Path.Combine(fullPackageRoot, "Tests", "Editor", $"{request.PackageId}.Editor.Tests.asmdef"),
+                BuildEditorTestsAsmdef(request),
+                new UTF8Encoding(false));
+        }
         WritePackageInfoAssetFile(GetPackageInfoAssetPath(packageRoot), request);
         AssetDatabase.Refresh();
 
         File.WriteAllText(
             Path.Combine(fullPackageRoot, "Editor", $"{request.PackageId}.Editor.asmdef"),
-            BuildEditorAsmdef(request.PackageId),
+            BuildEditorAsmdef(request),
             new UTF8Encoding(false));
 
         AssetDatabase.SaveAssets();
@@ -285,6 +328,29 @@ public static class ActionFitPackageInfoUtility
         request.Owner = string.IsNullOrWhiteSpace(request.Owner) ? "ActionFit" : request.Owner.Trim();
         request.Status = string.IsNullOrWhiteSpace(request.Status) ? "verified" : request.Status.Trim();
         request.ReleaseNote = string.IsNullOrWhiteSpace(request.ReleaseNote) ? "초기 검증 릴리즈." : request.ReleaseNote.Trim();
+
+        if (!Enum.IsDefined(typeof(ActionFitPackageSettingsMode), request.SettingsMode))
+            throw new InvalidOperationException("Settings Mode must be None, EditorOnly, or RuntimeSingleton.");
+
+        if (request.SettingsMode == ActionFitPackageSettingsMode.None)
+        {
+            request.SettingsTypeName = string.Empty;
+            request.SettingsOwner = string.Empty;
+            return;
+        }
+
+        request.SettingsTypeName = string.IsNullOrWhiteSpace(request.SettingsTypeName)
+            ? $"{ToPascalIdentifier(request.DisplayName, request.PackageId)}SettingsSO"
+            : request.SettingsTypeName.Trim();
+        request.SettingsOwner = string.IsNullOrWhiteSpace(request.SettingsOwner)
+            ? ToPascalIdentifier(request.DisplayName, request.PackageId)
+            : request.SettingsOwner.Trim();
+
+        if (!Regex.IsMatch(request.SettingsTypeName, @"^[A-Za-z_][A-Za-z0-9_]*$"))
+            throw new InvalidOperationException("Settings Type Name must be a valid C# identifier.");
+        if (request.SettingsOwner is "." or ".." ||
+            request.SettingsOwner.IndexOfAny(new[] { '/', '\\', ':' }) >= 0)
+            throw new InvalidOperationException("Settings Owner must be one safe _Data folder segment.");
     }
 
     private static string NormalizePackageId(string value)
@@ -317,6 +383,9 @@ public static class ActionFitPackageInfoUtility
 
     private static string BuildPackageJson(ActionFitPackageCreateRequest request)
     {
+        string dependencies = request.SettingsMode == ActionFitPackageSettingsMode.None
+            ? "{}"
+            : "{\n    \"com.actionfit.sosingleton\": \"1.0.6\"\n  }";
         return "{\n" +
                $"  \"name\": \"{EscapeJson(request.PackageId)}\",\n" +
                $"  \"version\": \"{EscapeJson(request.Version)}\",\n" +
@@ -324,12 +393,19 @@ public static class ActionFitPackageInfoUtility
                $"  \"description\": \"{EscapeJson(request.Description)}\",\n" +
                $"  \"unity\": \"{EscapeJson(request.UnityVersion)}\",\n" +
                $"  \"author\": {{ \"name\": \"{EscapeJson(request.Owner)}\" }},\n" +
-               "  \"dependencies\": {}\n" +
+               $"  \"dependencies\": {dependencies}\n" +
                "}\n";
     }
 
     private static string BuildReadme(ActionFitPackageCreateRequest request)
     {
+        string settingsSection = BuildReadmeSettingsSection(request);
+        string settingMenu = request.SettingsMode == ActionFitPackageSettingsMode.None
+            ? "- If this package later owns or bootstraps a settings ScriptableObject, add `Setting SO` under the same package root.\n"
+            : "- Setting SO: `Tools > Package > " + request.DisplayName + " > Setting SO`.\n";
+        string runtimeAssembly = request.SettingsMode == ActionFitPackageSettingsMode.RuntimeSingleton
+            ? $"- **Runtime** (`{request.PackageId}`): runtime settings assembly.\n"
+            : string.Empty;
         return $"# {request.DisplayName} ({request.PackageId})\n\n" +
                $"{request.Description}\n\n" +
                "## Install\n\n" +
@@ -340,17 +416,20 @@ public static class ActionFitPackageInfoUtility
                "  }\n" +
                "}\n" +
                "```\n\n" +
+               settingsSection +
                "## Unity Menu\n\n" +
                $"- README: `Tools > Package > {request.DisplayName} > README`.\n" +
-               "- If this package later owns or bootstraps a settings ScriptableObject, add `Setting SO` under the same package root.\n\n" +
+               settingMenu + "\n" +
                "## AI Guide\n\n" +
                $"- Read `{AiGuideFileName}` before modifying or diagnosing this package in a consuming project.\n\n" +
                "## Assembly\n\n" +
+               runtimeAssembly +
                $"- **Editor** (`{request.PackageId}.Editor`): editor-only package assembly.\n";
     }
 
     private static string BuildAiGuide(ActionFitPackageCreateRequest request)
     {
+        string settingsContract = BuildAiGuideSettingsContract(request);
         return $"# AI Guide - {request.DisplayName}\n\n" +
                "This file is shipped inside the UPM package so an AI assistant in a consuming Unity project can understand the package without access to the source project's `Docs/AI` folder.\n\n" +
                "## Package Identity\n\n" +
@@ -375,6 +454,7 @@ public static class ActionFitPackageInfoUtility
                "- Treat `package.json` as the source for package ID, version, Unity version, and package dependencies.\n" +
                $"- Treat `Editor/PackageInfo/{PackageInfoAssetName}` as the source for catalog metadata, owner, status, description, release note, repository name, and dependency override.\n" +
                "- Read `Packages/com.actionfit.custompackagemanager/PACKAGE_AI_GUIDE_ROUTER.md` only when deciding which installed ActionFit package `AI_GUIDE.md` applies to a task.\n" +
+               settingsContract +
                "- Keep `README.md` focused on human usage and setup.\n" +
                "- Keep this `AI_GUIDE.md` focused on AI-facing architecture, constraints, migration notes, and package-specific editing rules.\n" +
                "- When behavior changes, update `AI_GUIDE.md` in the same package before publishing so consuming projects receive the latest AI context.\n\n" +
@@ -397,13 +477,69 @@ public static class ActionFitPackageInfoUtility
                "- If this package is modified after a version was tagged, bump to the next unused patch version before publishing.\n";
     }
 
+    private static string BuildReadmeSettingsSection(ActionFitPackageCreateRequest request)
+    {
+        if (request.SettingsMode == ActionFitPackageSettingsMode.None)
+            return string.Empty;
+
+        string path = request.SettingsMode == ActionFitPackageSettingsMode.RuntimeSingleton
+            ? $"Assets/_Data/_{request.SettingsOwner}/Resources/SO/{request.SettingsTypeName}.asset"
+            : $"Assets/_Data/_{request.SettingsOwner}/{request.SettingsTypeName}.asset";
+        string runtime = request.SettingsMode == ActionFitPackageSettingsMode.RuntimeSingleton
+            ? $" Runtime code reads it through `{request.SettingsTypeName}.Instance`; the lookup result is cached until Unity subsystem registration resets static state."
+            : "";
+        return "## Settings SO\n\n" +
+               $"- Lifecycle: `{request.SettingsMode}`.\n" +
+               $"- Canonical path: `{path}`.\n" +
+               "- The shared SO Singleton provider reuses a canonical, registered legacy, or unique existing asset before creating a new one. Duplicate or invalid candidates block creation.\n" +
+               runtime + "\n\n";
+    }
+
+    private static string BuildAiGuideSettingsContract(ActionFitPackageCreateRequest request)
+    {
+        if (request.SettingsMode == ActionFitPackageSettingsMode.None)
+            return "- This package was generated without a settings ScriptableObject. Add one only through an explicit lifecycle decision.\n";
+
+        string path = request.SettingsMode == ActionFitPackageSettingsMode.RuntimeSingleton
+            ? $"Assets/_Data/_{request.SettingsOwner}/Resources/SO/{request.SettingsTypeName}.asset"
+            : $"Assets/_Data/_{request.SettingsOwner}/{request.SettingsTypeName}.asset";
+        string runtime = request.SettingsMode == ActionFitPackageSettingsMode.RuntimeSingleton
+            ? $"- `{request.SettingsTypeName}` inherits `SO_Singleton<{request.SettingsTypeName}>`; preserve the `Resources/SO` location and subsystem-reset cache contract.\n"
+            : $"- `{request.SettingsTypeName}` is Editor-only and must not move into a Runtime assembly.\n";
+        return $"- Settings lifecycle is `{request.SettingsMode}` and is registered with `ActionFitSettingsAssetAttribute`.\n" +
+               $"- Canonical project-owned asset path: `{path}`. Preserve any existing asset GUID and serialized values; do not move it automatically.\n" +
+               "- Resolve through `ActionFitSettingsAssetProvider`; canonical, registered legacy, and unique project assets are reused, while duplicate or invalid candidates block creation.\n" +
+               runtime;
+    }
+
     private static string BuildPackageMenu(ActionFitPackageCreateRequest request)
     {
         string className = $"{ToPascalIdentifier(request.DisplayName, request.PackageId)}PackageMenu";
         string packageId = EscapeJson(request.PackageId);
         string displayName = EscapeJson(request.DisplayName);
+        string settingsUsing = request.SettingsMode == ActionFitPackageSettingsMode.None
+            ? string.Empty
+            : "using ActionFit.SOSingleton.Editor;\n";
+        string settingsMenu = request.SettingsMode == ActionFitPackageSettingsMode.None
+            ? string.Empty
+            : "    private const int SettingPriority = 600;\n" +
+              "\n" +
+              "    [MenuItem(MenuRoot + \"Setting SO\", false, SettingPriority)]\n" +
+              "    private static void FocusSettings()\n" +
+              "    {\n" +
+              $"        var settings = ActionFitSettingsAssetProvider.GetOrCreate<{request.SettingsTypeName}>();\n" +
+              "        if (settings == null)\n" +
+              "        {\n" +
+              "            EditorUtility.DisplayDialog(\"Setting SO\", \"The settings asset could not be resolved. Run the SO Singleton audit for details.\", \"OK\");\n" +
+              "            return;\n" +
+              "        }\n" +
+              "\n" +
+              "        Selection.activeObject = settings;\n" +
+              "        EditorGUIUtility.PingObject(settings);\n" +
+              "    }\n\n";
 
         return "#if UNITY_EDITOR\n" +
+               settingsUsing +
                "using UnityEditor;\n" +
                "using UnityEngine;\n\n" +
                $"public static class {className}\n" +
@@ -411,6 +547,7 @@ public static class ActionFitPackageInfoUtility
                $"    private const string MenuRoot = \"Tools/Package/{displayName}/\";\n" +
                $"    private const string ReadmePath = \"Packages/{packageId}/README.md\";\n" +
                "    private const int ReadmePriority = 901;\n\n" +
+               settingsMenu +
                "    [MenuItem(MenuRoot + \"README\", false, ReadmePriority)]\n" +
                "    private static void OpenReadme()\n" +
                "    {\n" +
@@ -427,12 +564,20 @@ public static class ActionFitPackageInfoUtility
                "#endif\n";
     }
 
-    private static string BuildEditorAsmdef(string packageId)
+    private static string BuildEditorAsmdef(ActionFitPackageCreateRequest request)
     {
+        string references = request.SettingsMode switch
+        {
+            ActionFitPackageSettingsMode.EditorOnly =>
+                "[\n        \"com.actionfit.sosingleton\",\n        \"com.actionfit.sosingleton.Editor\"\n    ]",
+            ActionFitPackageSettingsMode.RuntimeSingleton =>
+                $"[\n        \"{EscapeJson(request.PackageId)}\",\n        \"com.actionfit.sosingleton\",\n        \"com.actionfit.sosingleton.Editor\"\n    ]",
+            _ => "[]"
+        };
         return "{\n" +
-               $"    \"name\": \"{EscapeJson(packageId)}.Editor\",\n" +
+               $"    \"name\": \"{EscapeJson(request.PackageId)}.Editor\",\n" +
                "    \"rootNamespace\": \"\",\n" +
-               "    \"references\": [],\n" +
+               $"    \"references\": {references},\n" +
                "    \"includePlatforms\": [\n" +
                "        \"Editor\"\n" +
                "    ],\n" +
@@ -444,6 +589,92 @@ public static class ActionFitPackageInfoUtility
                "    \"defineConstraints\": [],\n" +
                "    \"versionDefines\": [],\n" +
                "    \"noEngineReferences\": false\n" +
+               "}\n";
+    }
+
+    private static string BuildRuntimeAsmdef(string packageId)
+    {
+        return "{\n" +
+               $"    \"name\": \"{EscapeJson(packageId)}\",\n" +
+               "    \"rootNamespace\": \"\",\n" +
+               "    \"references\": [\n" +
+               "        \"com.actionfit.sosingleton\"\n" +
+               "    ],\n" +
+               "    \"includePlatforms\": [],\n" +
+               "    \"excludePlatforms\": [],\n" +
+               "    \"allowUnsafeCode\": false,\n" +
+               "    \"overrideReferences\": false,\n" +
+               "    \"precompiledReferences\": [],\n" +
+               "    \"autoReferenced\": true,\n" +
+               "    \"defineConstraints\": [],\n" +
+               "    \"versionDefines\": [],\n" +
+               "    \"noEngineReferences\": false\n" +
+               "}\n";
+    }
+
+    private static string BuildSettingsSource(ActionFitPackageCreateRequest request)
+    {
+        string lifetime = request.SettingsMode == ActionFitPackageSettingsMode.RuntimeSingleton
+            ? "RuntimeSingleton"
+            : "EditorOnly";
+        string baseType = request.SettingsMode == ActionFitPackageSettingsMode.RuntimeSingleton
+            ? $"SO_Singleton<{request.SettingsTypeName}>"
+            : "ScriptableObject";
+        return "using ActionFit.SOSingleton;\n" +
+               "using UnityEngine;\n\n" +
+               $"[ActionFitSettingsAsset(\"{EscapeJson(request.SettingsOwner)}\", ActionFitSettingsAssetLifetime.{lifetime})]\n" +
+               $"public sealed class {request.SettingsTypeName} : {baseType}\n" +
+               "{\n" +
+               "}\n";
+    }
+
+    private static string BuildEditorTestsAsmdef(ActionFitPackageCreateRequest request)
+    {
+        string runtimeReference = request.SettingsMode == ActionFitPackageSettingsMode.RuntimeSingleton
+            ? $"        \"{EscapeJson(request.PackageId)}\",\n"
+            : string.Empty;
+        return "{\n" +
+               $"    \"name\": \"{EscapeJson(request.PackageId)}.Editor.Tests\",\n" +
+               "    \"rootNamespace\": \"\",\n" +
+               "    \"references\": [\n" +
+               runtimeReference +
+               $"        \"{EscapeJson(request.PackageId)}.Editor\",\n" +
+               "        \"com.actionfit.sosingleton\",\n" +
+               "        \"com.actionfit.sosingleton.Editor\"\n" +
+               "    ],\n" +
+               "    \"includePlatforms\": [\n" +
+               "        \"Editor\"\n" +
+               "    ],\n" +
+               "    \"optionalUnityReferences\": [\n" +
+               "        \"TestAssemblies\"\n" +
+               "    ],\n" +
+               "    \"autoReferenced\": false,\n" +
+               "    \"noEngineReferences\": false\n" +
+               "}\n";
+    }
+
+    private static string BuildSettingsTests(ActionFitPackageCreateRequest request)
+    {
+        string lifetime = request.SettingsMode == ActionFitPackageSettingsMode.RuntimeSingleton
+            ? "RuntimeSingleton"
+            : "EditorOnly";
+        string expectedPath = request.SettingsMode == ActionFitPackageSettingsMode.RuntimeSingleton
+            ? $"Assets/_Data/_{request.SettingsOwner}/Resources/SO/{request.SettingsTypeName}.asset"
+            : $"Assets/_Data/_{request.SettingsOwner}/{request.SettingsTypeName}.asset";
+        return "using ActionFit.SOSingleton;\n" +
+               "using ActionFit.SOSingleton.Editor;\n" +
+               "using NUnit.Framework;\n\n" +
+               $"public sealed class {request.SettingsTypeName}LifecycleTests\n" +
+               "{\n" +
+               "    [Test]\n" +
+               "    public void Registration_UsesGeneratedLifecycleAndCanonicalPath()\n" +
+               "    {\n" +
+               $"        var registration = (ActionFitSettingsAssetAttribute)System.Attribute.GetCustomAttribute(typeof({request.SettingsTypeName}), typeof(ActionFitSettingsAssetAttribute));\n" +
+               $"        var resolution = ActionFitSettingsAssetProvider.Resolve(typeof({request.SettingsTypeName}), false);\n\n" +
+               "        Assert.That(registration, Is.Not.Null);\n" +
+               $"        Assert.That(registration.Lifetime, Is.EqualTo(ActionFitSettingsAssetLifetime.{lifetime}));\n" +
+               $"        Assert.That(resolution.CanonicalPath, Is.EqualTo(\"{EscapeJson(expectedPath)}\"));\n" +
+               "    }\n" +
                "}\n";
     }
 

@@ -2,12 +2,24 @@
 
 Unity에서 ActionFit UPM 패키지 카탈로그를 조회하고 설치하는 도구입니다. 패키지와 모음을 검색하고, 카탈로그 또는 직접 입력한 Git URL에서 설치하며, 선택한 버전을 적용하거나 제거하고 ActionFit Editor 패키지의 수동 publish workflow를 지원합니다.
 
+## 설정 SO와 신규 패키지 생성
+
+catalog 설정 `ActionFitPackageCatalogSettings_SO`는 공통 provider가 `Assets/_Data/_CustomPackageManager/`에서 재사용·생성하고 탐색 결과를 캐시합니다.
+
+`1. Create Package` 화면의 Settings SO Lifecycle은 다음 세 가지입니다.
+
+- `None`: 기존 README-only template을 유지합니다.
+- `EditorOnly`: Editor 설정 타입, SO Singleton 의존성/asmdef, `Setting SO` 메뉴, 문서와 EditMode 수명주기 검사를 함께 생성합니다.
+- `RuntimeSingleton`: `SO_Singleton<자기타입>` Runtime 타입과 `Assets/_Data/_<Owner>/Resources/SO/<Type>.asset` 계약, Runtime/Editor asmdef, 메뉴·문서·검사를 함께 생성합니다.
+
+패키지 계약 검증기는 명시적으로 등록된 설정 타입에만 dependency, menu, asmdef, source location, runtime base 규칙을 적용합니다.
+
 ## 설치
 
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.108"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.110"
   }
 }
 ```
@@ -141,6 +153,8 @@ python Packages/com.actionfit.custompackagemanager/Tools~/package_contract_valid
 ```
 
 검증기는 `package.json`, SemVer와 변경 패키지 버전 상승, README 설치 tag, `AI_GUIDE.md` identity/version/router 항목, schema v2 prefix/help/access 규칙, 등록 skill source와 `SKILL.md` frontmatter, `ActionFitPackageInfo_SO` 및 패키지 asmdef를 확인합니다. 패키지에 `Editor/SDKInstallProfile.json`이 있으면 profile schema/source 불변성, public bridge 공개 범위, 서드파티 고지, source-only 크기 경계와 금지된 vendor 파일 또는 자격 증명도 검사합니다. 동일한 JSON schema를 stdout과 선택형 `--output`에 쓰며 모든 진단에는 `code`, `severity`, `path`, `line`, `message`, `suggestedFix`가 포함됩니다.
+
+`--changed`는 base commit에 존재하던 embedded 패키지 폴더가 삭제된 경우 현재 `Packages/manifest.json`의 top-level dependency가 credential-free HTTPS Git URL과 full commit 또는 exact SemVer tag를 사용하고, `packages-lock.json`의 depth-0 Git entry가 동일 version과 40자리 commit hash를 가질 때만 downloaded 전환으로 인정합니다. 이 조건이 하나라도 다르면 삭제를 계약 오류로 보고합니다. 자동 생성된 `PACKAGE_AI_GUIDE_ROUTER.md`만 바뀐 경우에는 Custom Package Manager 릴리스 변경으로 선택하지 않지만, 다른 패키지 소스가 함께 바뀌면 기존 버전 상승 검사를 그대로 적용합니다.
 
 Exit code는 로컬 자동화 및 CI에서 안정적으로 유지됩니다.
 

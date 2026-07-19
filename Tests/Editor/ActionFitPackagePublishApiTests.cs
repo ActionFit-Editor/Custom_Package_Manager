@@ -43,6 +43,32 @@ public sealed class ActionFitPackagePublishApiTests
         Assert.DoesNotThrow(() => ActionFitPackageInfoUtility.ValidateCreateRequest(request));
     }
 
+    [TestCase(ActionFitPackageSettingsMode.EditorOnly)]
+    [TestCase(ActionFitPackageSettingsMode.RuntimeSingleton)]
+    public void ValidateCreateRequest_DerivesSettingsLifecycleNames(ActionFitPackageSettingsMode mode)
+    {
+        ActionFitPackageCreateRequest request = CreateValidRequest();
+        request.SettingsMode = mode;
+
+        ActionFitPackageInfoUtility.ValidateCreateRequest(request);
+
+        Assert.That(request.SettingsTypeName, Is.EqualTo("VisibilityTestSettingsSO"));
+        Assert.That(request.SettingsOwner, Is.EqualTo("VisibilityTest"));
+    }
+
+    [Test]
+    public void ValidateCreateRequest_RejectsUnsafeSettingsOwner()
+    {
+        ActionFitPackageCreateRequest request = CreateValidRequest();
+        request.SettingsMode = ActionFitPackageSettingsMode.EditorOnly;
+        request.SettingsOwner = "../Outside";
+
+        InvalidOperationException exception = Assert.Throws<InvalidOperationException>(
+            () => ActionFitPackageInfoUtility.ValidateCreateRequest(request));
+
+        Assert.That(exception.Message, Does.Contain("safe _Data folder"));
+    }
+
     [Test]
     public void ComputeBulkPlanId_IsStableRegardlessOfInputOrder()
     {
