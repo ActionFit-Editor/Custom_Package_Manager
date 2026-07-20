@@ -235,6 +235,16 @@ public sealed class ActionFitContentBundleTests
     }
 
     [Test]
+    public void ValidateProfile_AcceptsFullImmutableCommitWhenRepositoryHasNoVersionTag()
+    {
+        ActionFitContentBundleProfile profile = CreateProfile();
+        profile.packages[0].gitUrl =
+            "https://github.com/ActionFitGames/ContentCore.git#0123456789abcdef0123456789abcdef01234567";
+
+        Assert.DoesNotThrow(() => ActionFitContentBundlePlanner.ValidateProfile(profile));
+    }
+
+    [Test]
     public void ResolveSelection_SchemaOneKeepsLegacyAllPackageBehavior()
     {
         ActionFitContentBundleProfile profile = CreateProfile();

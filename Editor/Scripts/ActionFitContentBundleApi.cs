@@ -1289,8 +1289,13 @@ internal static class ActionFitContentBundlePlanner
             {
                 throw new InvalidOperationException($"Package Git URL must use HTTPS: {package.packageId}");
             }
-            if (!string.Equals(RevisionPart(package.gitUrl), package.version, StringComparison.Ordinal))
-                throw new InvalidOperationException($"Package Git URL must pin exact version tag {package.version}: {package.packageId}");
+            string revision = RevisionPart(package.gitUrl);
+            if (!string.Equals(revision, package.version, StringComparison.Ordinal) &&
+                !IsImmutableCommit(revision))
+            {
+                throw new InvalidOperationException(
+                    $"Package Git URL must pin exact version tag {package.version} or a full immutable commit: {package.packageId}");
+            }
         }
 
         ActionFitContentBundleModuleSpec[] modules = profile.modules ?? Array.Empty<ActionFitContentBundleModuleSpec>();
@@ -1715,6 +1720,12 @@ internal static class ActionFitContentBundlePlanner
     {
         int hash = (gitUrl ?? "").LastIndexOf('#');
         return hash < 0 || hash == gitUrl.Length - 1 ? "" : gitUrl[(hash + 1)..];
+    }
+
+    private static bool IsImmutableCommit(string revision)
+    {
+        return !string.IsNullOrWhiteSpace(revision) &&
+               Regex.IsMatch(revision, "^[0-9a-fA-F]{40}$", RegexOptions.CultureInvariant);
     }
 
     private static string NormalizeRepository(string repository)

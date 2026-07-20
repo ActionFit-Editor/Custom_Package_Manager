@@ -8,7 +8,7 @@ This contract defines a reusable, self-removing Git UPM installer for an ActionF
 - Store `Editor/ContentBundleProfile.json` beside an `[InitializeOnLoad]` bootstrap.
 - Use a schema-version 2 profile for new installers. Declare every installable package once, then map package IDs into coherent modules.
 - Mark the minimal Origin/Core closure as `required: true` modules. Mark supported UI, animation, SDK adapter, and project-convention leaves with explicit `defaultSelected` values.
-- Pin the Custom Package Manager and every bundle package to canonical HTTPS Git URLs with exact SemVer tags.
+- Pin the Custom Package Manager and every bundle package to canonical HTTPS Git URLs. Use an exact SemVer tag whenever the repository publishes one. A repository with no version tag may use only a full 40-character immutable commit while keeping the package's declared SemVer in `version`; branches, short commits, and floating revisions are forbidden.
 
 ## Bootstrap Sequence
 
