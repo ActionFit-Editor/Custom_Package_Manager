@@ -9,6 +9,7 @@ This contract defines a reusable, self-removing Git UPM installer for an ActionF
 - Use a schema-version 2 profile for new installers. Declare every installable package once, then map package IDs into coherent modules.
 - Mark the minimal Origin/Core closure as `required: true` modules. Mark supported UI, animation, SDK adapter, and project-convention leaves with explicit `defaultSelected` values.
 - Pin the Custom Package Manager and every bundle package to canonical HTTPS Git URLs. Use an exact SemVer tag whenever the repository publishes one. A repository with no version tag may use only a full 40-character immutable commit while keeping the package's declared SemVer in `version`; branches, short commits, and floating revisions are forbidden.
+- When one package is also distributed through a trusted registry, `allowCompatibleRegistryVersion: true` may preserve an already-installed stable registry version equal to or newer than `version`. Opt in per package only; older, prerelease, local/file, Git, and unparseable values remain blocking conflicts.
 
 ## Bootstrap Sequence
 

@@ -32,6 +32,7 @@ public sealed class ActionFitContentBundlePackageSpec
     public string gitUrl = "";
     public bool required = true;
     public bool removeOnRelease = true;
+    public bool allowCompatibleRegistryVersion;
 }
 
 public enum ActionFitContentBundleChangeKind

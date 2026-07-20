@@ -80,6 +80,54 @@ public sealed class ActionFitContentBundleTests
     }
 
     [Test]
+    public void PlanInstall_PreservesOptedInCompatibleRegistryVersion()
+    {
+        ActionFitContentBundleProfile profile = CreateProfile();
+        ActionFitContentBundlePackageSpec package = profile.packages.Single(item =>
+            item.packageId == "com.actionfit.content-core");
+        package.allowCompatibleRegistryVersion = true;
+        string manifest = Manifest((package.packageId, "0.3.0"));
+
+        ActionFitContentBundlePlan plan = ActionFitContentBundlePlanner.PlanInstall(
+            profile, manifest, new ActionFitContentBundleStateFile(), _ => default);
+
+        ActionFitContentBundleChange change = plan.changes.Single(item =>
+            item.packageId == package.packageId);
+        Assert.That(plan.success, Is.True);
+        Assert.That(change.kind, Is.EqualTo(ActionFitContentBundleChangeKind.Preserve));
+        Assert.That(change.to, Is.EqualTo("0.3.0"));
+    }
+
+    [Test]
+    public void PlanInstall_RejectsOlderOptedInRegistryVersion()
+    {
+        ActionFitContentBundleProfile profile = CreateProfile();
+        ActionFitContentBundlePackageSpec package = profile.packages.Single(item =>
+            item.packageId == "com.actionfit.content-core");
+        package.allowCompatibleRegistryVersion = true;
+        string manifest = Manifest((package.packageId, "0.1.9"));
+
+        ActionFitContentBundlePlan plan = ActionFitContentBundlePlanner.PlanInstall(
+            profile, manifest, new ActionFitContentBundleStateFile(), _ => default);
+
+        Assert.That(plan.success, Is.False);
+        Assert.That(plan.conflicts.Single(), Does.Contain("older than required"));
+    }
+
+    [Test]
+    public void PlanInstall_RegistryVersionStillConflictsWithoutExplicitOptIn()
+    {
+        ActionFitContentBundleProfile profile = CreateProfile();
+        string manifest = Manifest(("com.actionfit.content-core", "0.3.0"));
+
+        ActionFitContentBundlePlan plan = ActionFitContentBundlePlanner.PlanInstall(
+            profile, manifest, new ActionFitContentBundleStateFile(), _ => default);
+
+        Assert.That(plan.success, Is.False);
+        Assert.That(plan.conflicts.Single(), Does.Contain("Non-canonical"));
+    }
+
+    [Test]
     public void PlanInstall_PreservesForkAndReportsConflict()
     {
         string manifest = Manifest(
@@ -242,6 +290,20 @@ public sealed class ActionFitContentBundleTests
             "https://github.com/ActionFitGames/ContentCore.git#0123456789abcdef0123456789abcdef01234567";
 
         Assert.DoesNotThrow(() => ActionFitContentBundlePlanner.ValidateProfile(profile));
+    }
+
+    [Test]
+    public void ValidateProfile_RejectsRegistryCompatibilityForPrereleaseVersion()
+    {
+        ActionFitContentBundleProfile profile = CreateProfile();
+        profile.packages[0].version = "0.2.0-preview.1";
+        profile.packages[0].gitUrl = "https://github.com/ActionFitGames/ContentCore.git#0.2.0-preview.1";
+        profile.packages[0].allowCompatibleRegistryVersion = true;
+
+        InvalidOperationException exception = Assert.Throws<InvalidOperationException>(
+            () => ActionFitContentBundlePlanner.ValidateProfile(profile));
+
+        Assert.That(exception.Message, Does.Contain("stable numeric version"));
     }
 
     [Test]

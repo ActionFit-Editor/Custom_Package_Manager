@@ -1296,6 +1296,11 @@ internal static class ActionFitContentBundlePlanner
                 throw new InvalidOperationException(
                     $"Package Git URL must pin exact version tag {package.version} or a full immutable commit: {package.packageId}");
             }
+            if (package.allowCompatibleRegistryVersion && !IsStableVersion(package.version))
+            {
+                throw new InvalidOperationException(
+                    $"Compatible registry preservation requires a stable numeric version: {package.packageId}");
+            }
         }
 
         ActionFitContentBundleModuleSpec[] modules = profile.modules ?? Array.Empty<ActionFitContentBundleModuleSpec>();
@@ -1395,6 +1400,7 @@ internal static class ActionFitContentBundlePlanner
                 gitUrl = package.gitUrl,
                 required = requiredPackageIds.Contains(package.packageId),
                 removeOnRelease = package.removeOnRelease,
+                allowCompatibleRegistryVersion = package.allowCompatibleRegistryVersion,
             })
             .ToArray();
         if (effectivePackages.Length == 0)
@@ -1479,6 +1485,26 @@ internal static class ActionFitContentBundlePlanner
                 string detail = $"Local dependency has no valid physical embedded package: {package.packageId} -> {current}";
                 conflicts.Add(detail);
                 changes.Add(Change(package.packageId, current, package.gitUrl, ActionFitContentBundleChangeKind.Conflict, detail));
+                continue;
+            }
+
+            if (package.allowCompatibleRegistryVersion && TryStableRegistryVersion(current, out string registryVersion))
+            {
+                if (CompareVersions(registryVersion, package.version) >= 0)
+                {
+                    changes.Add(Change(
+                        package.packageId,
+                        current,
+                        current,
+                        ActionFitContentBundleChangeKind.Preserve,
+                        "Compatible registry version is preserved by the bundle profile."));
+                }
+                else
+                {
+                    string detail = $"Registry {package.packageId}@{registryVersion} is older than required {package.version}.";
+                    conflicts.Add(detail);
+                    changes.Add(Change(package.packageId, current, package.gitUrl, ActionFitContentBundleChangeKind.Conflict, detail));
+                }
                 continue;
             }
 
@@ -1708,6 +1734,18 @@ internal static class ActionFitContentBundlePlanner
         version = RevisionPart(gitUrl);
         return !string.IsNullOrWhiteSpace(version) &&
                Regex.IsMatch(version, "^[0-9]+(?:\\.[0-9]+){1,3}(?:[-+][A-Za-z0-9.-]+)?$", RegexOptions.CultureInvariant);
+    }
+
+    private static bool TryStableRegistryVersion(string value, out string version)
+    {
+        version = value ?? "";
+        return IsStableVersion(version);
+    }
+
+    private static bool IsStableVersion(string version)
+    {
+        return !string.IsNullOrWhiteSpace(version) &&
+               Regex.IsMatch(version, "^[0-9]+(?:\\.[0-9]+){1,3}$", RegexOptions.CultureInvariant);
     }
 
     private static string RepositoryPart(string gitUrl)

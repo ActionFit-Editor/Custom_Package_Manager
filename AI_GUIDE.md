@@ -7,7 +7,7 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.custompackagemanager`
 - Display name: Custom Package Manager
 - Repository: `https://github.com/ActionFit-Editor/Custom_Package_Manager.git`
-- Current package version at generation time: `1.1.112`
+- Current package version at generation time: `1.1.113`
 - Unity version: `6000.2`
 
 ## Purpose
@@ -120,6 +120,7 @@ Read this file when:
 - Package Manager rendering and scrolling must read only the last successful in-memory snapshot. Catalog, manifest, embedded package manifests, content-bundle ownership, project overrides, agent skills, local votes, and embedded-change baselines are refresh-time inputs; mutation commands must still revalidate live state immediately before changing it.
 - UPM registration, relevant catalog/package-manifest imports, content-bundle and project-override state commits, catalog completion, and agent-skill completion must request the shared coalescing refresh signal. Multiple requests in one Editor tick must produce one delayed reload/repaint, while the manual `Reload` button remains a fallback and a failed refresh keeps the previous snapshot.
 - Content Bundle package Git URLs must use exact SemVer tags when available. A package whose repository publishes no version tag may pin a full 40-character immutable commit while retaining its package SemVer for registration checks; branches, short commits, and floating revisions remain invalid.
+- A package profile may opt in with `allowCompatibleRegistryVersion: true` to preserve an already-installed stable registry SemVer that is equal to or newer than the declared minimum. The default remains false; local/file, Git source changes, prereleases, older registry versions, and non-opted-in registry values remain conflicts.
 - It manages internal UPM package search/install/update/remove, package collection discovery, direct credential-free Git URL installation, repository creation, changelog/history display, AI guide routing, and manual publish flows.
 - The optional catalog `package_type` column may use the exact case-insensitive value `collection`. For backward compatibility, package IDs ending in `.installer` are also collections. Keep collections in `Package Collections` and exclude them from Embedded, Downloaded, and Available package sections.
 - `ActionFitPackageCatalogUpdater.BuildCatalogCsv` must preserve optional `package_type` / `packageType` metadata while joining package and version sheets, and emit an empty value for legacy rows.
