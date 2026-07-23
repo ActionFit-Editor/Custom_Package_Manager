@@ -464,6 +464,11 @@ class PackageContractValidatorTests(unittest.TestCase):
             "---\nname: wrong-skill\ndescription:\n---\n",
             encoding="utf-8",
         )
+        (source_root / "agents").mkdir()
+        (source_root / "agents" / "openai.yaml").write_text(
+            "policy:\n  allow_implicit_invocation: false\n",
+            encoding="utf-8",
+        )
         (skills_root / "manifest.json").write_text(
             json.dumps(
                 {
@@ -500,6 +505,7 @@ class PackageContractValidatorTests(unittest.TestCase):
                 "SKILL_AGENT_UNSUPPORTED",
                 "SKILL_SHARED_SOURCE_MISSING",
                 "SKILL_TARGET_DUPLICATE",
+                "SKILL_CODEX_IMPLICIT_INVOCATION_DISABLED",
                 "SKILL_FRONTMATTER_NAME_MISMATCH",
                 "SKILL_FRONTMATTER_DESCRIPTION_MISSING",
             }.issubset(codes)

@@ -748,6 +748,24 @@ def validate_skills(
             if not validate_skill_source_tree(repo_root, source_root, diagnostics):
                 continue
 
+            if agent == "codex":
+                openai_path = source_root / "agents" / "openai.yaml"
+                if openai_path.is_file():
+                    openai_text = read_text(repo_root, openai_path, diagnostics)
+                    if openai_text is not None and re.search(
+                        r"(?im)^[ \t]*allow_implicit_invocation[ \t]*:[ \t]*false(?:[ \t]*(?:#.*)?)?$",
+                        openai_text,
+                    ):
+                        diagnostics.append(
+                            diagnostic(
+                                "SKILL_CODEX_IMPLICIT_INVOCATION_DISABLED",
+                                relative_path(repo_root, openai_path),
+                                f"Registered Codex skill {name} is excluded from the default model context.",
+                                "Set policy.allow_implicit_invocation to true and keep mutation authorization in the manifest access and skill workflow gates.",
+                                line=line_for(openai_text, "allow_implicit_invocation"),
+                            )
+                        )
+
             skill_path = source_root / "SKILL.md"
             skill_text = read_text(repo_root, skill_path, diagnostics)
             if skill_text is None:

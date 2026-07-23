@@ -19,7 +19,7 @@ catalog 설정 `ActionFitPackageCatalogSettings_SO`는 공통 provider가 `Asset
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.113"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.114"
   }
 }
 ```
@@ -56,7 +56,7 @@ Custom Package Manager의 `Install or Refresh Agent Skills`는 이 패키지 자
 - `package-manager-validate`: 기존 `Tools~/package_contract_validator.py`를 한 패키지, 변경 패키지 또는 전체 embedded 패키지 범위로 실행합니다.
 - `package-manager-update-dependencies`: physical embedded ActionFit 패키지의 dependency 최신화 범위를 plan하고, 정확한 별도 승인 뒤 release metadata까지 원자적으로 apply합니다.
 
-help/audit/validate는 read-only입니다. dependency updater는 수동 호출 전용 write-capable skill이며 plan은 항상 read-only입니다. apply에는 성공한 Catalog refresh 확인, 현재 `planId`와 정확한 승인 문자열이 모두 필요하고 contract validation 실패 시 전체 파일을 복구합니다. 실제 publish는 apply와 분리되며 사용자가 다시 명시적으로 요청한 경우에만 기존 `ActionFitPackageBulkPublishApi`의 preflight와 승인을 dependency-safe layer 순서로 사용합니다.
+help/audit/validate는 read-only입니다. Write-capable dependency updater도 Codex 기본 컨텍스트에 포함되지만 plan은 항상 read-only입니다. Package contract validation은 등록된 Codex 스킬의 명시적인 `allow_implicit_invocation: false`를 거부합니다. Apply에는 성공한 Catalog refresh 확인, 현재 `planId`와 정확한 승인 문자열이 모두 필요하고 contract validation 실패 시 전체 파일을 복구합니다. 실제 publish는 apply와 분리되며 사용자가 다시 명시적으로 요청한 경우에만 기존 `ActionFitPackageBulkPublishApi`의 preflight와 승인을 dependency-safe layer 순서로 사용합니다.
 
 ### Embedded 의존성 자동화
 

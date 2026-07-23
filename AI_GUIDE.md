@@ -7,7 +7,7 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.custompackagemanager`
 - Display name: Custom Package Manager
 - Repository: `https://github.com/ActionFit-Editor/Custom_Package_Manager.git`
-- Current package version at generation time: `1.1.113`
+- Current package version at generation time: `1.1.114`
 - Unity version: `6000.2`
 
 ## Purpose
@@ -25,7 +25,7 @@ Custom Package Manager manages ActionFit UPM catalog search, collection classifi
 ## Agent Skills
 
 - `Skills~/manifest.json` registers schema v2 `package-manager-help`, `package-manager-audit`, `package-manager-validate`, and `package-manager-update-dependencies` for Codex and Claude.
-- Help, audit, and validate are read-only. The dependency updater is manual-only and write-capable: plan is read-only, apply requires a proven Catalog refresh plus exact content-bound approval, and validation failure rolls back every planned file.
+- Help, audit, and validate are read-only. The write-capable dependency updater is available in the default Codex context: plan remains read-only, apply requires a proven Catalog refresh plus exact content-bound approval, and validation failure rolls back every planned file.
 - Help reads generated `PACKAGE_SKILLS.md` as the authoritative inventory. Publishing remains a separate explicit approval through `ActionFitPackageBulkPublishApi`; no skill exposes credentials or implements direct GitHub/Catalog mutation in Python.
 
 ## Project Router Registration
@@ -218,7 +218,7 @@ Read this file when:
 - `--changed` accepts a deleted embedded package as a downloaded transition only when the base contains its package manifest and the current project manifest/lock agree on a credential-free immutable HTTPS Git dependency, depth zero, Git source, and a full resolved commit hash.
 - A change limited to the generated `PACKAGE_AI_GUIDE_ROUTER.md` does not select Custom Package Manager for a release bump. Any additional change under the package keeps normal selection and version enforcement.
 - The JSON result schema is shared by local AI and CI callers. Every diagnostic has `code`, `severity`, `path`, `line`, `message`, and `suggestedFix`; exit codes are `0` success, `1` contract failure, and `2` infrastructure failure.
-- Contract checks cover package.json fields and JSON, SemVer, changed-package version increases, README Git UPM install tags, AI guide identity/version/router entries, schema v2 skill prefix/help/access/inventory rules, registered sources and `SKILL.md` frontmatter, PackageInfo identity/required metadata, package-owned asmdefs, and SDK bridge source-only/profile contracts when present.
+- Contract checks cover package.json fields and JSON, SemVer, changed-package version increases, README Git UPM install tags, AI guide identity/version/router entries, schema v2 skill prefix/help/access/inventory and Codex default-context rules, registered sources and `SKILL.md` frontmatter, PackageInfo identity/required metadata, package-owned asmdefs, and SDK bridge source-only/profile contracts when present.
 - Directories whose names end in `~`, including validator fixtures and `Tools~`, are excluded from asmdef discovery because Unity does not import them as package assemblies.
 - The validator is standard-library Python and must remain independent of Unity, network APIs, catalogs, credentials, publishing, and package compilation/test execution.
 - Run `bash Packages/com.actionfit.custompackagemanager/Tests/Shell/run-tests.sh` after changing validator behavior or its stable result contract.
@@ -257,6 +257,7 @@ Read this file when:
 - The help skill is mandatory, read-only, included in `skills`, and registered for the union of `codex`/`claude` agents used by all related skills. Each entry declares `access` as `read-only` or `write-capable` plus optional `includeShared`.
 - Source paths are fixed at `Skills~/Codex/<name>` and `Skills~/Claude/<name>`; targets are fixed at `.agents/skills/<name>` and `.claude/skills/<name>`. Do not add manifest-defined paths.
 - Every registered source must contain `SKILL.md` with matching `name` and a non-empty `description`. Codex skills should follow the project `skill-creator` contract and may include `agents/openai.yaml`.
+- Keep every registered Codex skill available to the default model context. When `agents/openai.yaml` declares `policy.allow_implicit_invocation`, set it to `true`; the package contract validator rejects an explicit `false`. Use the manifest `access`, the skill workflow, content-bound plans, and explicit approval gates to control mutations instead of hiding write-capable skills from the inventory.
 - During staging, generate `PACKAGE_SKILLS.md` only inside the installed help skill from package ID/display name/description, the v2 registration list, target-agent frontmatter descriptions, `$name` invocations, and access values. Include it in the managed hash and require the help `SKILL.md` to read it instead of duplicating a related-skill list. Reject package-authored copies of this reserved file.
 - `Skills~/Shared` is overlaid only for registrations with `includeShared: true`. Shared files must not collide with agent-specific relative paths.
 - Reject invalid manifests, duplicate registrations, unsupported agents, linked sources, and package-to-package target conflicts. Never execute bundled scripts during installation.
