@@ -1,7 +1,9 @@
 #if UNITY_EDITOR
 using System;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using NUnit.Framework;
 using UnityEngine;
@@ -606,6 +608,107 @@ public sealed class ActionFitSdkInstallProfileTests
 
         request.RepositoryVisibility = ActionFitPackageRepositoryVisibility.Private;
         Assert.Throws<InvalidOperationException>(() => ActionFitSdkBridgePackageTemplate.ValidateRequest(request, profile));
+    }
+
+    [Test]
+    public void TryValidatePackageIdentity_AcceptsPackageJsonBehindOversizedVendorEntry()
+    {
+        string artifactPath = CreateArtifact("com.vendor.sdk-1.2.3.tgz", "com.vendor.sdk", "1.2.3", 9 * 1024 * 1024);
+
+        bool valid = ActionFitSdkArtifactVerifier.TryValidatePackageIdentity(artifactPath, "com.vendor.sdk", "1.2.3", out string error);
+
+        Assert.That(valid, Is.True, error);
+        Assert.That(error, Is.Empty);
+    }
+
+    [Test]
+    public void TryValidatePackageIdentity_RejectsMismatchedIdentityBehindOversizedVendorEntry()
+    {
+        string artifactPath = CreateArtifact("com.vendor.sdk-1.2.3.tgz", "com.vendor.sdk", "1.2.3", 9 * 1024 * 1024);
+
+        Assert.That(
+            ActionFitSdkArtifactVerifier.TryValidatePackageIdentity(artifactPath, "com.vendor.other", "1.2.3", out string idError),
+            Is.False);
+        Assert.That(idError, Does.Contain("package ID mismatch"));
+        Assert.That(
+            ActionFitSdkArtifactVerifier.TryValidatePackageIdentity(artifactPath, "com.vendor.sdk", "1.2.4", out string versionError),
+            Is.False);
+        Assert.That(versionError, Does.Contain("package version mismatch"));
+    }
+
+    [Test]
+    public void TryValidatePackageIdentity_RejectsOversizedPackageJsonEntry()
+    {
+        string artifactPath = Path.Combine(_temporaryRoot, "com.vendor.oversized-1.2.3.tgz");
+        using (FileStream file = File.Create(artifactPath))
+        using (var gzip = new GZipStream(file, System.IO.Compression.CompressionLevel.Fastest, false))
+        {
+            long oversized = (8 * 1024 * 1024) + 1;
+            WriteTarEntryHeader(gzip, "package/package.json", oversized);
+            WriteZeros(gzip, oversized + PaddingFor(oversized));
+            gzip.Write(new byte[1024], 0, 1024);
+        }
+
+        bool valid = ActionFitSdkArtifactVerifier.TryValidatePackageIdentity(artifactPath, "com.vendor.oversized", "1.2.3", out string error);
+
+        Assert.That(valid, Is.False);
+        Assert.That(error, Does.Contain("Unexpected tar entry size"));
+    }
+
+    private string CreateArtifact(string fileName, string packageId, string version, long vendorEntrySize)
+    {
+        string artifactPath = Path.Combine(_temporaryRoot, fileName);
+        byte[] packageJson = Encoding.UTF8.GetBytes($"{{\"name\":\"{packageId}\",\"version\":\"{version}\"}}");
+        using FileStream file = File.Create(artifactPath);
+        using var gzip = new GZipStream(file, System.IO.Compression.CompressionLevel.Fastest, false);
+        WriteTarEntryHeader(gzip, "package/Vendor/Editor/network_request.exe", vendorEntrySize);
+        WriteZeros(gzip, vendorEntrySize + PaddingFor(vendorEntrySize));
+        WriteTarEntryHeader(gzip, "package/package.json", packageJson.Length);
+        gzip.Write(packageJson, 0, packageJson.Length);
+        WriteZeros(gzip, PaddingFor(packageJson.Length));
+        gzip.Write(new byte[1024], 0, 1024);
+        return artifactPath;
+    }
+
+    private static void WriteTarEntryHeader(Stream stream, string name, long size)
+    {
+        byte[] header = new byte[512];
+        Encoding.ASCII.GetBytes(name).CopyTo(header, 0);
+        WriteOctalField(header, 100, 8, Convert.ToInt64("644", 8));
+        WriteOctalField(header, 124, 12, size);
+        WriteOctalField(header, 136, 12, 0);
+        header[156] = (byte)'0';
+        Encoding.ASCII.GetBytes("ustar").CopyTo(header, 257);
+        header[263] = (byte)'0';
+        header[264] = (byte)'0';
+        for (int index = 148; index < 156; index++) header[index] = (byte)' ';
+        long checksum = header.Aggregate(0L, (sum, value) => sum + value);
+        Encoding.ASCII.GetBytes(Convert.ToString(checksum, 8).PadLeft(6, '0')).CopyTo(header, 148);
+        header[154] = 0;
+        header[155] = (byte)' ';
+        stream.Write(header, 0, header.Length);
+    }
+
+    private static void WriteOctalField(byte[] header, int offset, int count, long value)
+    {
+        Encoding.ASCII.GetBytes(Convert.ToString(value, 8).PadLeft(count - 1, '0')).CopyTo(header, offset);
+        header[offset + count - 1] = 0;
+    }
+
+    private static long PaddingFor(long size)
+    {
+        return (512 - (size % 512)) % 512;
+    }
+
+    private static void WriteZeros(Stream stream, long count)
+    {
+        byte[] buffer = new byte[81920];
+        while (count > 0)
+        {
+            int chunk = (int)Math.Min(buffer.Length, count);
+            stream.Write(buffer, 0, chunk);
+            count -= chunk;
+        }
     }
 
     private ActionFitSdkProjectContext CreateProject(string manifest = null)

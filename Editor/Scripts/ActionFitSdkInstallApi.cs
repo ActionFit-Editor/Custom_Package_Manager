@@ -798,6 +798,8 @@ internal enum ActionFitSdkTransactionPhase
 
 internal static class ActionFitSdkArtifactVerifier
 {
+    private const long MaxPackageJsonEntrySize = 8 * 1024 * 1024;
+
     private static readonly Regex PackageNamePattern = new("\"name\"\\s*:\\s*\"(?<value>[^\"]+)\"", RegexOptions.CultureInvariant);
     private static readonly Regex PackageVersionPattern = new("\"version\"\\s*:\\s*\"(?<value>[^\"]+)\"", RegexOptions.CultureInvariant);
 
@@ -845,24 +847,39 @@ internal static class ActionFitSdkArtifactVerifier
             if (header.All(value => value == 0)) break;
             string name = ReadNullTerminatedAscii(header, 0, 100);
             long size = ReadOctal(header, 124, 12);
-            if (size < 0 || size > 8 * 1024 * 1024)
+            if (size < 0)
                 throw new InvalidDataException($"Unexpected tar entry size for {name}: {size}");
 
-            int contentLength = checked((int)size);
-            byte[] content = new byte[contentLength];
+            long padding = (512 - (size % 512)) % 512;
+            string normalized = name.Replace('\\', '/').TrimStart('.', '/');
+            if (!string.Equals(normalized, "package/package.json", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(normalized, "package.json", StringComparison.OrdinalIgnoreCase))
+            {
+                SkipEntry(gzip, size + padding, name);
+                continue;
+            }
+
+            if (size > MaxPackageJsonEntrySize)
+                throw new InvalidDataException($"Unexpected tar entry size for {name}: {size}");
+
+            byte[] content = new byte[checked((int)size)];
             if (ReadBlock(gzip, content, content.Length) != content.Length)
                 throw new EndOfStreamException($"Incomplete tar entry: {name}");
-            long padding = (512 - (size % 512)) % 512;
-            int paddingLength = checked((int)padding);
-            if (paddingLength > 0 && ReadBlock(gzip, new byte[paddingLength], paddingLength) != paddingLength)
-                throw new EndOfStreamException($"Incomplete tar padding: {name}");
-
-            string normalized = name.Replace('\\', '/').TrimStart('.', '/');
-            if (string.Equals(normalized, "package/package.json", StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(normalized, "package.json", StringComparison.OrdinalIgnoreCase))
-                return Encoding.UTF8.GetString(content);
+            return Encoding.UTF8.GetString(content);
         }
         throw new InvalidDataException("Artifact does not contain package/package.json.");
+    }
+
+    private static void SkipEntry(Stream stream, long count, string name)
+    {
+        byte[] buffer = new byte[81920];
+        while (count > 0)
+        {
+            int chunk = (int)Math.Min(buffer.Length, count);
+            if (ReadBlock(stream, buffer, chunk) != chunk)
+                throw new EndOfStreamException($"Incomplete tar entry: {name}");
+            count -= chunk;
+        }
     }
 
     private static int ReadBlock(Stream stream, byte[] buffer, int count)
