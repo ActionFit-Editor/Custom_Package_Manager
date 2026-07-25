@@ -85,7 +85,15 @@ public static class ActionFitPackageSkillInstallService
 
         try
         {
-            List<SkillCandidate> candidates = ReadCandidates(packageRoots, result);
+            List<SkillCandidate> discoveredCandidates = ReadCandidates(packageRoots, result);
+            ActionFitAgentSkillProfileService.ValidateReferencedPackages(
+                projectRoot,
+                discoveredCandidates.Select(candidate => candidate.PackageId));
+            List<SkillCandidate> candidates = discoveredCandidates
+                .Where(candidate => ActionFitAgentSkillProfileService.IsPackageActive(
+                    projectRoot,
+                    candidate.PackageId))
+                .ToList();
             foreach (IGrouping<string, SkillCandidate> group in candidates
                          .GroupBy(candidate => candidate.TargetRelativePath, StringComparer.Ordinal)
                          .OrderBy(group => group.Key, StringComparer.Ordinal))

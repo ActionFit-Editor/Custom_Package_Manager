@@ -7,7 +7,7 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.custompackagemanager`
 - Display name: Custom Package Manager
 - Repository: `https://github.com/ActionFit-Editor/Custom_Package_Manager.git`
-- Current package version at generation time: `1.1.115`
+- Current package version at generation time: `2.0.1`
 - Unity version: `6000.2`
 
 ## Purpose
@@ -266,6 +266,10 @@ Read this file when:
 - The Package Manager detail view reports per-package registered/current/update-available/missing/preserved/conflict counts through the read-only `InspectRegisteredSkills` path.
 - Embedded package rows and Manager Console expose `Add Agent Skill`; first use creates schema v2 plus `<skillPrefix>-help` for Codex and Claude, and later additions preserve all existing source files.
 - Package disappearance must not automatically delete installed skills. `Remove Managed Agent Skills` may delete only unchanged managed targets after confirmation and disables automatic recreation until explicit refresh.
+- The tracked `ProjectSettings/ActionFitAgentSkillProfile.json` defines versioned named profiles. Automatic refresh installs only the active profile and never deactivates an existing target.
+- Profile application requires an exact preview and explicit confirmation. Move only unchanged manager-owned regular directories between `.agents`/`.claude` and ignored `UserSettings/ActionFitPackageManager/InactiveSkills`; preserve modified, unmanaged, conflicting, linked, or unreadable targets. Inspect is read-only. Rollback must use the latest journal, verify every completed destination against its recorded content hash, restore the previous profile only when unambiguous, then refresh skills and require a new AI session.
+- Keep per-operation journals under ignored `UserSettings/ActionFitPackageManager/ProfileTransactions`, expose inspection and rollback, apply profiles symmetrically to Codex and Claude, refresh from current package sources after activation, and require a new AI session before measuring context.
+- Use `Tools~/agent_skill_profile_metrics.py` for deterministic package-source directory/frontmatter projections. Treat a fresh post-apply AI session as the final context evidence; projections do not silently apply a profile.
 
 ## UPM Package Release Preparation
 

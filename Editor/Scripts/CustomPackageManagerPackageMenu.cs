@@ -9,6 +9,10 @@ public static class CustomPackageManagerPackageMenu
     private const string ReadmePath = "Packages/com.actionfit.custompackagemanager/README.md";
     private const int InstallSkillsPriority = 2;
     private const int RemoveSkillsPriority = 3;
+    private const int CoreProfilePriority = 4;
+    private const int AllProfilePriority = 5;
+    private const int InspectProfilePriority = 6;
+    private const int RollbackProfilePriority = 7;
     private const int SettingPriority = 900;
     private const int ReadmePriority = 901;
 
@@ -58,6 +62,89 @@ public static class CustomPackageManagerPackageMenu
         {
             Debug.LogException(exception);
             EditorUtility.DisplayDialog("ActionFit Package Agent Skills", exception.Message, "OK");
+        }
+    }
+
+    [MenuItem(MenuRoot + "Agent Skill Profile/Preview and Apply Core", false, CoreProfilePriority)]
+    private static void ApplyCoreProfile() => PreviewAndApplyProfile("core");
+
+    [MenuItem(MenuRoot + "Agent Skill Profile/Preview and Apply All", false, AllProfilePriority)]
+    private static void ApplyAllProfile() => PreviewAndApplyProfile("all");
+
+    [MenuItem(MenuRoot + "Agent Skill Profile/Inspect Active", false, InspectProfilePriority)]
+    private static void InspectActiveProfile()
+    {
+        try
+        {
+            string projectRoot = System.IO.Path.GetFullPath(
+                System.IO.Path.Combine(Application.dataPath, ".."));
+            EditorUtility.DisplayDialog(
+                "ActionFit Agent Skill Profile Inspection",
+                ActionFitAgentSkillProfileService.Inspect(projectRoot).ExactPreview,
+                "OK");
+        }
+        catch (System.Exception exception)
+        {
+            Debug.LogException(exception);
+            EditorUtility.DisplayDialog("ActionFit Agent Skill Profile", exception.Message, "OK");
+        }
+    }
+
+    [MenuItem(MenuRoot + "Agent Skill Profile/Rollback Last Apply", false, RollbackProfilePriority)]
+    private static void RollbackLastProfile()
+    {
+        if (!EditorUtility.DisplayDialog(
+                "Rollback Agent Skill Profile",
+                "Rollback the last journaled profile move only when every moved target is unchanged?",
+                "Rollback",
+                "Cancel"))
+            return;
+        try
+        {
+            string projectRoot = System.IO.Path.GetFullPath(
+                System.IO.Path.Combine(Application.dataPath, ".."));
+            ActionFitAgentSkillProfileService.RollbackLast(projectRoot);
+            ActionFitPackageSkillInstallResult refresh = ActionFitPackageSkillBootstrap.InstallOrRefresh();
+            ActionFitPackageSkillBootstrap.LogResult("profile rollback refresh", refresh);
+            EditorUtility.DisplayDialog(
+                "ActionFit Agent Skill Profile",
+                "The last eligible profile transaction was rolled back. Start a new AI session.",
+                "OK");
+        }
+        catch (System.Exception exception)
+        {
+            Debug.LogException(exception);
+            EditorUtility.DisplayDialog("ActionFit Agent Skill Profile", exception.Message, "OK");
+        }
+    }
+
+    private static void PreviewAndApplyProfile(string profileName)
+    {
+        try
+        {
+            string projectRoot = System.IO.Path.GetFullPath(
+                System.IO.Path.Combine(Application.dataPath, ".."));
+            ActionFitAgentSkillProfileResult preview =
+                ActionFitAgentSkillProfileService.Preview(projectRoot, profileName);
+            if (!EditorUtility.DisplayDialog(
+                    "ActionFit Agent Skill Profile Preview",
+                    preview.ExactPreview + "\n\nApply this exact move plan?",
+                    "Apply",
+                    "Cancel"))
+                return;
+
+            ActionFitAgentSkillProfileService.Apply(projectRoot, profileName, preview.ExactPreview);
+            ActionFitPackageSkillInstallResult refresh = ActionFitPackageSkillBootstrap.InstallOrRefresh();
+            ActionFitPackageSkillBootstrap.LogResult("profile refresh", refresh);
+            EditorUtility.DisplayDialog(
+                "ActionFit Agent Skill Profile",
+                preview.Summary + "\n\nStart a new AI session before measuring context.",
+                "OK");
+        }
+        catch (System.Exception exception)
+        {
+            Debug.LogException(exception);
+            EditorUtility.DisplayDialog("ActionFit Agent Skill Profile", exception.Message, "OK");
         }
     }
 

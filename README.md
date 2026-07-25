@@ -19,7 +19,7 @@ catalog 설정 `ActionFitPackageCatalogSettings_SO`는 공통 provider가 `Asset
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#1.1.115"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#2.0.1"
   }
 }
 ```
@@ -103,6 +103,10 @@ Schema v2에는 명시적인 소문자 `skillPrefix`, `<skillPrefix>-help`와 �
 설치할 때 manager는 `package.json`, schema v2 manifest와 대상 agent의 frontmatter description으로 각 설치 help skill 안에 `PACKAGE_SKILLS.md`를 생성합니다. 생성 파일은 관리 hash에 포함되며 package identity, 관련 skill, `$name` 호출과 access의 authoritative inventory입니다. 패키지 소스에 `PACKAGE_SKILLS.md`를 직접 작성하지 않습니다.
 
 Manager는 등록 소스를 `.agents/skills/<skill-name>`과 `.claude/skills/<skill-name>`에 설치합니다. 설치는 Editor load와 패키지 등록 후 실행되며 batch mode에서는 건너뜁니다. 관리 소유권과 hash는 Git에서 제외된 `UserSettings/ActionFitPackageManager/skill-install-state.json`에 저장합니다. 누락된 target은 설치하고 변경되지 않은 관리 target은 업데이트하며, 관리되지 않거나 수정되거나 link이거나 충돌하는 target은 경고와 함께 보존합니다. 패키지가 사라져도 자동 동기화가 target을 삭제하지 않습니다. 삭제는 명시적 제거 메뉴에서 변경되지 않은 관리 복사본에만 가능합니다.
+
+`ProjectSettings/ActionFitAgentSkillProfile.json`은 공유 `core`/`all` 활성 프로필을 선언합니다. `Agent Skill Profile/Preview and Apply Core|All` 메뉴는 정확한 activate/deactivate/preserve 경로를 먼저 보여주고 승인 후에만 변경되지 않은 manager-owned 일반 디렉터리를 이동합니다. `Inspect Active`는 현재 상태를 읽기 전용으로 보여주며, `Rollback Last Apply`는 journal에 기록된 마지막 이동 대상이 적용 이후에도 변경되지 않았을 때만 이전 프로필로 복구합니다. 비활성 복사본과 transaction journal은 Git에서 제외된 `UserSettings/ActionFitPackageManager/` 아래에 보존됩니다. 수정·unmanaged·conflict·link·unreadable 대상은 이동하거나 삭제하지 않습니다. 적용 또는 롤백 후 현재 package source로 refresh하고 새 AI session을 시작해야 context 측정에 반영됩니다.
+
+프로필별 package-source target 수와 frontmatter byte는 `python3 Packages/com.actionfit.custompackagemanager/Tools~/agent_skill_profile_metrics.py --profile core --assert-minimum-percent 50`으로 재현합니다. 이 projection은 profile 계약을 검증하며 실제 context 확인은 명시적 apply 후 새 AI session에서 수행합니다.
 
 Package Manager 상세 화면은 패키지별 집계 `Agent Skills` 상태인 registered, current, update available, missing, preserved 및 conflict 수를 표시합니다. Embedded 패키지 행에는 `Add Agent Skill`도 표시되며 downloaded 패키지는 소스를 편집하기 전에 embed해야 합니다. 같은 scaffolding 창을 Manager Console에서도 열 수 있습니다.
 
