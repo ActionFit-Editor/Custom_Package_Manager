@@ -267,6 +267,9 @@ public static class ActionFitPackagePublisher
             return false;
         }
 
+        if (!TryValidateDependencyOverride(manifest.Dependencies, info.DependenciesOverride, out message))
+            return false;
+
         if (string.IsNullOrWhiteSpace(info.RepoName))
         {
             message = "PackageInfo repoName is empty.";
@@ -306,6 +309,68 @@ public static class ActionFitPackagePublisher
             manifest.Name,
             manifest.Version,
             catalogItem);
+        return true;
+    }
+
+    internal static bool TryValidateDependencyOverride(
+        string manifestDependencies,
+        string dependenciesOverride,
+        out string message)
+    {
+        message = "";
+        if (string.IsNullOrWhiteSpace(dependenciesOverride))
+            return true;
+        if (!TryParseDependencyList(manifestDependencies, out Dictionary<string, string> manifest, out message))
+            return false;
+        if (!TryParseDependencyList(dependenciesOverride, out Dictionary<string, string> overrides, out message))
+            return false;
+
+        foreach (KeyValuePair<string, string> dependency in overrides)
+        {
+            if (!manifest.TryGetValue(dependency.Key, out string manifestVersion) ||
+                string.Equals(manifestVersion, dependency.Value, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            message =
+                $"PackageInfo dependency override {dependency.Key}@{dependency.Value} does not match " +
+                $"package.json version {manifestVersion}.";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryParseDependencyList(
+        string value,
+        out Dictionary<string, string> dependencies,
+        out string message)
+    {
+        dependencies = new Dictionary<string, string>(StringComparer.Ordinal);
+        message = "";
+        foreach (string token in Regex.Split(value ?? "", @"\s*[;,]\s*"))
+        {
+            string entry = token.Trim();
+            if (entry.Length == 0) continue;
+            int separator = entry.LastIndexOf('@');
+            if (separator <= 0 || separator == entry.Length - 1)
+            {
+                message = $"Dependency entry must use <package-id>@<version>: {entry}.";
+                return false;
+            }
+
+            string packageId = entry.Substring(0, separator).Trim();
+            string version = entry.Substring(separator + 1).Trim();
+            if (dependencies.ContainsKey(packageId))
+            {
+                message = $"Dependency list contains duplicate package ID: {packageId}.";
+                return false;
+            }
+
+            dependencies.Add(packageId, version);
+        }
+
         return true;
     }
 

@@ -223,6 +223,28 @@ class PackageContractValidatorTests(unittest.TestCase):
         self.assertEqual(1, code)
         self.assertIn("PACKAGE_JSON_INVALID", {item["code"] for item in result["diagnostics"]})
 
+    def test_package_info_dependency_override_must_match_manifest_version(self) -> None:
+        temporary, repo_root, package_root = self.make_repo("valid-package")
+        self.addCleanup(temporary.cleanup)
+        manifest_path = package_root / "package.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["dependencies"] = {"com.actionfit.core": "2.0.1"}
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        package_info_path = package_root / "Editor/PackageInfo/ActionFitPackageInfo_SO.asset"
+        package_info_path.write_text(
+            package_info_path.read_text(encoding="utf-8")
+            + "  _dependenciesOverride: com.actionfit.core@2.0.0\n",
+            encoding="utf-8",
+        )
+
+        code, result = self.run_cli(repo_root, "--package", PACKAGE_ID)
+
+        self.assertEqual(1, code)
+        self.assertIn(
+            "PACKAGE_INFO_DEPENDENCY_MISMATCH",
+            {item["code"] for item in result["diagnostics"]},
+        )
+
     def test_valid_source_only_sdk_bridge_passes(self) -> None:
         temporary, repo_root, package_root = self.make_repo("valid-package")
         self.addCleanup(temporary.cleanup)

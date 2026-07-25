@@ -7,7 +7,7 @@ This file is shipped inside the UPM package so an AI assistant in a consuming Un
 - Package ID: `com.actionfit.custompackagemanager`
 - Display name: Custom Package Manager
 - Repository: `https://github.com/ActionFit-Editor/Custom_Package_Manager.git`
-- Current package version at generation time: `2.0.1`
+- Current package version at generation time: `2.0.2`
 - Unity version: `6000.2`
 
 ## Purpose
@@ -25,7 +25,7 @@ Custom Package Manager manages ActionFit UPM catalog search, collection classifi
 ## Agent Skills
 
 - `Skills~/manifest.json` registers schema v2 `package-manager-help`, `package-manager-audit`, `package-manager-validate`, and `package-manager-update-dependencies` for Codex and Claude.
-- Help, audit, and validate are read-only. The write-capable dependency updater is available in the default Codex context: plan remains read-only, apply requires a proven Catalog refresh plus exact content-bound approval, and validation failure rolls back every planned file.
+- Help, audit, and validate are read-only. The write-capable dependency updater is available in the default Codex context: plan remains read-only, audits shared dependency versions in `package.json` and PackageInfo `_dependenciesOverride`, apply requires a proven Catalog refresh plus exact content-bound approval, and validation failure rolls back every planned file.
 - Help reads generated `PACKAGE_SKILLS.md` as the authoritative inventory. Publishing remains a separate explicit approval through `ActionFitPackageBulkPublishApi`; no skill exposes credentials or implements direct GitHub/Catalog mutation in Python.
 
 ## Project Router Registration
@@ -69,14 +69,14 @@ Read this file when:
 - `Editor/Scripts/ActionFitSdkBridgePackageTemplate.cs`: public, source-only SDK bridge package template with profile, third-party notices, and contract-test assembly.
 - `Editor/Scripts/ActionFitSdkProfileWindow.cs`: separate inspect, plan review, execution confirmation, and recovery UI under `Tools/Package/Custom Package Manager/SDK Profiles`.
 - `Editor/Scripts/ActionFitPackagePublishWindow.cs`: publish target scan and publish UI.
-- `Editor/Scripts/ActionFitPackagePublisher.cs`: GitHub repository check, local publish clone preparation, remote `git push`, tag push, single/batch catalog upsert, and publish step logging.
+- `Editor/Scripts/ActionFitPackagePublisher.cs`: PackageInfo dependency-override preflight, GitHub repository check, local publish clone preparation, remote `git push`, tag push, single/batch catalog upsert, and publish step logging.
 - `Editor/Scripts/ActionFitPackageCatalogUpdater.cs`: spreadsheet/web-app catalog download.
 - `Editor/Scripts/ActionFitPackageCommunityClient.cs`: anonymous project vote ID, package vote/comment Web App requests, and local vote state.
 - `Editor/Scripts/ActionFitPackageAiGuideRouter.cs`: scans embedded and Git UPM package `AI_GUIDE.md` files, syncs `PACKAGE_AI_GUIDE_ROUTER.md`, and connects discovered AI entry points through adapter-style helpers.
 - `Editor/Scripts/ActionFitPackageSkillInstaller.cs`: discovers package `Skills~/manifest.json` registrations, safely synchronizes project-local Codex and Claude skills, preserves user modifications, and migrates legacy AI Jira ownership state.
 - `Editor/Scripts/ActionFitPackageSkillScaffold.cs`: public schema v2 skill-add API plus the embedded-package Editor window; creates the mandatory help skill and Codex metadata without overwriting existing sources.
 - `Tools~/package_contract_validator.py`: Unity-independent package contract CLI for package selection, changed-package discovery, SemVer/version-bump checks, metadata/document/asmdef validation, stable diagnostics, and JSON results.
-- `Tools~/package_dependency_updater.py`: standard-library planner/applicator for fixed-point embedded ActionFit dependency updates, exact approval, atomic release metadata writes, rollback, and dependency-safe publish layers.
+- `Tools~/package_dependency_updater.py`: standard-library planner/applicator for fixed-point embedded ActionFit dependency updates, PackageInfo catalog-metadata repair, exact approval, atomic release metadata writes, rollback, and dependency-safe publish layers.
 - `Tests/Shell/test-package-dependency-updater.py`: dependency closure, no-downgrade, local-ahead prerequisite, major/cycle blocking, deterministic plan, exact apply, and rollback regression coverage.
 - `Tests/Shell/run-tests.sh`: Python fixture regression suite for package contracts and dependency automation.
 - `Editor/Documentation/PackageCommunityWebAppContract.md`: required spreadsheet sheets and Web App actions for package votes, comments, and batch catalog publish confirmation.
@@ -106,7 +106,7 @@ Read this file when:
 - Keep project override ownership at `ProjectSettings/ActionFitPackageOverrides.json`. Accept only a PackageInfo-declared Public package with a credential-free HTTPS Git dependency; store its public base repository URL, version/revision/content hash, and project-relative package path. Do not store absolute machine paths, credentials, or private remotes, and do not emit the remote URL into generated AI state. Exclude registered overrides from individual and automatic bulk upstream publishing, and require explicit restore-to-base completion or a new package ID/repository fork.
 - Release authorization uses only the safe GitHub CLI login string and a profile allowlist. Never read, store, or log credentials, tokens, or raw authentication errors.
 - Dependency automation must scan only physical top-level embedded ActionFit packages and must exclude project overrides, links, downloaded packages, and nested fixtures. Use Catalog/local maximum versions without downgrades, fixed-point consumer bumps, explicit major opt-in, and cycle blocking.
-- Treat `package_dependency_updater.py plan` as read-only. Apply requires a successful Catalog refresh assertion, exact current `planId`, and exact approval text; update only package manifest/version documentation/PackageInfo release notes atomically and roll all planned files back when contract validation fails.
+- Treat `package_dependency_updater.py plan` as read-only. It must report a catalog-metadata repair when a dependency present in both `package.json` and non-empty PackageInfo `_dependenciesOverride` has a stale override version. Apply requires a successful Catalog refresh assertion, exact current `planId`, and exact approval text; update package manifest/version documentation/PackageInfo release notes and existing shared override entries atomically, preserve intentional omissions and override-only dependencies, and roll all planned files back when contract validation fails.
 - Applying dependency metadata never authorizes package publication. Prepare and execute each dependency-safe publish layer only through the existing `ActionFitPackageBulkPublishApi` with a new exact approval, and stop the sequence on the first failure.
 
 ## Menu And Catalog Notes
@@ -218,7 +218,7 @@ Read this file when:
 - `--changed` accepts a deleted embedded package as a downloaded transition only when the base contains its package manifest and the current project manifest/lock agree on a credential-free immutable HTTPS Git dependency, depth zero, Git source, and a full resolved commit hash.
 - A change limited to the generated `PACKAGE_AI_GUIDE_ROUTER.md` does not select Custom Package Manager for a release bump. Any additional change under the package keeps normal selection and version enforcement.
 - The JSON result schema is shared by local AI and CI callers. Every diagnostic has `code`, `severity`, `path`, `line`, `message`, and `suggestedFix`; exit codes are `0` success, `1` contract failure, and `2` infrastructure failure.
-- Contract checks cover package.json fields and JSON, SemVer, changed-package version increases, README Git UPM install tags, AI guide identity/version/router entries, schema v2 skill prefix/help/access/inventory and Codex default-context rules, registered sources and `SKILL.md` frontmatter, PackageInfo identity/required metadata, package-owned asmdefs, and SDK bridge source-only/profile contracts when present.
+- Contract checks cover package.json fields and JSON, SemVer, changed-package version increases, README Git UPM install tags, AI guide identity/version/router entries, schema v2 skill prefix/help/access/inventory and Codex default-context rules, registered sources and `SKILL.md` frontmatter, PackageInfo identity/required metadata, dependency-override syntax and shared-version equality, package-owned asmdefs, and SDK bridge source-only/profile contracts when present.
 - Directories whose names end in `~`, including validator fixtures and `Tools~`, are excluded from asmdef discovery because Unity does not import them as package assemblies.
 - The validator is standard-library Python and must remain independent of Unity, network APIs, catalogs, credentials, publishing, and package compilation/test execution.
 - Run `bash Packages/com.actionfit.custompackagemanager/Tests/Shell/run-tests.sh` after changing validator behavior or its stable result contract.

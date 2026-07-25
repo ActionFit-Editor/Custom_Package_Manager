@@ -903,6 +903,40 @@ def yaml_scalar(text: str, field: str) -> tuple[str | None, int]:
     return value, text[: match.start()].count("\n") + 1
 
 
+def yaml_multiline_scalar(text: str, field: str) -> tuple[str | None, int]:
+    pattern = re.compile(
+        rf"(?ms)^(?P<indent>[ \t]*){re.escape(field)}:[ \t]*(?P<scalar>.*?)"
+        r"(?=^[ \t]*_[A-Za-z][A-Za-z0-9]*:|\Z)"
+    )
+    match = pattern.search(text)
+    if match is None:
+        return None, 1
+    value = " ".join(line.strip() for line in match.group("scalar").strip().splitlines() if line.strip())
+    if len(value) >= 2 and value.startswith('"') and value.endswith('"'):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            pass
+    return value, text[: match.start()].count("\n") + 1
+
+
+def parse_dependency_override(value: str) -> tuple[dict[str, str], str | None]:
+    dependencies: dict[str, str] = {}
+    for token in re.split(r"\s*[;,]\s*", value or ""):
+        entry = token.strip()
+        if not entry:
+            continue
+        package_id, separator, version = entry.rpartition("@")
+        package_id = package_id.strip()
+        version = version.strip()
+        if not separator or not package_id or not version:
+            return {}, f"Invalid dependency override entry {entry!r}; expected <package-id>@<version>."
+        if package_id in dependencies:
+            return {}, f"Duplicate dependency override entry for {package_id}."
+        dependencies[package_id] = version
+    return dependencies, None
+
+
 def validate_package_info(
     repo_root: Path,
     package_id: str,
@@ -953,6 +987,37 @@ def validate_package_info(
                     line=line,
                 )
             )
+    override, override_line = yaml_multiline_scalar(text, "_dependenciesOverride")
+    if override:
+        override_dependencies, override_error = parse_dependency_override(override)
+        if override_error is not None:
+            diagnostics.append(
+                diagnostic(
+                    "PACKAGE_INFO_DEPENDENCY_OVERRIDE_INVALID",
+                    rel_path,
+                    override_error,
+                    "Use comma- or semicolon-separated <package-id>@<version> entries.",
+                    line=override_line,
+                )
+            )
+        elif manifest and isinstance(manifest.get("dependencies"), dict):
+            manifest_dependencies = manifest["dependencies"]
+            for dependency_id, override_version in override_dependencies.items():
+                manifest_version = manifest_dependencies.get(dependency_id)
+                if manifest_version is None or manifest_version == override_version:
+                    continue
+                diagnostics.append(
+                    diagnostic(
+                        "PACKAGE_INFO_DEPENDENCY_MISMATCH",
+                        rel_path,
+                        (
+                            f"PackageInfo dependency override {dependency_id}@{override_version} "
+                            f"does not match package.json version {manifest_version}."
+                        ),
+                        f"Set the override entry to {dependency_id}@{manifest_version}.",
+                        line=override_line,
+                    )
+                )
     meta_path = Path(f"{path}.meta")
     if not meta_path.is_file():
         diagnostics.append(

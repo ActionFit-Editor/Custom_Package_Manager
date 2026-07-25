@@ -18,7 +18,7 @@ Use the package-owned Python planner for dependency metadata changes and the exi
 
 Omit `--catalog-refreshed` when refresh cannot be proven; the result remains plan-only and cannot be applied. Add `--allow-major` only after the user explicitly approves major dependency changes.
 
-5. Report every affected package, old/new package version, dependency change, local-ahead publish prerequisite, warning, conflict, publish layer, `planId`, and `requiredApprovalText`. Cycles, malformed SemVer, missing physical dependencies, project overrides, or unapproved major changes block apply.
+5. Report every affected package, old/new package version, dependency change, PackageInfo catalog-metadata repair, local-ahead publish prerequisite, warning, conflict, publish layer, `planId`, and `requiredApprovalText`. A dependency present in both `package.json` and non-empty `_dependenciesOverride` must use the same version; intentional override omissions and override-only catalog dependencies remain valid. Cycles, malformed SemVer, missing physical dependencies, project overrides, or unapproved major changes block apply.
 6. Never infer approval from the original request or from approval to create the plan. Apply only after the user explicitly confirms the exact current `requiredApprovalText`, then rebuild and execute the same content-bound plan:
 
     python3 Packages/com.actionfit.custompackagemanager/Tools~/package_dependency_updater.py apply \
@@ -27,7 +27,7 @@ Omit `--catalog-refreshed` when refresh cannot be proven; the result remains pla
       --expected-plan-id <exact-plan-id> \
       --approval '<exact-required-approval-text>'
 
-The apply command atomically updates only affected `package.json`, README install tag, AI guide version, and PackageInfo release note files. It runs package contract validation and rolls every write back if validation fails. Re-plan after any file or Catalog change; never reuse stale approval.
+The apply command atomically updates only affected `package.json`, README install tag, AI guide version, and PackageInfo release note/dependency-override files. It updates only dependency IDs already shared by the manifest and a non-empty override, preserving intentional omissions and override-only dependencies. It runs package contract validation and rolls every write back if validation fails. Re-plan after any file or Catalog change; never reuse stale approval.
 
 7. Report validation results and the resulting publish layers. Applying dependency files does not authorize publishing.
 8. Publish only when the user separately asks to publish after successful apply. For each dependency-safe layer, use `ActionFitPackageBulkPublishApi.PrepareAllChanged`, present its exact content-bound approval and repository-creation approvals, and call `ExecuteAll` only after those exact approvals. Complete one layer successfully before preparing the next; stop on any repository, tag, validation, or Catalog failure.

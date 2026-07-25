@@ -309,6 +309,14 @@ class PackageDependencyUpdaterTests(unittest.TestCase):
         self.write_catalog(repo_root, {core: "1.1.0", app: "1.0.0"})
         self.write_package(repo_root, core, "1.1.0")
         app_root = self.write_package(repo_root, app, "1.0.0", {core: "1.0.0"})
+        package_info_path = app_root / "Editor/PackageInfo/ActionFitPackageInfo_SO.asset"
+        package_info_path.write_text(
+            package_info_path.read_text(encoding="utf-8").replace(
+                "  _dependenciesOverride: \n",
+                "  _dependenciesOverride: {0}@1.0.0, com.actionfit.catalog-only@3.0.0\n".format(core),
+            ),
+            encoding="utf-8",
+        )
         plan = self.build_plan(repo_root)
         before = self.snapshot(repo_root)
 
@@ -336,6 +344,95 @@ class PackageDependencyUpdaterTests(unittest.TestCase):
                 (app_root / "Editor/PackageInfo/ActionFitPackageInfo_SO.asset").read_text(encoding="utf-8")
             ),
         )
+        package_info = package_info_path.read_text(encoding="utf-8")
+        self.assertIn(
+            "_dependenciesOverride: {0}@1.1.0;com.actionfit.catalog-only@3.0.0".format(core),
+            package_info,
+        )
+
+    def test_dependency_override_omitted_dependency_is_not_added(self) -> None:
+        text = (
+            "MonoBehaviour:\n"
+            "  _releaseNote: \"Sample\"\n"
+            "  _dependenciesOverride: com.actionfit.catalog-only@3.0.0\n"
+        )
+
+        updated = MODULE.replace_dependencies_override(
+            text,
+            [
+                {
+                    "dependencyId": "com.actionfit.core",
+                    "fromVersion": "1.0.0",
+                    "toVersion": "1.1.0",
+                }
+            ],
+        )
+
+        self.assertEqual(text, updated)
+
+    def test_stale_catalog_override_seeds_repair_and_updates_consumers(self) -> None:
+        _, repo_root = self.make_repo()
+        core = "com.actionfit.core"
+        middle = "com.actionfit.middle"
+        app = "com.actionfit.app"
+        self.write_catalog(repo_root, {core: "1.1.0", middle: "1.0.0", app: "1.0.0"})
+        self.write_package(repo_root, core, "1.1.0")
+        middle_root = self.write_package(repo_root, middle, "1.0.0", {core: "1.1.0"})
+        self.write_package(repo_root, app, "1.0.0", {middle: "1.0.0"})
+        package_info_path = middle_root / "Editor/PackageInfo/ActionFitPackageInfo_SO.asset"
+        package_info_path.write_text(
+            package_info_path.read_text(encoding="utf-8").replace(
+                "  _dependenciesOverride: \n",
+                "  _dependenciesOverride: {0}@1.0.0\n".format(core),
+            ),
+            encoding="utf-8",
+        )
+
+        plan = self.build_plan(repo_root).result
+
+        self.assertTrue(plan["success"])
+        self.assertEqual("READY_TO_APPLY", plan["code"])
+        by_id = {item["packageId"]: item for item in plan["packages"]}
+        self.assertEqual({middle, app}, set(by_id))
+        self.assertEqual("1.0.1", by_id[middle]["newVersion"])
+        self.assertEqual("catalogMetadataRepair", by_id[middle]["dependencyChanges"][0]["kind"])
+        self.assertEqual("1.0.1", by_id[app]["dependencyChanges"][0]["toVersion"])
+        self.assertEqual([[middle], [app]], plan["publishLayers"])
+
+    def test_unpublished_release_note_rejects_more_than_six_merged_bullets(self) -> None:
+        package = MODULE.EmbeddedPackage(
+            package_id="com.actionfit.app",
+            root=Path("/unused"),
+            version=MODULE.SemVer.parse("1.0.1"),
+            dependencies={},
+            manifest={},
+        )
+        package_info = (
+            "MonoBehaviour:\n"
+            '  _releaseNote: "- one\\n- two\\n- three\\n- four\\n- five"\n'
+            "  _dependenciesOverride: com.actionfit.core@1.0.0\n"
+        )
+
+        with self.assertRaisesRegex(MODULE.DependencyUpdateError, "must not exceed 6"):
+            MODULE.build_release_note(
+                package,
+                MODULE.SemVer.parse("1.0.0"),
+                [
+                    {
+                        "dependencyId": "com.actionfit.core",
+                        "fromVersion": "1.0.0",
+                        "toVersion": "1.1.0",
+                        "kind": "dependencyUpdate",
+                    },
+                    {
+                        "dependencyId": "com.actionfit.other",
+                        "fromVersion": "2.0.0",
+                        "toVersion": "2.0.1",
+                        "kind": "catalogMetadataRepair",
+                    },
+                ],
+                package_info,
+            )
 
     def test_apply_rolls_back_every_file_after_validation_failure(self) -> None:
         _, repo_root = self.make_repo()

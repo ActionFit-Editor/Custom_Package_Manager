@@ -19,7 +19,7 @@ catalog 설정 `ActionFitPackageCatalogSettings_SO`는 공통 provider가 `Asset
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#2.0.1"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#2.0.2"
   }
 }
 ```
@@ -68,9 +68,9 @@ python3 Packages/com.actionfit.custompackagemanager/Tools~/package_dependency_up
   --catalog-refreshed
 ```
 
-이 도구는 top-level physical `Packages/com.actionfit.*`만 읽고 dependency graph를 fixed point로 계산합니다. catalog/local embedded 중 더 최신인 dependency를 선택하며 downgrade하지 않고, local-ahead package는 publish prerequisite로 표시합니다. major update, cycle, malformed SemVer, project override, missing physical dependency는 안전하게 차단합니다.
+이 도구는 top-level physical `Packages/com.actionfit.*`만 읽고 dependency graph를 fixed point로 계산합니다. catalog/local embedded 중 더 최신인 dependency를 선택하며 downgrade하지 않고, `package.json`과 PackageInfo `_dependenciesOverride`의 공통 dependency 버전이 다르면 catalog metadata repair로 계획합니다. local-ahead package는 publish prerequisite로 표시하고 major update, cycle, malformed SemVer, project override, missing physical dependency는 안전하게 차단합니다.
 
-Plan 결과의 `requiredApprovalText`를 그대로 승인한 경우에만 동일한 `planId`로 apply할 수 있습니다. Apply는 affected package의 `package.json`, README 설치 tag, AI guide version, PackageInfo release note만 원자적으로 갱신하고 package contract validation 실패 시 모두 rollback합니다. Python 도구는 GitHub push, tag 생성, Catalog append 또는 credential 접근을 수행하지 않습니다.
+Plan 결과의 `requiredApprovalText`를 그대로 승인한 경우에만 동일한 `planId`로 apply할 수 있습니다. Apply는 affected package의 `package.json`, README 설치 tag, AI guide version, PackageInfo release note와 기존 `_dependenciesOverride`의 공통 dependency 버전을 원자적으로 갱신하고 package contract validation 실패 시 모두 rollback합니다. Override에 의도적으로 생략했거나 catalog 전용으로 추가한 dependency는 보존합니다. Python 도구는 GitHub push, tag 생성, Catalog append 또는 credential 접근을 수행하지 않습니다.
 
 ActionFit 패키지는 `Skills~/manifest.json`으로 Codex 및 Claude skill을 등록할 수 있습니다.
 
@@ -156,7 +156,7 @@ python Packages/com.actionfit.custompackagemanager/Tools~/package_contract_valid
 python Packages/com.actionfit.custompackagemanager/Tools~/package_contract_validator.py --all
 ```
 
-검증기는 `package.json`, SemVer와 변경 패키지 버전 상승, README 설치 tag, `AI_GUIDE.md` identity/version/router 항목, schema v2 prefix/help/access 규칙, 등록 skill source와 `SKILL.md` frontmatter, `ActionFitPackageInfo_SO` 및 패키지 asmdef를 확인합니다. 패키지에 `Editor/SDKInstallProfile.json`이 있으면 profile schema/source 불변성, public bridge 공개 범위, 서드파티 고지, source-only 크기 경계와 금지된 vendor 파일 또는 자격 증명도 검사합니다. 동일한 JSON schema를 stdout과 선택형 `--output`에 쓰며 모든 진단에는 `code`, `severity`, `path`, `line`, `message`, `suggestedFix`가 포함됩니다.
+검증기는 `package.json`, SemVer와 변경 패키지 버전 상승, README 설치 tag, `AI_GUIDE.md` identity/version/router 항목, schema v2 prefix/help/access 규칙, 등록 skill source와 `SKILL.md` frontmatter, `ActionFitPackageInfo_SO` 및 패키지 asmdef를 확인합니다. PackageInfo `_dependenciesOverride`가 선언된 경우 형식과 `package.json`에 함께 존재하는 dependency의 버전 일치도 검사하며, override 전용 dependency와 의도적으로 생략한 manifest dependency는 허용합니다. 패키지에 `Editor/SDKInstallProfile.json`이 있으면 profile schema/source 불변성, public bridge 공개 범위, 서드파티 고지, source-only 크기 경계와 금지된 vendor 파일 또는 자격 증명도 검사합니다. 동일한 JSON schema를 stdout과 선택형 `--output`에 쓰며 모든 진단에는 `code`, `severity`, `path`, `line`, `message`, `suggestedFix`가 포함됩니다.
 
 `--changed`는 base commit에 존재하던 embedded 패키지 폴더가 삭제된 경우 현재 `Packages/manifest.json`의 top-level dependency가 credential-free HTTPS Git URL과 full commit 또는 exact SemVer tag를 사용하고, `packages-lock.json`의 depth-0 Git entry가 동일 version과 40자리 commit hash를 가질 때만 downloaded 전환으로 인정합니다. 이 조건이 하나라도 다르면 삭제를 계약 오류로 보고합니다. 자동 생성된 `PACKAGE_AI_GUIDE_ROUTER.md`만 바뀐 경우에는 Custom Package Manager 릴리스 변경으로 선택하지 않지만, 다른 패키지 소스가 함께 바뀌면 기존 버전 상승 검사를 그대로 적용합니다.
 

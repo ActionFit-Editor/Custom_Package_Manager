@@ -38,6 +38,10 @@ RELEASE_NOTE_PATTERN = re.compile(
     r"(?ms)^(?P<indent>[ \t]*)_releaseNote:\s*(?P<scalar>.*?)"
     r"(?=^[ \t]*_dependenciesOverride:)"
 )
+DEPENDENCIES_OVERRIDE_PATTERN = re.compile(
+    r"(?ms)^(?P<indent>[ \t]*)_dependenciesOverride:[ \t]*(?P<scalar>.*?)"
+    r"(?=^[ \t]*_[A-Za-z][A-Za-z0-9]*:|\Z)"
+)
 
 
 class DependencyUpdateError(RuntimeError):
@@ -422,29 +426,128 @@ def replace_release_note(text: str, release_note: str) -> str:
     return text[: match.start()] + rendered + text[match.end() :]
 
 
+def decode_dependencies_override_scalar(scalar: str) -> List[Tuple[str, str]]:
+    folded = " ".join(line.strip() for line in scalar.strip().splitlines() if line.strip())
+    if not folded:
+        return []
+    if folded.startswith('"') and folded.endswith('"'):
+        try:
+            decoded = ast.literal_eval(folded)
+        except (SyntaxError, ValueError) as error:
+            raise DependencyUpdateError(
+                "PackageInfo _dependenciesOverride could not be decoded: {0}".format(error)
+            )
+        if not isinstance(decoded, str):
+            raise DependencyUpdateError("PackageInfo _dependenciesOverride must be a string.")
+        folded = decoded.strip()
+    entries: List[Tuple[str, str]] = []
+    seen: Set[str] = set()
+    for token in re.split(r"\s*[;,]\s*", folded):
+        value = token.strip()
+        if not value:
+            continue
+        dependency_id, separator, version = value.rpartition("@")
+        if not separator or not dependency_id.strip() or not version.strip():
+            raise DependencyUpdateError(
+                "PackageInfo _dependenciesOverride entry must use <package-id>@<version>: {0}.".format(value)
+            )
+        dependency_id = dependency_id.strip()
+        version = version.strip()
+        if dependency_id in seen:
+            raise DependencyUpdateError(
+                "PackageInfo _dependenciesOverride contains duplicate dependency: {0}.".format(dependency_id)
+            )
+        seen.add(dependency_id)
+        entries.append((dependency_id, version))
+    return entries
+
+
+def read_dependencies_override(text: str) -> List[Tuple[str, str]]:
+    matches = list(DEPENDENCIES_OVERRIDE_PATTERN.finditer(text))
+    if len(matches) != 1:
+        raise DependencyUpdateError(
+            "PackageInfo must contain exactly one _dependenciesOverride; found {0}.".format(len(matches))
+        )
+    return decode_dependencies_override_scalar(matches[0].group("scalar"))
+
+
+def replace_dependencies_override(
+    text: str,
+    dependency_changes: Sequence[Dict[str, str]],
+) -> str:
+    matches = list(DEPENDENCIES_OVERRIDE_PATTERN.finditer(text))
+    if len(matches) != 1:
+        raise DependencyUpdateError(
+            "PackageInfo must contain exactly one _dependenciesOverride; found {0}.".format(len(matches))
+        )
+    match = matches[0]
+    entries = decode_dependencies_override_scalar(match.group("scalar"))
+    if not entries:
+        return text
+    versions = {change["dependencyId"]: change["toVersion"] for change in dependency_changes}
+    updated = [
+        (dependency_id, versions.get(dependency_id, version))
+        for dependency_id, version in entries
+    ]
+    if updated == entries:
+        return text
+    rendered = "{0}_dependenciesOverride: {1}\n".format(
+        match.group("indent"),
+        ";".join("{0}@{1}".format(dependency_id, version) for dependency_id, version in updated),
+    )
+    return text[: match.start()] + rendered + text[match.end() :]
+
+
 def build_release_note(
     package: EmbeddedPackage,
     catalog_version: Optional[SemVer],
     dependency_changes: Sequence[Dict[str, str]],
     package_info_text: str,
 ) -> str:
-    details = ", ".join(
+    dependency_updates = [
+        change for change in dependency_changes if change.get("kind") != "catalogMetadataRepair"
+    ]
+    metadata_repairs = [
+        change for change in dependency_changes if change.get("kind") == "catalogMetadataRepair"
+    ]
+    dependency_details = ", ".join(
         "{0} {1} -> {2}".format(change["dependencyId"], change["fromVersion"], change["toVersion"])
-        for change in dependency_changes
+        for change in dependency_updates
     )
-    dependency_bullet = (
-        "- package.json의 ActionFit dependency를 최신 준비 버전으로 갱신했습니다: {0}.".format(details)
+    metadata_details = ", ".join(
+        "{0} {1} -> {2}".format(change["dependencyId"], change["fromVersion"], change["toVersion"])
+        for change in metadata_repairs
     )
+    change_bullets = []
+    if dependency_details:
+        change_bullets.append(
+            "- package.json의 ActionFit dependency를 최신 준비 버전으로 갱신했습니다: {0}.".format(
+                dependency_details
+            )
+        )
+    if metadata_details:
+        change_bullets.append(
+            "- PackageInfo 카탈로그 dependency override를 package.json과 일치시켰습니다: {0}.".format(
+                metadata_details
+            )
+        )
+    if not change_bullets:
+        raise DependencyUpdateError("Dependency update plan contains no release-note changes.")
     if catalog_version is not None and package.version > catalog_version:
         existing = [line.strip() for line in read_release_note(package_info_text).splitlines() if line.strip()]
         if any(not line.startswith("- ") for line in existing) or not 2 <= len(existing) <= 5:
             raise DependencyUpdateError(
                 "Unpublished PackageInfo release notes must contain 2-5 bullet lines before dependency notes can be merged."
             )
-        return "\n".join(existing + [dependency_bullet])
+        combined = existing + change_bullets
+        if len(combined) > 6:
+            raise DependencyUpdateError(
+                "Merged unpublished PackageInfo release notes must not exceed 6 bullet lines."
+            )
+        return "\n".join(combined)
     return "\n".join(
-        [
-            dependency_bullet,
+        change_bullets
+        + [
             "- dependency 변경과 함께 package version, README Git UPM tag, AI_GUIDE.md version을 정렬해 publish 전 contract 검증이 가능하도록 했습니다.",
             "- 기존 runtime/editor API 구현은 변경하지 않았으며 실제 publish는 별도 승인을 거쳐 Custom Package Manager에서 수행합니다.",
         ]
@@ -491,11 +594,13 @@ def preview_mutations(
     ai_guide_text = ai_guide_path.read_text(encoding="utf-8")
     package_info_text = package_info_path.read_text(encoding="utf-8")
     release_note = build_release_note(package, catalog_version, dependency_changes, package_info_text)
+    package_info_text = replace_release_note(package_info_text, release_note)
+    package_info_text = replace_dependencies_override(package_info_text, dependency_changes)
     return {
         manifest_path: manifest_text.encode("utf-8"),
         readme_path: replace_readme_version(readme_text, package.package_id, str(new_version)).encode("utf-8"),
         ai_guide_path: replace_ai_guide_version(ai_guide_text, str(new_version)).encode("utf-8"),
-        package_info_path: replace_release_note(package_info_text, release_note).encode("utf-8"),
+        package_info_path: package_info_text.encode("utf-8"),
     }
 
 
@@ -570,7 +675,62 @@ def build_plan(
                     ),
                 )
 
+    metadata_repairs_by_package: Dict[str, List[Dict[str, str]]] = {}
+    for package_id in sorted(packages):
+        package = packages[package_id]
+        package_info_path = package.root / "Editor/PackageInfo/ActionFitPackageInfo_SO.asset"
+        try:
+            package_info_text = package_info_path.read_text(encoding="utf-8")
+            override_entries = read_dependencies_override(package_info_text)
+        except (DependencyUpdateError, OSError, UnicodeError) as error:
+            add_unique(
+                conflicts,
+                issue(
+                    "RELEASE_METADATA_CONFLICT",
+                    str(error),
+                    package_id,
+                    relative(repo_root, package_info_path),
+                ),
+            )
+            override_entries = []
+        repairs: List[Dict[str, str]] = []
+        for dependency_id, override_version in override_entries:
+            if not dependency_id.startswith(ACTIONFIT_PREFIX):
+                continue
+            declared_version = package.dependencies.get(dependency_id)
+            if declared_version is None or declared_version == override_version:
+                continue
+            repairs.append(
+                {
+                    "dependencyId": dependency_id,
+                    "fromVersion": override_version,
+                    "toVersion": declared_version,
+                    "kind": "catalogMetadataRepair",
+                }
+            )
+        if repairs:
+            metadata_repairs_by_package[package_id] = repairs
+
     new_versions: Dict[str, SemVer] = {}
+    for package_id in sorted(metadata_repairs_by_package):
+        if package_id in overrides:
+            continue
+        package = packages[package_id]
+        package_catalog = catalog_latest.get(package_id)
+        if package_catalog is not None and package.version < package_catalog:
+            add_unique(
+                conflicts,
+                issue(
+                    "EMBEDDED_PACKAGE_BEHIND_CATALOG",
+                    "Refresh or re-embed the package before preparing a metadata repair release; "
+                    "local {0} is behind Catalog {1}.".format(package.version, package_catalog),
+                    package_id,
+                    relative(repo_root, package.root / "package.json"),
+                ),
+            )
+            continue
+        new_versions[package_id] = higher(package.version, package_catalog).bump_patch()
+
     changed = True
     while changed:
         changed = False
@@ -700,6 +860,7 @@ def build_plan(
                     "dependencyId": dependency_id,
                     "fromVersion": str(declared),
                     "toVersion": str(target),
+                    "kind": "dependencyUpdate",
                 }
             )
             dependency_package = packages.get(dependency_id)
@@ -710,6 +871,12 @@ def build_plan(
                 and (dependency_catalog is None or dependency_package.version > dependency_catalog)
             ):
                 prerequisites.add(dependency_id)
+        changed_ids = {change["dependencyId"] for change in changes_for_package}
+        for repair in metadata_repairs_by_package.get(package_id, []):
+            if repair["dependencyId"] in changed_ids:
+                continue
+            changes_for_package.append(repair)
+        changes_for_package.sort(key=lambda item: item["dependencyId"])
         dependency_changes_by_package[package_id] = changes_for_package
 
     publish_nodes = set(new_versions) | prerequisites
@@ -763,6 +930,9 @@ def build_plan(
                 "catalogVersion": str(catalog_latest[package_id]) if package_id in catalog_latest else "",
                 "newVersion": str(new_versions[package_id]),
                 "dependencyChanges": dependency_changes,
+                "catalogMetadataRepairs": [
+                    change for change in dependency_changes if change.get("kind") == "catalogMetadataRepair"
+                ],
                 "inputHashes": input_hashes,
                 "outputHashes": output_hashes,
             }

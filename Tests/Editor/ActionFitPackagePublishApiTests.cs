@@ -93,6 +93,40 @@ public sealed class ActionFitPackagePublishApiTests
     }
 
     [Test]
+    public void ValidateDependencyOverride_AcceptsMatchingSubsetAndMixedSeparators()
+    {
+        bool success = ActionFitPackagePublisher.TryValidateDependencyOverride(
+            "com.actionfit.alpha@1.2.3;com.actionfit.beta@2.0.0;com.unity.ugui@2.0.0",
+            "com.actionfit.alpha@1.2.3, com.actionfit.beta@2.0.0",
+            out string message);
+
+        Assert.That(success, Is.True, message);
+    }
+
+    [Test]
+    public void ValidateDependencyOverride_RejectsVersionMismatch()
+    {
+        bool success = ActionFitPackagePublisher.TryValidateDependencyOverride(
+            "com.actionfit.alpha@1.2.3",
+            "com.actionfit.alpha@1.2.2",
+            out string message);
+
+        Assert.That(success, Is.False);
+        Assert.That(message, Does.Contain("does not match package.json version 1.2.3"));
+    }
+
+    [Test]
+    public void ValidateDependencyOverride_AllowsCatalogOnlyDependency()
+    {
+        bool success = ActionFitPackagePublisher.TryValidateDependencyOverride(
+            "",
+            "com.actionfit.catalog-only@1.0.0",
+            out string message);
+
+        Assert.That(success, Is.True, message);
+    }
+
+    [Test]
     public void ApprovedBulkPlanMatches_RequiresUntamperedPlanAndApproval()
     {
         var package = new ActionFitPackagePublishPlan
