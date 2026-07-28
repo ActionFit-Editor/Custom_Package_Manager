@@ -19,7 +19,7 @@ catalog 설정 `ActionFitPackageCatalogSettings_SO`는 공통 provider가 `Asset
 ```json
 {
   "dependencies": {
-    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#2.0.3"
+    "com.actionfit.custompackagemanager": "https://github.com/ActionFit-Editor/Custom_Package_Manager.git#2.0.4"
   }
 }
 ```
@@ -404,6 +404,8 @@ Publish preflight는 저장소는 존재하지만 첫 commit이 아직 없는 �
 `Publish All Changed`는 승인 전에 패키지 계약을 한 번 검증하고 실행 중 같은 in-process 승인 plan을 재사용하며, 변경 직전에 변경 가능한 catalog, content hash, version, repository, tag 및 recovery equivalence를 다시 확인합니다. Validation receipt는 직렬화되지 않으므로 deserialize하거나 API로 제공한 plan data가 계약 검증을 우회할 수 없습니다. 일치하는 기존 tag는 plan에서 `Recover Catalog only`로 표시합니다. Content 또는 visibility가 다르면 차단하고 다음 patch 버전을 권장합니다. GitHub remote preflight와 일반 저장소 publish는 최대 4개 worker로 실행합니다. Recovery 후보는 저장소 worker에 들어가지 않으며 publish 승인과 별도로 `CatalogRecoveryApprovalText`가 필요합니다. Progress dialog는 local 검증, GitHub 확인, 저장소 publish, catalog batch/fallback 및 최종 refresh 단계를 표시하고 변경 전 취소하거나 저장소 publish 완료 후 catalog 등록 전에 중단할 수 있습니다.
 
 기존 catalog 저장소 URL이 선택한 Public 또는 Private publish target과 다르면 `Publish Changed`가 명시적 저장소 migration으로 처리합니다. Preflight는 두 저장소의 실제 GitHub visibility, default branch, 모든 branch/tag ref와 현재 버전 tag 충돌을 표시하고 `README.md`와 `AI_GUIDE.md`가 모두 target URL을 참조하도록 요구합니다. 누락된 target은 기존 생성 승인으로만 만들 수 있습니다. 이후 source branch와 tag를 force 또는 prune 없이 target에 mirror하고 target default branch를 맞춘 뒤 모든 ref를 다시 확인합니다. Tag는 정확한 불변 SHA를 유지해야 합니다. Target branch가 source commit을 ancestor로 포함한다고 GitHub가 증명할 때만 ahead를 허용합니다. 이는 새 패키지 commit publish 후 기대하는 상태입니다. Behind, diverged, missing 또는 검증 불가 ancestry는 차단합니다. 잘못된 visibility 또는 안전하지 않은 target ref가 있는 target도 차단하고 같은 저장소를 제자리에서 변경하지 않습니다. Migration, 패키지 publish 및 Catalog 업데이트 중 source는 변경하지 않습니다.
+
+GitHub에서 저장소 소유권을 이미 이전해 catalog의 예전 URL이 현재 publish target으로 redirect되는 경우, preflight는 인증을 유지한 채 `api.github.com` HTTPS redirect만 수동으로 추적합니다. 최종 GitHub `full_name`이 선택한 target과 정확히 일치할 때만 이전이 이미 완료된 것으로 판정하고 별도 migration을 생략합니다. 다른 host 또는 다른 저장소로 향하는 redirect와 기존 visibility, tag, ref 안전성 오류는 계속 차단합니다.
 
 검증된 Private-to-Public migration에서는 각 publish 행에 기본값 `Keep`인 `Previous Repository`가 표시됩니다. `Archive`와 `Delete`는 별도 post-publish 단계입니다. 새 Public tag와 Catalog 행이 존재한 뒤에만 준비하고 정확한 source/target/ref 변경 및 경고를 보여주며 content-bound 승인을 요구하고 변경 직전에 모든 검사를 refresh합니다. 알려진 Catalog 버전이나 현재 프로젝트 manifest, lock 파일 또는 embedded 패키지 metadata가 기존 Private URL을 참조하면 차단합니다. Archive는 복구 가능하며 권장합니다. Delete는 되돌릴 수 없고 GitHub Issue, pull request, 설정, secret, Actions 설정, star, fork 및 기타 저장소 metadata는 migration하지 않습니다. 현재 checkout으로 외부 consumer를 증명할 수 없으므로 해당 의존성은 별도로 확인해야 합니다. Bulk retirement는 명시적으로 선택한 행에만 적용하고 첫 실패에서 중단해 이후 source를 보존합니다.
 

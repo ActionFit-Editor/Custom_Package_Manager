@@ -467,6 +467,59 @@ public sealed class ActionFitPackagePublishApiTests
             Is.False);
     }
 
+    [TestCase(
+        "https://api.github.com/repos/LegacyOrg/LegacyRepo",
+        "https://api.github.com/repositories/12345",
+        "https://api.github.com/repositories/12345")]
+    [TestCase(
+        "https://api.github.com/repos/LegacyOrg/LegacyRepo",
+        "/repositories/12345",
+        "https://api.github.com/repositories/12345")]
+    public void TryResolveGitHubApiRedirect_AcceptsOnlyTrustedGitHubApiTargets(
+        string currentUrl,
+        string location,
+        string expected)
+    {
+        Assert.That(
+            ActionFitPackagePublisher.TryResolveGitHubApiRedirect(currentUrl, location, out string resolved),
+            Is.True);
+        Assert.That(resolved, Is.EqualTo(expected));
+    }
+
+    [TestCase("https://api.github.com/repos/LegacyOrg/LegacyRepo", "http://api.github.com/repositories/12345")]
+    [TestCase("https://api.github.com/repos/LegacyOrg/LegacyRepo", "https://example.com/repositories/12345")]
+    [TestCase("https://example.com/repos/LegacyOrg/LegacyRepo", "/repositories/12345")]
+    [TestCase("https://api.github.com/repos/LegacyOrg/LegacyRepo", "")]
+    public void TryResolveGitHubApiRedirect_RejectsUntrustedTargets(string currentUrl, string location)
+    {
+        Assert.That(
+            ActionFitPackagePublisher.TryResolveGitHubApiRedirect(currentUrl, location, out _),
+            Is.False);
+    }
+
+    [Test]
+    public void ResolvedRepositoryMatchesTarget_UsesCanonicalIdentity()
+    {
+        var target = new ActionFitPackageRepositoryMigration.RepositoryIdentity(
+            "ActionFitGames",
+            "Build_Setting_actionfit");
+
+        Assert.That(
+            ActionFitPackageRepositoryMigration.ResolvedRepositoryMatchesTarget(
+                new ActionFitPackageRepositoryMigration.RepositoryIdentity(
+                    "actionfitgames",
+                    "build_setting_actionfit"),
+                target),
+            Is.True);
+        Assert.That(
+            ActionFitPackageRepositoryMigration.ResolvedRepositoryMatchesTarget(
+                new ActionFitPackageRepositoryMigration.RepositoryIdentity(
+                    "ActionFitGames",
+                    "OtherRepository"),
+                target),
+            Is.False);
+    }
+
     [Test]
     public void RefComparison_AllowsIdempotentRetryAndRejectsConflicts()
     {

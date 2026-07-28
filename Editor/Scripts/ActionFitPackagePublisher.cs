@@ -424,6 +424,8 @@ public static class ActionFitPackagePublisher
             out isPrivate,
             out defaultBranch,
             out _,
+            out _,
+            out _,
             out message);
     }
 
@@ -437,42 +439,183 @@ public static class ActionFitPackagePublisher
         out bool archived,
         out string message)
     {
+        return TryGetRepositoryMetadata(
+            organization,
+            repoName,
+            token,
+            out exists,
+            out isPrivate,
+            out defaultBranch,
+            out archived,
+            out _,
+            out _,
+            out message);
+    }
+
+    internal static bool TryGetRepositoryMetadata(
+        string organization,
+        string repoName,
+        string token,
+        out bool exists,
+        out bool isPrivate,
+        out string defaultBranch,
+        out string resolvedOrganization,
+        out string resolvedRepoName,
+        out string message)
+    {
+        return TryGetRepositoryMetadata(
+            organization,
+            repoName,
+            token,
+            out exists,
+            out isPrivate,
+            out defaultBranch,
+            out _,
+            out resolvedOrganization,
+            out resolvedRepoName,
+            out message);
+    }
+
+    private static bool TryGetRepositoryMetadata(
+        string organization,
+        string repoName,
+        string token,
+        out bool exists,
+        out bool isPrivate,
+        out string defaultBranch,
+        out bool archived,
+        out string resolvedOrganization,
+        out string resolvedRepoName,
+        out string message)
+    {
         exists = false;
         isPrivate = false;
         defaultBranch = "";
         archived = false;
+        resolvedOrganization = organization ?? "";
+        resolvedRepoName = repoName ?? "";
         message = "";
         try
         {
-            var get = CreateGitHubRequest(
-                $"https://api.github.com/repos/{organization}/{repoName}",
-                token,
-                "GET");
-            using var response = (HttpWebResponse)get.GetResponse();
-            using var reader = new StreamReader(response.GetResponseStream(), Encoding.UTF8);
-            GitHubRepositoryResponse repository = JsonUtility.FromJson<GitHubRepositoryResponse>(reader.ReadToEnd());
-            if (repository == null)
+            string requestUrl = $"https://api.github.com/repos/{organization}/{repoName}";
+            for (int redirectCount = 0; redirectCount <= 5; redirectCount++)
             {
-                message = $"GitHub returned an invalid repository response for {organization}/{repoName}.";
-                return false;
+                var get = CreateGitHubRequest(requestUrl, token, "GET");
+                get.AllowAutoRedirect = false;
+
+                HttpWebResponse response;
+                try
+                {
+                    response = (HttpWebResponse)get.GetResponse();
+                }
+                catch (WebException ex) when ((ex.Response as HttpWebResponse)?.StatusCode == HttpStatusCode.NotFound)
+                {
+                    ex.Response?.Dispose();
+                    return true;
+                }
+                catch (WebException ex) when (
+                    ex.Response is HttpWebResponse redirectResponse &&
+                    IsRedirectStatus(redirectResponse.StatusCode))
+                {
+                    response = redirectResponse;
+                }
+
+                using (response)
+                {
+                    if (IsRedirectStatus(response.StatusCode))
+                    {
+                        string location = response.Headers[HttpResponseHeader.Location];
+                        if (!TryResolveGitHubApiRedirect(requestUrl, location, out requestUrl))
+                        {
+                            message =
+                                $"GitHub repository inspection refused an untrusted redirect for {organization}/{repoName}.";
+                            return false;
+                        }
+                        continue;
+                    }
+
+                    using var reader = new StreamReader(response.GetResponseStream(), Encoding.UTF8);
+                    GitHubRepositoryResponse repository =
+                        JsonUtility.FromJson<GitHubRepositoryResponse>(reader.ReadToEnd());
+                    if (repository == null)
+                    {
+                        message = $"GitHub returned an invalid repository response for {organization}/{repoName}.";
+                        return false;
+                    }
+
+                    if (TryParseRepositoryFullName(
+                            repository.full_name,
+                            out string canonicalOrganization,
+                            out string canonicalRepoName))
+                    {
+                        resolvedOrganization = canonicalOrganization;
+                        resolvedRepoName = canonicalRepoName;
+                    }
+
+                    exists = true;
+                    isPrivate = repository.@private;
+                    defaultBranch = repository.default_branch ?? "";
+                    archived = repository.archived;
+                    return true;
+                }
             }
 
-            exists = true;
-            isPrivate = repository.@private;
-            defaultBranch = repository.default_branch ?? "";
-            archived = repository.archived;
-            return true;
-        }
-        catch (WebException ex) when ((ex.Response as HttpWebResponse)?.StatusCode == HttpStatusCode.NotFound)
-        {
-            ex.Response?.Dispose();
-            return true;
+            message = $"GitHub repository inspection exceeded the redirect limit for {organization}/{repoName}.";
+            return false;
         }
         catch (Exception ex)
         {
             message = $"GitHub repository inspection failed for {organization}/{repoName}: {ex.Message}";
             return false;
         }
+    }
+
+    internal static bool TryResolveGitHubApiRedirect(
+        string currentUrl,
+        string location,
+        out string resolvedUrl)
+    {
+        resolvedUrl = "";
+        if (string.IsNullOrWhiteSpace(location) ||
+            !Uri.TryCreate(currentUrl, UriKind.Absolute, out Uri current) ||
+            !string.Equals(current.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(current.Host, "api.github.com", StringComparison.OrdinalIgnoreCase) ||
+            !Uri.TryCreate(current, location, out Uri redirected) ||
+            !string.Equals(redirected.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(redirected.Host, "api.github.com", StringComparison.OrdinalIgnoreCase) ||
+            !string.IsNullOrEmpty(redirected.UserInfo))
+        {
+            return false;
+        }
+
+        resolvedUrl = redirected.AbsoluteUri;
+        return true;
+    }
+
+    private static bool IsRedirectStatus(HttpStatusCode statusCode)
+    {
+        int value = (int)statusCode;
+        return value == 301 || value == 302 || value == 307 || value == 308;
+    }
+
+    private static bool TryParseRepositoryFullName(
+        string fullName,
+        out string organization,
+        out string repoName)
+    {
+        organization = "";
+        repoName = "";
+        string[] segments = (fullName ?? "").Split('/');
+        if (segments.Length != 2 ||
+            string.IsNullOrWhiteSpace(segments[0]) ||
+            string.IsNullOrWhiteSpace(segments[1]))
+        {
+            return false;
+        }
+
+        organization = segments[0];
+        repoName = segments[1];
+        return true;
     }
 
     internal static void SetDefaultBranch(PublishRequest request, string defaultBranch)
@@ -1025,6 +1168,7 @@ public static class ActionFitPackagePublisher
     [Serializable]
     private sealed class GitHubRepositoryResponse
     {
+        public string full_name;
         public bool @private;
         public string default_branch;
         public bool archived;

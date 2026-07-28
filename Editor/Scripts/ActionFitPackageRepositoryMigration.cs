@@ -57,7 +57,6 @@ internal static class ActionFitPackageRepositoryMigration
         if (source.Equals(target))
             return true;
 
-        state.Required = true;
         if (targetRemote == null)
         {
             code = "TARGET_REPOSITORY_STATE_MISSING";
@@ -82,6 +81,8 @@ internal static class ActionFitPackageRepositoryMigration
                 out bool sourceExists,
                 out bool sourceIsPrivate,
                 out string sourceDefaultBranch,
+                out string resolvedSourceOrganization,
+                out string resolvedSourceRepoName,
                 out string sourceError))
         {
             code = "SOURCE_REPOSITORY_CHECK_FAILED";
@@ -95,9 +96,22 @@ internal static class ActionFitPackageRepositoryMigration
             return false;
         }
 
+        var resolvedSource = new RepositoryIdentity(resolvedSourceOrganization, resolvedSourceRepoName);
         state.SourceRepositoryExists = true;
         state.SourceRepositoryIsPrivate = sourceIsPrivate;
         state.SourceDefaultBranch = sourceDefaultBranch;
+        state.SourceRepositoryUrl = resolvedSource.Url;
+        if (ResolvedRepositoryMatchesTarget(resolvedSource, target))
+        {
+            code = NoMigrationCode;
+            message =
+                $"Catalog source repository {source.DisplayName} redirects to publish target {target.DisplayName}; " +
+                "repository migration is already complete.";
+            return true;
+        }
+
+        source = resolvedSource;
+        state.Required = true;
 
         try
         {
@@ -284,6 +298,11 @@ internal static class ActionFitPackageRepositoryMigration
         identity = new RepositoryIdentity(segments[0], name);
         return true;
     }
+
+    internal static bool ResolvedRepositoryMatchesTarget(
+        RepositoryIdentity resolvedSource,
+        RepositoryIdentity target)
+        => resolvedSource.Equals(target);
 
     internal static bool ValidateDocumentation(
         string packageRoot,
