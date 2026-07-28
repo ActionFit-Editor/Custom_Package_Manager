@@ -15,6 +15,7 @@ public static class ActionFitSdkInstallProfileValidator
         RegexOptions.CultureInvariant);
     private static readonly Regex GitCommitPattern = new("^[0-9a-fA-F]{40}$", RegexOptions.CultureInvariant);
     private static readonly Regex Sha256Pattern = new("^[0-9a-fA-F]{64}$", RegexOptions.CultureInvariant);
+    private static readonly Regex GuidPattern = new("^[0-9a-fA-F]{32}$", RegexOptions.CultureInvariant);
     private static readonly Regex UnityVersionPattern = new("^[0-9]+\\.[0-9]+(?:\\.[0-9]+)?$", RegexOptions.CultureInvariant);
 
     /// <summary>Returns every deterministic validation diagnostic without changing project state.</summary>
@@ -28,10 +29,10 @@ public static class ActionFitSdkInstallProfileValidator
         }
 
         profile.NormalizeCollections();
-        if (profile.SchemaVersion != ActionFitSdkInstallProfile.LegacySchemaVersion &&
-            profile.SchemaVersion != ActionFitSdkInstallProfile.CurrentSchemaVersion)
+        if (profile.SchemaVersion < ActionFitSdkInstallProfile.LegacySchemaVersion ||
+            profile.SchemaVersion > ActionFitSdkInstallProfile.CurrentSchemaVersion)
         {
-            Add(diagnostics, "SCHEMA_VERSION_UNSUPPORTED", "SchemaVersion", $"Expected schema version {ActionFitSdkInstallProfile.LegacySchemaVersion} or {ActionFitSdkInstallProfile.CurrentSchemaVersion}, found {profile.SchemaVersion}.");
+            Add(diagnostics, "SCHEMA_VERSION_UNSUPPORTED", "SchemaVersion", $"Expected schema version {ActionFitSdkInstallProfile.LegacySchemaVersion} through {ActionFitSdkInstallProfile.CurrentSchemaVersion}, found {profile.SchemaVersion}.");
         }
 
         RequireIdentifier(diagnostics, profile.ProfileId, "ProfileId", "PROFILE_ID_INVALID");
@@ -205,7 +206,17 @@ public static class ActionFitSdkInstallProfileValidator
 
             ActionFitSdkSourceKind kind = source.ResolveKind();
             if (kind == ActionFitSdkSourceKind.Unknown)
-                Add(diagnostics, "SOURCE_KIND_INVALID", path + ".Kind", "Kind must be artifact, git, or registry.");
+                Add(diagnostics, "SOURCE_KIND_INVALID", path + ".Kind", "Kind must be artifact, git, registry, or unitypackageArtifact.");
+            if (kind == ActionFitSdkSourceKind.UnityPackageArtifact &&
+                profile.SchemaVersion < ActionFitSdkInstallProfile.UnityPackageSchemaVersion)
+            {
+                Add(diagnostics, "SOURCE_UNITYPACKAGE_SCHEMA", path + ".Kind", $"UnityPackageArtifact sources require profile schema version {ActionFitSdkInstallProfile.UnityPackageSchemaVersion}.");
+            }
+            if (kind != ActionFitSdkSourceKind.UnityPackageArtifact &&
+                (source.AssetInventory.Length > 0 || source.PreservePaths.Length > 0 || source.ExcludedPaths.Length > 0))
+            {
+                Add(diagnostics, "SOURCE_ASSET_FIELDS_UNEXPECTED", path, "Only unitypackageArtifact sources may declare AssetInventory, PreservePaths, or ExcludedPaths.");
+            }
             RequireHttpsUrl(diagnostics, source.Url, path + ".Url", "SOURCE_URL_INVALID", true, profile.AllowedDomains);
 
             bool latest = source.ResolvePolicy() == ActionFitSdkResolutionPolicy.AnyInstalledElseLatestStable;
@@ -214,8 +225,8 @@ public static class ActionFitSdkInstallProfileValidator
                                string.Equals(source.ResolutionPolicy, "anyInstalledElseLatestStable", StringComparison.OrdinalIgnoreCase);
             if (!knownPolicy)
                 Add(diagnostics, "SOURCE_RESOLUTION_POLICY_INVALID", path + ".ResolutionPolicy", "ResolutionPolicy must be exact or anyInstalledElseLatestStable.");
-            if (latest && profile.SchemaVersion != ActionFitSdkInstallProfile.CurrentSchemaVersion)
-                Add(diagnostics, "SOURCE_RESOLUTION_POLICY_SCHEMA", path + ".ResolutionPolicy", "AnyInstalledElseLatestStable requires profile schema version 2.");
+            if (latest && profile.SchemaVersion < ActionFitSdkInstallProfile.LatestResolutionSchemaVersion)
+                Add(diagnostics, "SOURCE_RESOLUTION_POLICY_SCHEMA", path + ".ResolutionPolicy", $"AnyInstalledElseLatestStable requires profile schema version {ActionFitSdkInstallProfile.LatestResolutionSchemaVersion} or later.");
             if (latest)
                 ValidateLatestResolution(profile, source, kind, path, diagnostics);
             else if (!string.IsNullOrWhiteSpace(source.LatestResolver) || !string.IsNullOrWhiteSpace(source.MetadataUrl) || !string.IsNullOrWhiteSpace(source.VersionFamily))
@@ -244,6 +255,10 @@ public static class ActionFitSdkInstallProfileValidator
                         Add(diagnostics, "SOURCE_GIT_SUBPATH_UNEXPECTED", path + ".GitSubpath", "Artifact sources must not declare GitSubpath.");
                     break;
 
+                case ActionFitSdkSourceKind.UnityPackageArtifact:
+                    ValidateUnityPackageSource(source, latest, path, diagnostics);
+                    break;
+
                 case ActionFitSdkSourceKind.Git:
                     RequirePackageId(diagnostics, source.PackageId, path + ".PackageId", "SOURCE_PACKAGE_ID_INVALID");
                     if ((!latest || !string.IsNullOrWhiteSpace(source.ImmutableRevision)) && !IsImmutableGitRevision(source.ImmutableRevision))
@@ -264,6 +279,145 @@ public static class ActionFitSdkInstallProfileValidator
                     break;
             }
         }
+    }
+
+    private static void ValidateUnityPackageSource(
+        ActionFitSdkSourceDefinition source,
+        bool latest,
+        string path,
+        List<ActionFitSdkProfileDiagnostic> diagnostics)
+    {
+        if (latest)
+        {
+            Add(diagnostics, "SOURCE_UNITYPACKAGE_POLICY", path + ".ResolutionPolicy", "UnityPackageArtifact sources must pin an exact immutable artifact.");
+        }
+
+        RequireSemVer(diagnostics, source.ImmutableVersion, path + ".ImmutableVersion", "SOURCE_VERSION_INVALID");
+        RequirePackageId(diagnostics, source.PackageId, path + ".PackageId", "SOURCE_PACKAGE_ID_INVALID");
+        RequireSemVer(diagnostics, source.PackageVersion, path + ".PackageVersion", "SOURCE_PACKAGE_VERSION_INVALID");
+        if (!Sha256Pattern.IsMatch((source.Sha256 ?? "").Trim()))
+            Add(diagnostics, "SOURCE_SHA256_INVALID", path + ".Sha256", "UnityPackageArtifact sources require a 64-character SHA-256.");
+
+        ValidateCachePath(diagnostics, source.CacheRelativePath, path + ".CacheRelativePath");
+        if (!(source.CacheRelativePath ?? "").ToLowerInvariant().EndsWith(".unitypackage", StringComparison.Ordinal))
+            Add(diagnostics, "SOURCE_UNITYPACKAGE_FORMAT_INVALID", path + ".CacheRelativePath", "UnityPackageArtifact sources must use a .unitypackage archive.");
+
+        if (!string.IsNullOrWhiteSpace(source.ImmutableRevision))
+            Add(diagnostics, "SOURCE_REVISION_UNEXPECTED", path + ".ImmutableRevision", "UnityPackageArtifact sources use ImmutableVersion and must not declare ImmutableRevision.");
+        if (!string.IsNullOrWhiteSpace(source.GitSubpath))
+            Add(diagnostics, "SOURCE_GIT_SUBPATH_UNEXPECTED", path + ".GitSubpath", "UnityPackageArtifact sources must not declare GitSubpath.");
+
+        ValidateAssetInventory(source, path, diagnostics);
+    }
+
+    private static void ValidateAssetInventory(
+        ActionFitSdkSourceDefinition source,
+        string path,
+        List<ActionFitSdkProfileDiagnostic> diagnostics)
+    {
+        if (source.AssetInventory.Length == 0)
+        {
+            Add(diagnostics, "ASSET_INVENTORY_MISSING", path + ".AssetInventory", "UnityPackageArtifact sources must declare their complete Asset inventory.");
+            return;
+        }
+
+        var paths = new HashSet<string>(StringComparer.Ordinal);
+        var lowered = new HashSet<string>(StringComparer.Ordinal);
+        var guids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (int i = 0; i < source.AssetInventory.Length; i++)
+        {
+            ActionFitSdkAssetEntry entry = source.AssetInventory[i];
+            string entryPath = $"{path}.AssetInventory[{i}]";
+            if (entry == null)
+            {
+                Add(diagnostics, "ASSET_ENTRY_MISSING", entryPath, "Asset inventory entry is null.");
+                continue;
+            }
+
+            string assetPath = (entry.Path ?? "").Trim();
+            if (!IsValidAssetPath(assetPath))
+            {
+                Add(diagnostics, "ASSET_PATH_INVALID", entryPath + ".Path", "Asset paths must be relative, forward-slash separated, and must not escape the project.");
+            }
+            else
+            {
+                if (!paths.Add(assetPath))
+                    Add(diagnostics, "ASSET_PATH_DUPLICATE", entryPath + ".Path", $"Asset path {assetPath} is duplicated.");
+                else if (!lowered.Add(assetPath.ToLowerInvariant()))
+                    Add(diagnostics, "ASSET_PATH_CASE_COLLISION", entryPath + ".Path", $"Asset path {assetPath} collides with another entry on case-insensitive file systems.");
+            }
+
+            string guid = (entry.Guid ?? "").Trim();
+            if (!GuidPattern.IsMatch(guid))
+                Add(diagnostics, "ASSET_GUID_INVALID", entryPath + ".Guid", "Asset entries require a 32-character Unity GUID.");
+            else if (!guids.Add(guid))
+                Add(diagnostics, "ASSET_GUID_DUPLICATE", entryPath + ".Guid", $"Asset GUID {guid} is duplicated.");
+
+            switch (entry.ResolveKind())
+            {
+                case ActionFitSdkAssetEntryKind.File:
+                    if (!Sha256Pattern.IsMatch((entry.Sha256 ?? "").Trim()))
+                        Add(diagnostics, "ASSET_SHA256_INVALID", entryPath + ".Sha256", "File entries require a 64-character SHA-256.");
+                    break;
+                case ActionFitSdkAssetEntryKind.Folder:
+                    if (!string.IsNullOrWhiteSpace(entry.Sha256))
+                        Add(diagnostics, "ASSET_FOLDER_SHA256_UNEXPECTED", entryPath + ".Sha256", "Folder entries must not declare a checksum.");
+                    break;
+                default:
+                    Add(diagnostics, "ASSET_KIND_INVALID", entryPath + ".Kind", "Asset entry Kind must be file or folder.");
+                    break;
+            }
+        }
+
+        ValidateDeclaredPathList(source.PreservePaths, paths, path + ".PreservePaths", "PRESERVE", diagnostics, out HashSet<string> preserved);
+        ValidateDeclaredPathList(source.ExcludedPaths, paths, path + ".ExcludedPaths", "EXCLUDED", diagnostics, out HashSet<string> excluded);
+        foreach (string overlap in preserved.Intersect(excluded, StringComparer.Ordinal))
+            Add(diagnostics, "ASSET_PATH_PRESERVE_EXCLUDE_CONFLICT", path, $"Path {overlap} cannot be both preserved and excluded.");
+    }
+
+    private static void ValidateDeclaredPathList(
+        string[] values,
+        HashSet<string> inventoryPaths,
+        string path,
+        string codePrefix,
+        List<ActionFitSdkProfileDiagnostic> diagnostics,
+        out HashSet<string> declared)
+    {
+        declared = new HashSet<string>(StringComparer.Ordinal);
+        for (int i = 0; i < values.Length; i++)
+        {
+            string value = (values[i] ?? "").Trim();
+            string entryPath = $"{path}[{i}]";
+            if (!IsValidAssetPath(value))
+            {
+                Add(diagnostics, $"ASSET_{codePrefix}_PATH_INVALID", entryPath, "Declared paths must be relative, forward-slash separated, and must not escape the project.");
+                continue;
+            }
+
+            if (!declared.Add(value))
+            {
+                Add(diagnostics, $"ASSET_{codePrefix}_PATH_DUPLICATE", entryPath, $"Path {value} is duplicated.");
+                continue;
+            }
+
+            bool known = inventoryPaths.Contains(value) ||
+                         inventoryPaths.Any(candidate => candidate.StartsWith(value + "/", StringComparison.Ordinal));
+            if (!known)
+                Add(diagnostics, $"ASSET_{codePrefix}_PATH_UNKNOWN", entryPath, $"Path {value} does not match any declared inventory entry.");
+        }
+    }
+
+    private static bool IsValidAssetPath(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        if (value.Contains('\\') || value.StartsWith("/", StringComparison.Ordinal) ||
+            value.EndsWith("/", StringComparison.Ordinal) || Path.IsPathRooted(value))
+        {
+            return false;
+        }
+
+        return value.Split('/').All(segment =>
+            !string.IsNullOrWhiteSpace(segment) && segment != "." && segment != "..");
     }
 
     private static void ValidateLatestResolution(

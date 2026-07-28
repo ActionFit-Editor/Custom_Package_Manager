@@ -10,6 +10,24 @@ public enum ActionFitSdkSourceKind
     Artifact = 1,
     Git = 2,
     Registry = 3,
+    UnityPackageArtifact = 4,
+}
+
+public enum ActionFitSdkAssetEntryKind
+{
+    Unknown = 0,
+    File = 1,
+    Folder = 2,
+}
+
+public enum ActionFitSdkAssetOwnershipState
+{
+    Unknown = 0,
+    Created = 1,
+    Adopted = 2,
+    Shared = 3,
+    Generated = 4,
+    ProjectOwned = 5,
 }
 
 public enum ActionFitSdkResolutionPolicy
@@ -47,7 +65,14 @@ public enum ActionFitSdkInstallationClassification
 public sealed class ActionFitSdkInstallProfile
 {
     public const int LegacySchemaVersion = 1;
-    public const int CurrentSchemaVersion = 2;
+
+    /// <summary>Lowest schema version that may declare latest-resolution sources.</summary>
+    public const int LatestResolutionSchemaVersion = 2;
+
+    /// <summary>Lowest schema version that may declare unitypackageArtifact sources.</summary>
+    public const int UnityPackageSchemaVersion = 3;
+
+    public const int CurrentSchemaVersion = UnityPackageSchemaVersion;
 
     public int SchemaVersion = CurrentSchemaVersion;
     public string ProfileId = "";
@@ -124,6 +149,8 @@ public sealed class ActionFitSdkInstallProfile
         ScopedRegistries ??= Array.Empty<ActionFitSdkScopedRegistryDefinition>();
         DetectionRules ??= Array.Empty<ActionFitSdkDetectionRule>();
 
+        foreach (ActionFitSdkSourceDefinition source in Sources)
+            source?.NormalizeCollections();
         foreach (ActionFitSdkModuleDefinition module in Modules)
             module?.NormalizeCollections();
         foreach (ActionFitSdkScopedRegistryDefinition registry in ScopedRegistries)
@@ -132,9 +159,15 @@ public sealed class ActionFitSdkInstallProfile
 
     internal bool RequiresAsyncResolution()
     {
-        return SchemaVersion >= CurrentSchemaVersion &&
+        return SchemaVersion >= LatestResolutionSchemaVersion &&
                Sources.Any(source => source != null &&
                    source.ResolvePolicy() == ActionFitSdkResolutionPolicy.AnyInstalledElseLatestStable);
+    }
+
+    internal bool DeclaresUnityPackageSources()
+    {
+        return Sources.Any(source => source != null &&
+            source.ResolveKind() == ActionFitSdkSourceKind.UnityPackageArtifact);
     }
 }
 
@@ -156,6 +189,15 @@ public sealed class ActionFitSdkSourceDefinition
     public string MetadataUrl = "";
     public string VersionFamily = "";
 
+    /// <summary>Complete declared Unity Asset inventory for a unitypackageArtifact source.</summary>
+    public ActionFitSdkAssetEntry[] AssetInventory = Array.Empty<ActionFitSdkAssetEntry>();
+
+    /// <summary>Project-owned or generated paths whose values are preserved rather than written.</summary>
+    public string[] PreservePaths = Array.Empty<string>();
+
+    /// <summary>Declared archive paths that this profile intentionally does not install.</summary>
+    public string[] ExcludedPaths = Array.Empty<string>();
+
     public ActionFitSdkSourceKind ResolveKind()
     {
         if (string.Equals(Kind, "artifact", StringComparison.OrdinalIgnoreCase))
@@ -164,7 +206,16 @@ public sealed class ActionFitSdkSourceDefinition
             return ActionFitSdkSourceKind.Git;
         if (string.Equals(Kind, "registry", StringComparison.OrdinalIgnoreCase))
             return ActionFitSdkSourceKind.Registry;
+        if (string.Equals(Kind, "unitypackageArtifact", StringComparison.OrdinalIgnoreCase))
+            return ActionFitSdkSourceKind.UnityPackageArtifact;
         return ActionFitSdkSourceKind.Unknown;
+    }
+
+    internal void NormalizeCollections()
+    {
+        AssetInventory ??= Array.Empty<ActionFitSdkAssetEntry>();
+        PreservePaths ??= Array.Empty<string>();
+        ExcludedPaths ??= Array.Empty<string>();
     }
 
     public ActionFitSdkResolutionPolicy ResolvePolicy()
@@ -183,6 +234,25 @@ public sealed class ActionFitSdkSourceDefinition
         if (string.Equals(LatestResolver, "artifactMetadata", StringComparison.OrdinalIgnoreCase))
             return ActionFitSdkLatestResolverKind.ArtifactMetadata;
         return ActionFitSdkLatestResolverKind.Unknown;
+    }
+}
+
+/// <summary>Declares one expected Unity Asset or folder inside a unitypackageArtifact source.</summary>
+[Serializable]
+public sealed class ActionFitSdkAssetEntry
+{
+    public string Path = "";
+    public string Guid = "";
+    public string Sha256 = "";
+    public string Kind = "";
+
+    public ActionFitSdkAssetEntryKind ResolveKind()
+    {
+        if (string.Equals(Kind, "file", StringComparison.OrdinalIgnoreCase))
+            return ActionFitSdkAssetEntryKind.File;
+        if (string.Equals(Kind, "folder", StringComparison.OrdinalIgnoreCase))
+            return ActionFitSdkAssetEntryKind.Folder;
+        return ActionFitSdkAssetEntryKind.Unknown;
     }
 }
 

@@ -46,7 +46,10 @@ public sealed class ActionFitSdkInstallProfileTests
             .Replace("      \"ResolutionPolicy\": \"exact\",\n", "")
             .Replace("      \"LatestResolver\": \"\",\n", "")
             .Replace("      \"MetadataUrl\": \"\",\n", "")
-            .Replace("      \"VersionFamily\": \"\"\n", "")
+            .Replace("      \"VersionFamily\": \"\",\n", "")
+            .Replace("      \"AssetInventory\": [],\n", "")
+            .Replace("      \"PreservePaths\": [],\n", "")
+            .Replace("      \"ExcludedPaths\": []\n", "")
             .Replace("      \"CacheRelativePath\": \"\",\n", "      \"CacheRelativePath\": \"\"\n");
 
         ActionFitSdkInstallProfile restored = ActionFitSdkInstallProfile.FromJson(json);

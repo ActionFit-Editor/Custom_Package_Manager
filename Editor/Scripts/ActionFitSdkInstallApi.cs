@@ -229,6 +229,11 @@ internal static class ActionFitSdkInstallTransaction
                 downloadDirectory,
                 backupDirectory,
                 cancellationToken);
+            ActionFitSdkAssetJournalEntry[] assetEntries = await PrepareAssetsAsync(
+                plan,
+                downloadDirectory,
+                backupDirectory,
+                cancellationToken);
             RevalidateProjectSnapshots(plan);
 
             journal = new ActionFitSdkTransactionJournal
@@ -246,6 +251,7 @@ internal static class ActionFitSdkInstallTransaction
                 OriginalOwnership = plan.OriginalOwnership,
                 UpdatedOwnership = plan.UpdatedOwnership,
                 ArtifactEntries = artifactEntries,
+                AssetEntries = assetEntries,
                 Phase = ActionFitSdkTransactionPhase.Prepared.ToString(),
             };
             journalPath = Path.Combine(plan.Context.TransactionRoot, transactionId + ".json");
@@ -254,6 +260,10 @@ internal static class ActionFitSdkInstallTransaction
             RevalidateProjectSnapshots(plan);
             ApplyArtifactChanges(journalPath, journal);
             journal.Phase = ActionFitSdkTransactionPhase.ArtifactsPrepared.ToString();
+            SaveJournal(journalPath, journal);
+
+            ApplyAssetChanges(journalPath, journal);
+            journal.Phase = ActionFitSdkTransactionPhase.AssetsCommitted.ToString();
             SaveJournal(journalPath, journal);
 
             ActionFitPackageManifestUtility.WriteAtomic(plan.Context.ManifestPath, plan.UpdatedManifest);
@@ -452,6 +462,111 @@ internal static class ActionFitSdkInstallTransaction
         return entries.ToArray();
     }
 
+    /// <summary>
+    /// Downloads, checksum-verifies, and fully validates every unitypackage source, then stages the
+    /// exact bytes for each planned asset. Nothing is written into the project by this method.
+    /// </summary>
+    private static async Task<ActionFitSdkAssetJournalEntry[]> PrepareAssetsAsync(
+        ActionFitSdkInstallPlan plan,
+        string downloadDirectory,
+        string backupDirectory,
+        CancellationToken cancellationToken)
+    {
+        if (plan.AssetPlans.Length == 0)
+            return Array.Empty<ActionFitSdkAssetJournalEntry>();
+
+        string stageDirectory = Path.Combine(downloadDirectory, "assets");
+        var archives = new Dictionary<string, Dictionary<string, ActionFitSdkUnityPackageEntry>>(StringComparer.Ordinal);
+
+        foreach (string sourceId in plan.AssetPlans
+                     .Where(item => item.WriteContent && !item.Remove)
+                     .Select(item => item.SourceId)
+                     .Distinct(StringComparer.Ordinal))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            ActionFitSdkSourceDefinition source = plan.Profile.Sources.FirstOrDefault(item =>
+                item != null && string.Equals(item.Id, sourceId, StringComparison.Ordinal));
+            if (source == null)
+                throw new InvalidOperationException($"Planned asset source {sourceId} is missing from the profile.");
+
+            string staged = Path.Combine(downloadDirectory, sourceId + ".unitypackage");
+            await DownloadArtifactAsync(plan.Profile, source.Url, staged, cancellationToken);
+
+            string actual = ActionFitSdkArtifactVerifier.ComputeSha256(staged);
+            if (!string.Equals(actual, source.Sha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"Unity package checksum mismatch for source {sourceId}.");
+
+            ActionFitSdkUnityPackageReadResult read = ActionFitSdkUnityPackageArchive.Read(staged);
+            if (!read.Success)
+                throw new InvalidOperationException(read.FormatMessage());
+
+            ActionFitSdkProfileDiagnostic[] drift = ActionFitSdkUnityPackageArchive.CompareWithInventory(read.Entries, source);
+            if (drift.Length > 0)
+            {
+                throw new InvalidOperationException(
+                    $"Unity package inventory drift for source {sourceId}:\n" +
+                    string.Join("\n", drift.Select(item => $"- {item.Code} ({item.Path}): {item.Message}")));
+            }
+
+            var index = new Dictionary<string, ActionFitSdkUnityPackageEntry>(StringComparer.Ordinal);
+            foreach (ActionFitSdkUnityPackageEntry entry in read.Entries)
+                index[entry.Path] = entry;
+            archives[sourceId] = index;
+        }
+
+        var entries = new List<ActionFitSdkAssetJournalEntry>();
+        foreach (ActionFitSdkAssetPlan asset in plan.AssetPlans)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            EnsureProjectPath(plan.Context, asset.TargetPath);
+
+            string slot = entries.Count.ToString("D4");
+            var entry = new ActionFitSdkAssetJournalEntry
+            {
+                ProjectRelativePath = asset.ProjectRelativePath,
+                TargetPath = asset.TargetPath,
+                MetaTargetPath = asset.TargetPath + ".meta",
+                BackupPath = Path.Combine(backupDirectory, "asset-" + slot + ".backup"),
+                BackupMetaPath = Path.Combine(backupDirectory, "asset-" + slot + ".meta.backup"),
+                ExpectedSha256 = asset.ExpectedSha256,
+                IsFolder = asset.IsFolder,
+                Remove = asset.Remove,
+            };
+
+            if (asset.WriteContent && !asset.Remove)
+            {
+                if (!archives.TryGetValue(asset.SourceId, out Dictionary<string, ActionFitSdkUnityPackageEntry> index) ||
+                    !index.TryGetValue(asset.ProjectRelativePath, out ActionFitSdkUnityPackageEntry archived))
+                {
+                    throw new InvalidOperationException($"Validated archive has no entry for {asset.ProjectRelativePath}.");
+                }
+
+                Directory.CreateDirectory(stageDirectory);
+                if (!asset.IsFolder)
+                {
+                    if (archived.AssetData == null)
+                        throw new InvalidOperationException($"Archive entry {asset.ProjectRelativePath} has no content.");
+                    entry.StagedPath = Path.Combine(stageDirectory, slot + ".asset");
+                    File.WriteAllBytes(entry.StagedPath, archived.AssetData);
+                    entry.WriteContent = true;
+                }
+
+                // Existing .meta files are never replaced: their GUID is already verified and
+                // resolvers own the importer labels inside them.
+                if (archived.MetaData != null && !File.Exists(entry.MetaTargetPath))
+                {
+                    entry.StagedMetaPath = Path.Combine(stageDirectory, slot + ".meta");
+                    File.WriteAllBytes(entry.StagedMetaPath, archived.MetaData);
+                    entry.WriteMeta = true;
+                }
+            }
+
+            entries.Add(entry);
+        }
+
+        return entries.ToArray();
+    }
+
     private static async Task DownloadArtifactAsync(
         ActionFitSdkInstallProfile profile,
         string url,
@@ -529,6 +644,141 @@ internal static class ActionFitSdkInstallTransaction
         }
     }
 
+    /// <summary>
+    /// Commits planned Unity Asset changes. Adopted and preserved entries are intentionally no-ops,
+    /// so an adoption never rewrites project content or an existing .meta file.
+    /// </summary>
+    private static void ApplyAssetChanges(string journalPath, ActionFitSdkTransactionJournal journal)
+    {
+        foreach (ActionFitSdkAssetJournalEntry entry in journal.AssetEntries)
+        {
+            if (entry.Remove)
+            {
+                RemoveAssetEntry(journalPath, journal, entry);
+                continue;
+            }
+
+            if (entry.IsFolder)
+            {
+                if (!Directory.Exists(entry.TargetPath))
+                {
+                    entry.CreateIntended = true;
+                    SaveJournal(journalPath, journal);
+                    Directory.CreateDirectory(entry.TargetPath);
+                    entry.Created = true;
+                    SaveJournal(journalPath, journal);
+                }
+            }
+            else if (entry.WriteContent)
+            {
+                if (File.Exists(entry.TargetPath))
+                    throw new IOException($"Cannot install asset because the target already exists: {entry.TargetPath}");
+                if (string.IsNullOrWhiteSpace(entry.StagedPath) || !File.Exists(entry.StagedPath))
+                    throw new FileNotFoundException("Verified staged asset is missing.", entry.StagedPath);
+
+                Directory.CreateDirectory(Path.GetDirectoryName(entry.TargetPath));
+                entry.CreateIntended = true;
+                SaveJournal(journalPath, journal);
+                File.Move(entry.StagedPath, entry.TargetPath);
+                entry.Created = true;
+                SaveJournal(journalPath, journal);
+            }
+
+            if (entry.WriteMeta && !File.Exists(entry.MetaTargetPath) &&
+                !string.IsNullOrWhiteSpace(entry.StagedMetaPath) && File.Exists(entry.StagedMetaPath))
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(entry.MetaTargetPath));
+                File.Move(entry.StagedMetaPath, entry.MetaTargetPath);
+                entry.MetaCreated = true;
+                SaveJournal(journalPath, journal);
+            }
+        }
+    }
+
+    private static void RemoveAssetEntry(
+        string journalPath,
+        ActionFitSdkTransactionJournal journal,
+        ActionFitSdkAssetJournalEntry entry)
+    {
+        bool contentExists = entry.IsFolder ? Directory.Exists(entry.TargetPath) : File.Exists(entry.TargetPath);
+        bool metaExists = File.Exists(entry.MetaTargetPath);
+        if (!contentExists && !metaExists)
+            return;
+
+        // A folder that still holds unmanaged content is preserved rather than deleted.
+        if (entry.IsFolder && contentExists &&
+            (Directory.EnumerateFileSystemEntries(entry.TargetPath).Any()))
+        {
+            return;
+        }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(entry.BackupPath));
+        entry.BackupIntended = true;
+        SaveJournal(journalPath, journal);
+
+        if (metaExists)
+        {
+            File.Move(entry.MetaTargetPath, entry.BackupMetaPath);
+            entry.MetaBackedUp = true;
+            SaveJournal(journalPath, journal);
+        }
+
+        if (contentExists)
+        {
+            if (entry.IsFolder)
+                Directory.Delete(entry.TargetPath, false);
+            else
+                File.Move(entry.TargetPath, entry.BackupPath);
+            entry.BackedUp = true;
+            SaveJournal(journalPath, journal);
+        }
+    }
+
+    private static void RollbackAssetEntry(ActionFitSdkAssetJournalEntry entry)
+    {
+        if (entry.MetaCreated && File.Exists(entry.MetaTargetPath))
+            File.Delete(entry.MetaTargetPath);
+
+        if (entry.CreateIntended)
+        {
+            if (entry.IsFolder)
+            {
+                if (entry.Created && Directory.Exists(entry.TargetPath) &&
+                    !Directory.EnumerateFileSystemEntries(entry.TargetPath).Any())
+                {
+                    Directory.Delete(entry.TargetPath, false);
+                }
+            }
+            else if (File.Exists(entry.TargetPath))
+            {
+                File.Delete(entry.TargetPath);
+            }
+        }
+
+        if (!entry.BackupIntended)
+            return;
+
+        if (entry.BackedUp && !entry.IsFolder && File.Exists(entry.BackupPath))
+        {
+            if (File.Exists(entry.TargetPath))
+                throw new IOException($"Cannot restore asset because target exists: {entry.TargetPath}");
+            Directory.CreateDirectory(Path.GetDirectoryName(entry.TargetPath));
+            File.Move(entry.BackupPath, entry.TargetPath);
+        }
+        else if (entry.BackedUp && entry.IsFolder && !Directory.Exists(entry.TargetPath))
+        {
+            Directory.CreateDirectory(entry.TargetPath);
+        }
+
+        if (entry.MetaBackedUp && File.Exists(entry.BackupMetaPath))
+        {
+            if (File.Exists(entry.MetaTargetPath))
+                throw new IOException($"Cannot restore asset meta because target exists: {entry.MetaTargetPath}");
+            Directory.CreateDirectory(Path.GetDirectoryName(entry.MetaTargetPath));
+            File.Move(entry.BackupMetaPath, entry.MetaTargetPath);
+        }
+    }
+
     private static void VerifyCommitted(ActionFitSdkInstallPlan plan, ActionFitSdkTransactionJournal journal)
     {
         string manifest = File.ReadAllText(plan.Context.ManifestPath);
@@ -549,6 +799,37 @@ internal static class ActionFitSdkInstallTransaction
             {
                 VerifyArtifact(entry.TargetPath, entry.ExpectedSha256, entry.PackageId, entry.PackageVersion);
             }
+        }
+
+        foreach (ActionFitSdkAssetJournalEntry entry in journal.AssetEntries)
+        {
+            if (entry.Remove)
+            {
+                if (entry.BackedUp && !entry.IsFolder && File.Exists(entry.TargetPath))
+                    throw new InvalidOperationException($"Removed asset still exists: {entry.TargetPath}");
+                if (entry.MetaBackedUp && File.Exists(entry.MetaTargetPath))
+                    throw new InvalidOperationException($"Removed asset meta still exists: {entry.MetaTargetPath}");
+                continue;
+            }
+
+            if (entry.IsFolder)
+            {
+                if (!Directory.Exists(entry.TargetPath))
+                    throw new InvalidOperationException($"Installed asset folder is missing: {entry.TargetPath}");
+                continue;
+            }
+
+            if (!File.Exists(entry.TargetPath))
+                throw new InvalidOperationException($"Installed asset is missing: {entry.TargetPath}");
+
+            // Preserved paths record their current value as the expected value, so this check still
+            // proves the commit left them untouched. A missing hash can only be a folder-shaped entry.
+            if (string.IsNullOrEmpty(entry.ExpectedSha256))
+                continue;
+
+            string actual = ActionFitSdkArtifactVerifier.ComputeSha256(entry.TargetPath);
+            if (!string.Equals(actual, entry.ExpectedSha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"Committed asset content does not match the reviewed plan: {entry.TargetPath}");
         }
     }
 
@@ -583,6 +864,10 @@ internal static class ActionFitSdkInstallTransaction
                 ActionFitPackageManifestUtility.WriteAtomic(journal.OwnershipPath, journal.OriginalOwnership, false);
             else if (File.Exists(journal.OwnershipPath))
                 File.Delete(journal.OwnershipPath);
+
+            // Assets roll back before artifacts so the project tree is restored in reverse order.
+            foreach (ActionFitSdkAssetJournalEntry entry in journal.AssetEntries.Reverse())
+                RollbackAssetEntry(entry);
 
             foreach (ActionFitSdkArtifactJournalEntry entry in journal.ArtifactEntries.Reverse())
             {
@@ -643,6 +928,17 @@ internal static class ActionFitSdkInstallTransaction
             EnsureProjectPath(context, entry.TargetPath);
             EnsureTransactionPath(context, entry.BackupPath);
             if (!string.IsNullOrWhiteSpace(entry.StagedPath)) EnsureTransactionPath(context, entry.StagedPath);
+        }
+
+        // A journal is replayed from disk during recovery, so asset paths are bounded here too.
+        foreach (ActionFitSdkAssetJournalEntry entry in journal.AssetEntries ?? Array.Empty<ActionFitSdkAssetJournalEntry>())
+        {
+            EnsureProjectPath(context, entry.TargetPath);
+            EnsureProjectPath(context, entry.MetaTargetPath);
+            EnsureTransactionPath(context, entry.BackupPath);
+            EnsureTransactionPath(context, entry.BackupMetaPath);
+            if (!string.IsNullOrWhiteSpace(entry.StagedPath)) EnsureTransactionPath(context, entry.StagedPath);
+            if (!string.IsNullOrWhiteSpace(entry.StagedMetaPath)) EnsureTransactionPath(context, entry.StagedMetaPath);
         }
     }
 
@@ -768,7 +1064,35 @@ internal sealed class ActionFitSdkTransactionJournal
     public string OriginalOwnership = "";
     public string UpdatedOwnership = "";
     public ActionFitSdkArtifactJournalEntry[] ArtifactEntries = Array.Empty<ActionFitSdkArtifactJournalEntry>();
+    public ActionFitSdkAssetJournalEntry[] AssetEntries = Array.Empty<ActionFitSdkAssetJournalEntry>();
     public string Phase = "";
+}
+
+/// <summary>
+/// One Unity Asset mutation inside a transaction. Content and .meta are tracked together so a
+/// rollback restores both, never leaving an asset without its GUID.
+/// </summary>
+[Serializable]
+internal sealed class ActionFitSdkAssetJournalEntry
+{
+    public string ProjectRelativePath = "";
+    public string TargetPath = "";
+    public string MetaTargetPath = "";
+    public string StagedPath = "";
+    public string StagedMetaPath = "";
+    public string BackupPath = "";
+    public string BackupMetaPath = "";
+    public string ExpectedSha256 = "";
+    public bool IsFolder;
+    public bool Remove;
+    public bool WriteContent;
+    public bool WriteMeta;
+    public bool CreateIntended;
+    public bool Created;
+    public bool MetaCreated;
+    public bool BackupIntended;
+    public bool BackedUp;
+    public bool MetaBackedUp;
 }
 
 [Serializable]
@@ -791,6 +1115,7 @@ internal enum ActionFitSdkTransactionPhase
 {
     Prepared,
     ArtifactsPrepared,
+    AssetsCommitted,
     ManifestCommitted,
     OwnershipCommitted,
     Completed,

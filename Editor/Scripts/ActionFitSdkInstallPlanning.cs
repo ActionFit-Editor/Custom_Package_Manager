@@ -21,6 +21,7 @@ public enum ActionFitSdkPlannedChangeArea
     ScopedRegistry = 1,
     ArtifactCache = 2,
     Ownership = 3,
+    UnityAsset = 4,
 }
 
 public enum ActionFitSdkPlannedChangeAction
@@ -169,6 +170,7 @@ public sealed class ActionFitSdkInstallPlan
     internal bool OriginalOwnershipExisted;
     internal string PreparedPlanId = "";
     internal ActionFitSdkArtifactPlan[] ArtifactPlans = Array.Empty<ActionFitSdkArtifactPlan>();
+    internal ActionFitSdkAssetPlan[] AssetPlans = Array.Empty<ActionFitSdkAssetPlan>();
 }
 
 [Serializable]
@@ -214,6 +216,7 @@ public sealed class ActionFitSdkProfileOwnership
     public ActionFitSdkDependencyOwnership[] Dependencies = Array.Empty<ActionFitSdkDependencyOwnership>();
     public ActionFitSdkRegistryOwnership[] ScopedRegistries = Array.Empty<ActionFitSdkRegistryOwnership>();
     public ActionFitSdkArtifactOwnership[] Artifacts = Array.Empty<ActionFitSdkArtifactOwnership>();
+    public ActionFitSdkAssetOwnership[] Assets = Array.Empty<ActionFitSdkAssetOwnership>();
 
     internal void Normalize()
     {
@@ -221,6 +224,7 @@ public sealed class ActionFitSdkProfileOwnership
         Dependencies ??= Array.Empty<ActionFitSdkDependencyOwnership>();
         ScopedRegistries ??= Array.Empty<ActionFitSdkRegistryOwnership>();
         Artifacts ??= Array.Empty<ActionFitSdkArtifactOwnership>();
+        Assets ??= Array.Empty<ActionFitSdkAssetOwnership>();
         foreach (ActionFitSdkRegistryOwnership registry in ScopedRegistries)
             registry?.Normalize();
     }
@@ -255,6 +259,66 @@ public sealed class ActionFitSdkArtifactOwnership
 {
     public string ProjectRelativePath = "";
     public string Sha256 = "";
+    public bool CreatedByProfile;
+}
+
+/// <summary>
+/// Ownership of one Unity Asset installed or adopted from a unitypackageArtifact source.
+/// Ownership binds to the asset GUID and content hash. The .meta payload is intentionally
+/// not hashed because dependency resolvers normalize importer labels in place.
+/// </summary>
+[Serializable]
+public sealed class ActionFitSdkAssetOwnership
+{
+    public string ProjectRelativePath = "";
+    public string Guid = "";
+    public string Sha256 = "";
+    public string State = "";
+    public bool CreatedByProfile;
+
+    public ActionFitSdkAssetOwnershipState ResolveState()
+    {
+        if (string.Equals(State, "created", StringComparison.OrdinalIgnoreCase))
+            return ActionFitSdkAssetOwnershipState.Created;
+        if (string.Equals(State, "adopted", StringComparison.OrdinalIgnoreCase))
+            return ActionFitSdkAssetOwnershipState.Adopted;
+        if (string.Equals(State, "shared", StringComparison.OrdinalIgnoreCase))
+            return ActionFitSdkAssetOwnershipState.Shared;
+        if (string.Equals(State, "generated", StringComparison.OrdinalIgnoreCase))
+            return ActionFitSdkAssetOwnershipState.Generated;
+        if (string.Equals(State, "projectOwned", StringComparison.OrdinalIgnoreCase))
+            return ActionFitSdkAssetOwnershipState.ProjectOwned;
+        return ActionFitSdkAssetOwnershipState.Unknown;
+    }
+
+    internal static string StateName(ActionFitSdkAssetOwnershipState state)
+    {
+        return state switch
+        {
+            ActionFitSdkAssetOwnershipState.Created => "created",
+            ActionFitSdkAssetOwnershipState.Adopted => "adopted",
+            ActionFitSdkAssetOwnershipState.Shared => "shared",
+            ActionFitSdkAssetOwnershipState.Generated => "generated",
+            ActionFitSdkAssetOwnershipState.ProjectOwned => "projectOwned",
+            _ => "",
+        };
+    }
+}
+
+/// <summary>One planned Unity Asset operation bound to exact current and expected content.</summary>
+[Serializable]
+internal sealed class ActionFitSdkAssetPlan
+{
+    public string SourceId = "";
+    public string ProjectRelativePath = "";
+    public string TargetPath = "";
+    public string Guid = "";
+    public string ExpectedSha256 = "";
+    public string CurrentSha256 = "";
+    public bool IsFolder;
+    public bool WriteContent;
+    public bool Remove;
+    public ActionFitSdkAssetOwnershipState State = ActionFitSdkAssetOwnershipState.Unknown;
     public bool CreatedByProfile;
 }
 
@@ -467,6 +531,7 @@ public static class ActionFitSdkInstallPlanner
         var changes = new List<ActionFitSdkPlannedChange>();
         var findings = new List<ActionFitSdkInstallationFinding>(initialFindings);
         var artifactPlans = new List<ActionFitSdkArtifactPlan>();
+        var assetPlans = new List<ActionFitSdkAssetPlan>();
         string updatedManifest = manifest;
         ActionFitSdkProfileOwnership previous = ownership.Profiles.FirstOrDefault(item =>
             item != null && string.Equals(item.ProfileId, profile.ProfileId, StringComparison.Ordinal));
@@ -517,7 +582,7 @@ public static class ActionFitSdkInstallPlanner
             }
             else
             {
-                ApplyRemoval(profile, previous, ownership, context, ref updatedManifest, changes, findings, artifactPlans);
+                ApplyRemoval(profile, previous, ownership, context, ref updatedManifest, changes, findings, artifactPlans, assetPlans);
             }
         }
         else if (preserveResolvedInstallation)
@@ -534,7 +599,7 @@ public static class ActionFitSdkInstallPlanner
         }
         else
         {
-            ApplyDesiredState(profile, request, previous, ownership, modules, context, resolutionSnapshot, ref updatedManifest, next, changes, findings, artifactPlans);
+            ApplyDesiredState(profile, request, previous, ownership, modules, context, resolutionSnapshot, ref updatedManifest, next, changes, findings, artifactPlans, assetPlans);
         }
 
         ActionFitSdkOwnershipDocument updatedOwnership = ReplaceOwnership(ownership, profile.ProfileId, next);
@@ -570,6 +635,7 @@ public static class ActionFitSdkInstallPlanner
             OriginalManifestHash = Hash(manifest),
             OriginalOwnershipHash = Hash(ownershipJson),
             ArtifactPlans = artifactPlans.ToArray(),
+            AssetPlans = assetPlans.ToArray(),
         };
         plan.PlanId = ComputePlanId(plan);
         plan.PreparedPlanId = plan.PlanId;
@@ -588,7 +654,8 @@ public static class ActionFitSdkInstallPlanner
         ActionFitSdkProfileOwnership next,
         List<ActionFitSdkPlannedChange> changes,
         List<ActionFitSdkInstallationFinding> findings,
-        List<ActionFitSdkArtifactPlan> artifactPlans)
+        List<ActionFitSdkArtifactPlan> artifactPlans,
+        List<ActionFitSdkAssetPlan> assetPlans)
     {
         var selected = new HashSet<string>(modules, StringComparer.Ordinal);
         ActionFitSdkDependencyDefinition[] desiredDependencies = profile.Dependencies
@@ -755,6 +822,17 @@ public static class ActionFitSdkInstallPlanner
 
         AddObsoleteArtifactRemovals(previous, nextArtifactOwnership, ownership, context, changes, findings, artifactPlans);
         next.Artifacts = nextArtifactOwnership.OrderBy(item => item.ProjectRelativePath, StringComparer.OrdinalIgnoreCase).ToArray();
+
+        // Unity Asset sources are installed into Assets/ rather than resolved as UPM dependencies,
+        // so they are planned directly from the profile sources.
+        var nextAssetOwnership = new List<ActionFitSdkAssetOwnership>();
+        foreach (ActionFitSdkSourceDefinition source in profile.Sources.Where(item =>
+                     item != null && item.ResolveKind() == ActionFitSdkSourceKind.UnityPackageArtifact))
+        {
+            AddUnityPackageAssetPlans(source, context, changes, findings, assetPlans, nextAssetOwnership);
+        }
+
+        next.Assets = nextAssetOwnership.OrderBy(item => item.ProjectRelativePath, StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
     private static void ApplyRemoval(
@@ -765,7 +843,8 @@ public static class ActionFitSdkInstallPlanner
         ref string manifest,
         List<ActionFitSdkPlannedChange> changes,
         List<ActionFitSdkInstallationFinding> findings,
-        List<ActionFitSdkArtifactPlan> artifactPlans)
+        List<ActionFitSdkArtifactPlan> artifactPlans,
+        List<ActionFitSdkAssetPlan> assetPlans)
     {
         foreach (ActionFitSdkDependencyOwnership dependency in previous.Dependencies.Where(item => item != null))
         {
@@ -837,6 +916,68 @@ public static class ActionFitSdkInstallPlanner
             });
             changes.Add(Change(ActionFitSdkPlannedChangeArea.ArtifactCache, ActionFitSdkPlannedChangeAction.Remove, artifact.ProjectRelativePath, artifact.Sha256, "", true));
         }
+
+        RemoveOwnedAssets(profile, previous, ownership, context, changes, findings, assetPlans);
+    }
+
+    /// <summary>
+    /// Removes only assets this profile created. Adopted, shared, generated, and project-owned
+    /// entries are preserved, and any post-apply content change downgrades removal to preservation.
+    /// </summary>
+    private static void RemoveOwnedAssets(
+        ActionFitSdkInstallProfile profile,
+        ActionFitSdkProfileOwnership previous,
+        ActionFitSdkOwnershipDocument ownership,
+        ActionFitSdkProjectContext context,
+        List<ActionFitSdkPlannedChange> changes,
+        List<ActionFitSdkInstallationFinding> findings,
+        List<ActionFitSdkAssetPlan> assetPlans)
+    {
+        // Deeper paths first so folders empty out before they are considered for removal.
+        ActionFitSdkAssetOwnership[] ordered = previous.Assets
+            .Where(item => item != null)
+            .OrderByDescending(item => NormalizeRelativePath(item.ProjectRelativePath).Count(character => character == '/'))
+            .ThenByDescending(item => item.ProjectRelativePath, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        foreach (ActionFitSdkAssetOwnership asset in ordered)
+        {
+            string relative = NormalizeRelativePath(asset.ProjectRelativePath);
+            if (!asset.CreatedByProfile ||
+                OtherProfileRequiresAsset(ownership, profile.ProfileId, relative))
+            {
+                changes.Add(Change(ActionFitSdkPlannedChangeArea.UnityAsset, ActionFitSdkPlannedChangeAction.Preserve, relative, asset.Sha256, asset.Sha256, false));
+                continue;
+            }
+
+            string target = context.ResolveProjectPath(relative);
+            bool isFolder = string.IsNullOrEmpty(asset.Sha256);
+            if (!isFolder && File.Exists(target) &&
+                !string.Equals(ActionFitSdkArtifactVerifier.ComputeSha256(target), asset.Sha256, StringComparison.OrdinalIgnoreCase))
+            {
+                findings.Add(Finding("asset-remove-conflict", ActionFitSdkInstallationClassification.Conflicting, "asset", relative, "Owned asset changed after apply and will be preserved."));
+                continue;
+            }
+
+            assetPlans.Add(new ActionFitSdkAssetPlan
+            {
+                ProjectRelativePath = relative,
+                TargetPath = target,
+                Guid = asset.Guid,
+                CurrentSha256 = asset.Sha256,
+                IsFolder = isFolder,
+                Remove = true,
+                State = asset.ResolveState(),
+                CreatedByProfile = true,
+            });
+            changes.Add(Change(ActionFitSdkPlannedChangeArea.UnityAsset, ActionFitSdkPlannedChangeAction.Remove, relative, asset.Sha256, "", true));
+        }
+    }
+
+    private static bool OtherProfileRequiresAsset(ActionFitSdkOwnershipDocument ownership, string profileId, string path)
+    {
+        return ownership.Profiles.Any(profile => profile != null && !string.Equals(profile.ProfileId, profileId, StringComparison.Ordinal) &&
+            profile.Assets.Any(item => item != null && string.Equals(NormalizeRelativePath(item.ProjectRelativePath), NormalizeRelativePath(path), StringComparison.OrdinalIgnoreCase)));
     }
 
     private static void RemoveObsoleteDependencies(
@@ -957,6 +1098,224 @@ public static class ActionFitSdkInstallPlanner
             plan.DownloadRequired ? "" : plan.Sha256,
             plan.Sha256,
             plan.CreatedByProfile));
+    }
+
+    /// <summary>
+    /// Plans Unity Asset install or compatible adoption for one unitypackageArtifact source.
+    /// Adoption keeps existing files and their .meta GUIDs; any unexplained difference outside a
+    /// declared preserve path blocks the plan instead of overwriting project state.
+    /// </summary>
+    private static void AddUnityPackageAssetPlans(
+        ActionFitSdkSourceDefinition source,
+        ActionFitSdkProjectContext context,
+        List<ActionFitSdkPlannedChange> changes,
+        List<ActionFitSdkInstallationFinding> findings,
+        List<ActionFitSdkAssetPlan> plans,
+        ICollection<ActionFitSdkAssetOwnership> ownedAssets)
+    {
+        if (source.ResolveKind() != ActionFitSdkSourceKind.UnityPackageArtifact ||
+            plans.Any(item => string.Equals(item.SourceId, source.Id, StringComparison.Ordinal)))
+        {
+            return;
+        }
+
+        string[] preservePaths = source.PreservePaths;
+        string[] excludedPaths = source.ExcludedPaths;
+
+        foreach (ActionFitSdkAssetEntry entry in source.AssetInventory)
+        {
+            if (entry == null) continue;
+
+            string relative = NormalizeRelativePath(entry.Path);
+            if (IsUnderDeclaredPath(relative, excludedPaths))
+                continue;
+
+            string target = context.ResolveProjectPath(relative);
+            bool preserve = IsUnderDeclaredPath(relative, preservePaths);
+            bool isFolder = entry.ResolveKind() == ActionFitSdkAssetEntryKind.Folder;
+            string expected = (entry.Sha256 ?? "").ToLowerInvariant();
+            string guid = (entry.Guid ?? "").ToLowerInvariant();
+
+            if (isFolder)
+            {
+                bool folderExists = Directory.Exists(target);
+                AddAssetPlan(
+                    plans, changes, ownedAssets, source.Id, relative, target, guid, "", "",
+                    isFolder: true,
+                    writeContent: !folderExists,
+                    state: folderExists ? ActionFitSdkAssetOwnershipState.Adopted : ActionFitSdkAssetOwnershipState.Created,
+                    createdByProfile: !folderExists,
+                    action: folderExists ? ActionFitSdkPlannedChangeAction.Adopt : ActionFitSdkPlannedChangeAction.Add);
+                continue;
+            }
+
+            bool exists = File.Exists(target);
+            if (!exists)
+            {
+                AddAssetPlan(
+                    plans, changes, ownedAssets, source.Id, relative, target, guid, "", expected,
+                    isFolder: false,
+                    writeContent: true,
+                    state: preserve ? ActionFitSdkAssetOwnershipState.Generated : ActionFitSdkAssetOwnershipState.Created,
+                    createdByProfile: true,
+                    action: ActionFitSdkPlannedChangeAction.Add);
+                continue;
+            }
+
+            if (!MetaGuidMatches(target, guid, out string actualGuid))
+            {
+                findings.Add(Finding(
+                    "asset-guid-conflict",
+                    ActionFitSdkInstallationClassification.Conflicting,
+                    "asset",
+                    relative,
+                    $"Existing asset GUID {actualGuid} does not match the declared inventory GUID {guid}. Adoption would break serialized references."));
+                continue;
+            }
+
+            string current = ActionFitSdkArtifactVerifier.ComputeSha256(target).ToLowerInvariant();
+            if (preserve)
+            {
+                // Project-generated or project-owned content: keep the value, record ownership only.
+                AddAssetPlan(
+                    plans, changes, ownedAssets, source.Id, relative, target, guid, current, current,
+                    isFolder: false,
+                    writeContent: false,
+                    state: ActionFitSdkAssetOwnershipState.Generated,
+                    createdByProfile: false,
+                    action: ActionFitSdkPlannedChangeAction.Preserve);
+                continue;
+            }
+
+            if (!string.Equals(current, expected, StringComparison.OrdinalIgnoreCase))
+            {
+                findings.Add(Finding(
+                    "asset-content-conflict",
+                    ActionFitSdkInstallationClassification.Conflicting,
+                    "asset",
+                    relative,
+                    "Existing asset content differs from the verified artifact and is not a declared preserve path. It will not be overwritten."));
+                continue;
+            }
+
+            AddAssetPlan(
+                plans, changes, ownedAssets, source.Id, relative, target, guid, current, expected,
+                isFolder: false,
+                writeContent: false,
+                state: ActionFitSdkAssetOwnershipState.Adopted,
+                createdByProfile: false,
+                action: ActionFitSdkPlannedChangeAction.Adopt);
+        }
+    }
+
+    private static void AddAssetPlan(
+        List<ActionFitSdkAssetPlan> plans,
+        List<ActionFitSdkPlannedChange> changes,
+        ICollection<ActionFitSdkAssetOwnership> ownedAssets,
+        string sourceId,
+        string relative,
+        string target,
+        string guid,
+        string current,
+        string expected,
+        bool isFolder,
+        bool writeContent,
+        ActionFitSdkAssetOwnershipState state,
+        bool createdByProfile,
+        ActionFitSdkPlannedChangeAction action)
+    {
+        plans.Add(new ActionFitSdkAssetPlan
+        {
+            SourceId = sourceId,
+            ProjectRelativePath = relative,
+            TargetPath = target,
+            Guid = guid,
+            ExpectedSha256 = expected,
+            CurrentSha256 = current,
+            IsFolder = isFolder,
+            WriteContent = writeContent,
+            State = state,
+            CreatedByProfile = createdByProfile,
+        });
+
+        ownedAssets.Add(new ActionFitSdkAssetOwnership
+        {
+            ProjectRelativePath = relative,
+            Guid = guid,
+            Sha256 = expected,
+            State = ActionFitSdkAssetOwnership.StateName(state),
+            CreatedByProfile = createdByProfile,
+        });
+
+        changes.Add(Change(
+            ActionFitSdkPlannedChangeArea.UnityAsset,
+            action,
+            relative,
+            current,
+            expected,
+            createdByProfile));
+    }
+
+    private static bool IsUnderDeclaredPath(string relative, string[] declared)
+    {
+        foreach (string candidate in declared)
+        {
+            string normalized = NormalizeRelativePath(candidate);
+            if (string.IsNullOrEmpty(normalized)) continue;
+            if (string.Equals(relative, normalized, StringComparison.OrdinalIgnoreCase) ||
+                relative.StartsWith(normalized + "/", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Compares the on-disk .meta GUID with the declared inventory GUID. Only the GUID is compared:
+    /// dependency resolvers rewrite importer labels in place, and that normalization is not drift.
+    /// </summary>
+    private static bool MetaGuidMatches(string assetPath, string expectedGuid, out string actualGuid)
+    {
+        actualGuid = "";
+        string metaPath = assetPath + ".meta";
+        if (!File.Exists(metaPath))
+        {
+            // Files inside opaque folder assets legitimately carry no .meta file.
+            actualGuid = "(none)";
+            return IsInsideOpaqueFolderAsset(assetPath);
+        }
+
+        foreach (string line in File.ReadLines(metaPath))
+        {
+            string trimmed = line.Trim();
+            if (!trimmed.StartsWith("guid:", StringComparison.Ordinal)) continue;
+            actualGuid = trimmed.Substring("guid:".Length).Trim().ToLowerInvariant();
+            return string.Equals(actualGuid, expectedGuid, StringComparison.OrdinalIgnoreCase);
+        }
+
+        actualGuid = "(unparsed)";
+        return false;
+    }
+
+    private static bool IsInsideOpaqueFolderAsset(string path)
+    {
+        string[] segments = path.Replace('\\', '/').Split('/');
+        for (int i = 0; i < segments.Length - 1; i++)
+        {
+            if (segments[i].EndsWith(".androidlib", StringComparison.OrdinalIgnoreCase) ||
+                segments[i].EndsWith(".androidpack", StringComparison.OrdinalIgnoreCase) ||
+                segments[i].EndsWith(".bundle", StringComparison.OrdinalIgnoreCase) ||
+                segments[i].EndsWith(".framework", StringComparison.OrdinalIgnoreCase) ||
+                segments[i].EndsWith(".plugin", StringComparison.OrdinalIgnoreCase) ||
+                segments[i].EndsWith(".xcframework", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static void AddObsoleteArtifactRemovals(
